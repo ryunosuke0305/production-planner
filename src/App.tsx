@@ -326,6 +326,32 @@ function buildSlots(density: Density): number[] {
   return [8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 }
 
+const BASE_SLOTS_PER_DAY = buildSlots("hour").length;
+
+function slotsPerDayForDensity(density: Density): number {
+  return buildSlots(density).length;
+}
+
+function slotUnitsPerSlot(density: Density): number {
+  return BASE_SLOTS_PER_DAY / slotsPerDayForDensity(density);
+}
+
+function fromAbsoluteSlots(abs: number, density: Density, mode: "floor" | "ceil" | "round"): number {
+  const raw = abs / slotUnitsPerSlot(density);
+  if (mode === "floor") return Math.floor(raw);
+  if (mode === "ceil") return Math.ceil(raw);
+  return Math.round(raw);
+}
+
+function convertSlotIndex(value: number, from: Density, to: Density, mode: "floor" | "ceil" | "round"): number {
+  return fromAbsoluteSlots(value * slotUnitsPerSlot(from), to, mode);
+}
+
+function convertSlotLength(value: number, from: Density, to: Density, mode: "ceil" | "round"): number {
+  const abs = value * slotUnitsPerSlot(from);
+  return Math.max(1, fromAbsoluteSlots(abs, to, mode));
+}
+
 function slotLabel(p: { density: Density; weekDates: string[]; hours: number[]; slotIndex: number }): string {
   const perDay = p.hours.length;
   const dayIdx = Math.floor(p.slotIndex / perDay);
@@ -486,23 +512,35 @@ type DragState = {
 };
 
 export default function ManufacturingPlanGanttApp(): JSX.Element {
-  const [weekStart, setWeekStart] = useState<Date>(() => getDefaultWeekStart());
+  const [planWeekStart, setPlanWeekStart] = useState<Date>(() => getDefaultWeekStart());
+  const [viewWeekStart, setViewWeekStart] = useState<Date>(() => getDefaultWeekStart());
 
-  const [density, setDensity] = useState<Density>("hour");
+  const [planDensity, setPlanDensity] = useState<Density>("hour");
+  const [viewDensity, setViewDensity] = useState<Density>("hour");
 
   // 実運用ではユーザー設定から取得する想定
   const timezone = "Asia/Tokyo";
 
   const [items, setItems] = useState<Item[]>(SAMPLE_ITEMS);
 
-  const weekDates = useMemo(() => buildWeekDates(weekStart), [weekStart]);
-  const hours = useMemo(() => buildSlots(density), [density]);
+  const weekDates = useMemo(() => buildWeekDates(viewWeekStart), [viewWeekStart]);
+  const hours = useMemo(() => buildSlots(viewDensity), [viewDensity]);
   const slotsPerDay = hours.length;
   const slotCount = weekDates.length * slotsPerDay;
-  const slotIndexToLabel = useMemo(
-    () => Array.from({ length: slotCount }, (_, i) => slotLabel({ density, weekDates, hours, slotIndex: i })),
-    [density, hours, slotCount, weekDates]
+
+  const planWeekDates = useMemo(() => buildWeekDates(planWeekStart), [planWeekStart]);
+  const planHours = useMemo(() => buildSlots(planDensity), [planDensity]);
+  const planSlotsPerDay = planHours.length;
+  const planSlotCount = planWeekDates.length * planSlotsPerDay;
+  const planSlotIndexToLabel = useMemo(
+    () =>
+      Array.from({ length: planSlotCount }, (_, i) =>
+        slotLabel({ density: planDensity, weekDates: planWeekDates, hours: planHours, slotIndex: i })
+      ),
+    [planDensity, planHours, planSlotCount, planWeekDates]
   );
+
+  const isPlanWeekView = toISODate(viewWeekStart) === toISODate(planWeekStart);
 
   const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
   const geminiModel = (import.meta.env.VITE_GEMINI_MODEL as string | undefined) ?? "gemini-1.5-flash";
@@ -558,7 +596,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }, [activeRecipeItemId, items]);
 
   const shiftWeek = (deltaDays: number) => {
-    setWeekStart((prev) => {
+    setViewWeekStart((prev) => {
       const d = new Date(prev);
       d.setDate(prev.getDate() + deltaDays);
       return d;
@@ -569,13 +607,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setBlocks((prev) =>
       prev
         .map((b) => {
-          const start = clamp(b.start, 0, slotCount - 1);
-          const len = clamp(b.len, 1, slotCount - start);
+          const start = clamp(b.start, 0, planSlotCount - 1);
+          const len = clamp(b.len, 1, planSlotCount - start);
           return { ...b, start, len };
         })
         .filter((b) => b.len >= 1)
     );
-  }, [density, slotCount]);
+  }, [planSlotCount]);
 
   useEffect(() => {
     let cancelled = false;
@@ -590,9 +628,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         const parsedWeekStart = new Date(payload.weekStartISO);
         if (!Number.isNaN(parsedWeekStart.getTime())) {
           parsedWeekStart.setHours(0, 0, 0, 0);
-          setWeekStart(parsedWeekStart);
+          setPlanWeekStart(parsedWeekStart);
+          setViewWeekStart(parsedWeekStart);
         }
-        setDensity(payload.density);
+        setPlanDensity(payload.density);
+        setViewDensity(payload.density);
         setItems(payload.items.length ? payload.items : SAMPLE_ITEMS);
         setBlocks(payload.blocks.length ? payload.blocks : DEFAULT_BLOCKS());
       } catch {
@@ -617,8 +657,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             version: 1,
-            weekStartISO: toISODate(weekStart),
-            density,
+            weekStartISO: toISODate(planWeekStart),
+            density: planDensity,
             items,
             blocks,
           } satisfies PlanPayload),
@@ -632,7 +672,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return () => {
       controller.abort();
     };
-  }, [blocks, density, isPlanLoaded, items, weekStart]);
+  }, [blocks, isPlanLoaded, items, planDensity, planWeekStart]);
 
   useEffect(() => {
     if (!chatScrollRef.current) return;
@@ -645,7 +685,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       itemId: b.itemId,
       itemName: items.find((x) => x.id === b.itemId)?.name ?? "",
       startSlot: b.start,
-      startLabel: slotLabel({ density, weekDates, hours, slotIndex: b.start }),
+      startLabel: slotLabel({ density: planDensity, weekDates: planWeekDates, hours: planHours, slotIndex: b.start }),
       len: b.len,
       amount: b.amount,
       memo: b.memo,
@@ -653,11 +693,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
     return JSON.stringify(
       {
-        weekStartISO: weekDates[0],
-        density,
-        slotsPerDay,
-        slotCount,
-        slotIndexToLabel,
+        weekStartISO: planWeekDates[0],
+        density: planDensity,
+        slotsPerDay: planSlotsPerDay,
+        slotCount: planSlotCount,
+        slotIndexToLabel: planSlotIndexToLabel,
         items: items.map((item) => ({
           id: item.id,
           name: item.name,
@@ -683,10 +723,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const resolveSlotIndex = (action: ChatAction) => {
     if (Number.isFinite(action.startSlot)) {
-      return clamp(Number(action.startSlot), 0, slotCount - 1);
+      return clamp(Number(action.startSlot), 0, planSlotCount - 1);
     }
     if (action.startLabel) {
-      const idx = slotIndexToLabel.findIndex((label) => label === action.startLabel);
+      const idx = planSlotIndexToLabel.findIndex((label) => label === action.startLabel);
       if (idx >= 0) return idx;
     }
     return null;
@@ -710,7 +750,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           const itemId = resolveItemId(action);
           const start = resolveSlotIndex(action);
           if (!itemId || start === null) return;
-          const len = clamp(action.len ?? 1, 1, slotCount - start);
+          const len = clamp(action.len ?? 1, 1, planSlotCount - start);
           const candidate: Block = {
             id: uid("b"),
             itemId,
@@ -729,7 +769,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             if (b.id !== targetId) return b;
             const itemId = resolveItemId(action) ?? b.itemId;
             const start = resolveSlotIndex(action) ?? b.start;
-            const len = clamp(action.len ?? b.len, 1, slotCount - start);
+            const len = clamp(action.len ?? b.len, 1, planSlotCount - start);
             return resolveOverlap(
               {
               ...b,
@@ -880,10 +920,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const createBlockAt = (itemId: string, slot: number) => {
+    if (!isPlanWeekView) return;
+    const planSlot = clamp(convertSlotIndex(slot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
     const b: Block = {
       id: uid("b"),
       itemId,
-      start: clamp(slot, 0, slotCount - 1),
+      start: planSlot,
       len: 1,
       amount: 0,
       memo: "",
@@ -906,16 +948,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       const b1 = b.start;
       const b2 = b.start + b.len;
       const overlap = Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
-      if (overlap > 0) start = clamp(b2, 0, slotCount - 1);
+      if (overlap > 0) start = clamp(b2, 0, planSlotCount - 1);
     }
 
-    start = clamp(start, 0, slotCount - 1);
-    len = clamp(len, 1, slotCount - start);
+    start = clamp(start, 0, planSlotCount - 1);
+    len = clamp(len, 1, planSlotCount - start);
 
     return { ...candidate, start, len };
   };
 
   const beginPointer = (p: { kind: DragKind; blockId: string; itemId: string; clientX: number }) => {
+    if (!isPlanWeekView) return;
     const laneEl = laneRefs.current[p.itemId];
     if (!laneEl) return;
     const rect = laneEl.getBoundingClientRect();
@@ -940,6 +983,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (!s) return;
 
     const slot = xToSlot(e.clientX, s.laneRect, slotCount);
+    const planSlot = clamp(convertSlotIndex(slot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
+    const planSlotEnd = clamp(convertSlotIndex(slot + 1, viewDensity, planDensity, "ceil"), 1, planSlotCount);
     s.moved = true;
 
     setBlocks((prev) => {
@@ -947,20 +992,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         if (b.id !== s.blockId) return b;
 
         if (s.kind === "move") {
-          const start = clamp(slot, 0, slotCount - 1);
-          const len = clamp(s.originLen, 1, slotCount - start);
+          const start = clamp(planSlot, 0, planSlotCount - 1);
+          const len = clamp(s.originLen, 1, planSlotCount - start);
           return resolveOverlap({ ...b, start, len }, prev);
         }
 
         if (s.kind === "resizeL") {
           const end = s.originStart + s.originLen;
-          const newStart = clamp(slot, 0, end - 1);
-          const newLen = clamp(end - newStart, 1, slotCount - newStart);
+          const newStart = clamp(planSlot, 0, end - 1);
+          const newLen = clamp(end - newStart, 1, planSlotCount - newStart);
           return resolveOverlap({ ...b, start: newStart, len: newLen }, prev);
         }
 
-        const newEnd = clamp(slot + 1, b.start + 1, slotCount);
-        const newLen = clamp(newEnd - b.start, 1, slotCount - b.start);
+        const newEnd = clamp(planSlotEnd, b.start + 1, planSlotCount);
+        const newLen = clamp(newEnd - b.start, 1, planSlotCount - b.start);
         return resolveOverlap({ ...b, len: newLen }, prev);
       });
       return next;
@@ -983,7 +1028,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       window.removeEventListener("pointerup", endPointer);
       window.removeEventListener("pointercancel", endPointer);
     };
-  }, [slotCount]);
+  }, [planDensity, planSlotCount, slotCount, viewDensity]);
 
   const openRecipeEdit = (itemId: string) => {
     const it = items.find((x) => x.id === itemId);
@@ -1015,13 +1060,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const eodStockByItem = useMemo(() => {
+    const blocksForEod = isPlanWeekView ? blocks : [];
     const out: Record<string, number[]> = {};
 
     for (const it of items) {
       const addByDay = new Array(7).fill(0);
-      for (const b of blocks) {
+      for (const b of blocksForEod) {
         if (b.itemId !== it.id) continue;
-        const d = clamp(endDayIndex(b, slotsPerDay), 0, 6);
+        const d = clamp(endDayIndex(b, planSlotsPerDay), 0, 6);
         addByDay[d] += Number.isFinite(b.amount) ? b.amount : 0;
       }
       const eod = new Array(7).fill(0);
@@ -1034,29 +1080,33 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
 
     return out;
-  }, [blocks, items, slotsPerDay]);
+  }, [blocks, isPlanWeekView, items, planSlotsPerDay]);
 
   // JSONエクスポート
   const exportPlanAsJson = () => {
+    const exportWeekDates = buildWeekDates(planWeekStart);
+    const exportHours = buildSlots(planDensity);
+    const exportSlotsPerDay = exportHours.length;
+    const exportSlotCount = exportWeekDates.length * exportSlotsPerDay;
     const payload = buildExportPayload({
-      weekStart,
+      weekStart: planWeekStart,
       timezone,
-      density,
-      weekDates,
-      hours,
-      slotsPerDay,
-      slotCount,
+      density: planDensity,
+      weekDates: exportWeekDates,
+      hours: exportHours,
+      slotsPerDay: exportSlotsPerDay,
+      slotCount: exportSlotCount,
       items,
       blocks,
     });
 
     const json = JSON.stringify(payload, null, 2);
-    const filename = `manufacturing_plan_${payload.meta.weekStartISO}_${density}.json`;
+    const filename = `manufacturing_plan_${payload.meta.weekStartISO}_${planDensity}.json`;
     downloadTextFile(filename, json, "application/json");
   };
 
   // 表示上の列幅
-  const colW = density === "day" ? 120 : 72;
+  const colW = viewDensity === "day" ? 120 : 72;
   const dateSpan = hours.length;
 
   // 日区切り強調用：背景
@@ -1088,7 +1138,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               </Button>
 
               <div className="w-44">
-                <Select value={density} onValueChange={(v) => setDensity(v as Density)}>
+                <Select value={viewDensity} onValueChange={(v) => setViewDensity(v as Density)}>
                   <SelectTrigger>
                     <SelectValue placeholder="表示密度" />
                   </SelectTrigger>
@@ -1145,14 +1195,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         (hourIdx === hours.length - 1 && dayIdx < 6 ? " border-r" : "")
                       }
                     >
-                      {density === "day" ? "" : `${h}`}
+                      {viewDensity === "day" ? "" : `${h}`}
                     </div>
                   ))
                 )}
 
                 {/* 行（品目） */}
                 {items.map((item) => {
-                  const laneBlocks = blocks
+                  const laneBlocks = (isPlanWeekView ? blocks : [])
                     .filter((b) => b.itemId === item.id)
                     .sort((a, b) => a.start - b.start);
 
@@ -1228,8 +1278,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
                         {/* ブロック */}
                         {laneBlocks.map((b) => {
-                          const left = b.start * colW;
-                          const width = b.len * colW;
+                          const viewStart = clamp(convertSlotIndex(b.start, planDensity, viewDensity, "floor"), 0, slotCount - 1);
+                          const viewLen = clamp(convertSlotLength(b.len, planDensity, viewDensity, "ceil"), 1, slotCount - viewStart);
+                          const left = viewStart * colW;
+                          const width = viewLen * colW;
                           const isActive = b.id === activeBlockId;
 
                           return (
@@ -1285,10 +1337,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                                 <div className="flex h-full flex-col justify-between">
                                   <div className="flex items-center justify-between">
                                     <div className="text-[11px] text-muted-foreground">
-                                      {slotLabel({ density, weekDates, hours, slotIndex: b.start })}
+                                      {slotLabel({
+                                        density: planDensity,
+                                        weekDates: planWeekDates,
+                                        hours: planHours,
+                                        slotIndex: b.start,
+                                      })}
                                     </div>
                                     <div className="text-[11px] text-muted-foreground">
-                                      {durationLabel(b.len, density)}
+                                      {durationLabel(b.len, planDensity)}
                                     </div>
                                   </div>
                                   <div className="text-sm font-semibold">+{b.amount}</div>
@@ -1315,8 +1372,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   {activeItem ? activeItem.name : ""}
                   {activeBlock ? (
                     <span className="ml-2 text-sm font-normal text-muted-foreground">
-                      {slotLabel({ density, weekDates, hours, slotIndex: activeBlock.start })}
-                      {activeBlock.len ? `（${durationLabel(activeBlock.len, density)}）` : ""}
+                      {slotLabel({
+                        density: planDensity,
+                        weekDates: planWeekDates,
+                        hours: planHours,
+                        slotIndex: activeBlock.start,
+                      })}
+                      {activeBlock.len ? `（${durationLabel(activeBlock.len, planDensity)}）` : ""}
                     </span>
                   ) : null}
                 </DialogTitle>
@@ -1386,13 +1448,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     <div className="mt-2 flex items-center justify-between">
                       <div>期間</div>
                       <div className="font-medium">
-                        {slotLabel({ density, weekDates, hours, slotIndex: activeBlock.start })}
+                        {slotLabel({
+                          density: planDensity,
+                          weekDates: planWeekDates,
+                          hours: planHours,
+                          slotIndex: activeBlock.start,
+                        })}
                         <span className="mx-1 text-muted-foreground">→</span>
                         {slotLabel({
-                          density,
-                          weekDates,
-                          hours,
-                          slotIndex: Math.min(slotCount - 1, activeBlock.start + activeBlock.len - 1),
+                          density: planDensity,
+                          weekDates: planWeekDates,
+                          hours: planHours,
+                          slotIndex: Math.min(planSlotCount - 1, activeBlock.start + activeBlock.len - 1),
                         })}
                       </div>
                     </div>
