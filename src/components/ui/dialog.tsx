@@ -16,8 +16,8 @@ export function DialogContent({ className = "", children }: React.HTMLAttributes
   if (!ctx?.open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className={`w-full max-h-[90vh] overflow-auto rounded-xl bg-white shadow-xl ${className}`}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6 sm:p-8">
+      <div className={`w-full max-h-[90vh] overflow-auto rounded-2xl bg-white shadow-xl ${className}`}>
         {children}
       </div>
     </div>
@@ -25,7 +25,7 @@ export function DialogContent({ className = "", children }: React.HTMLAttributes
 }
 
 export function DialogHeader({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element {
-  return <div className={`border-b border-slate-100 px-4 py-3 ${className}`} {...props} />;
+  return <div className={`border-b border-slate-100 px-6 py-4 ${className}`} {...props} />;
 }
 
 export function DialogTitle({ className = "", ...props }: React.HTMLAttributes<HTMLHeadingElement>): JSX.Element {
@@ -33,5 +33,5 @@ export function DialogTitle({ className = "", ...props }: React.HTMLAttributes<H
 }
 
 export function DialogFooter({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element {
-  return <div className={`flex justify-end border-t border-slate-100 px-4 py-3 ${className}`} {...props} />;
+  return <div className={`flex justify-end border-t border-slate-100 px-6 py-4 ${className}`} {...props} />;
 }

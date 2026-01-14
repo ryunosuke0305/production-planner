@@ -174,6 +174,13 @@ function toMD(isoDate: string): string {
   return `${m}/${d}`;
 }
 
+const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
+
+function toWeekday(isoDate: string): string {
+  const date = new Date(isoDate);
+  return WEEKDAY_LABELS[date.getDay()] ?? "";
+}
+
 function buildWeekDates(start: Date): string[] {
   const out: string[] = [];
   for (let i = 0; i < 7; i += 1) {
@@ -1111,11 +1118,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   // 日区切り強調用：背景
   const dayW = colW * slotsPerDay;
-  const slotGridBg = `repeating-linear-gradient(to right, transparent 0, transparent ${colW - 1}px, hsl(var(--border)) ${colW - 1}px, hsl(var(--border)) ${colW}px)`;
-  const daySeparatorBg = `repeating-linear-gradient(to right, transparent 0, transparent ${dayW - 2}px, hsl(var(--border)) ${dayW - 2}px, hsl(var(--border)) ${dayW}px)`;
+  const slotGridBg = `repeating-linear-gradient(to right, transparent 0, transparent ${
+    colW - 1
+  }px, rgba(148, 163, 184, 0.4) ${colW - 1}px, rgba(148, 163, 184, 0.4) ${colW}px)`;
+  const daySeparatorBg = `repeating-linear-gradient(to right, transparent 0, transparent ${
+    dayW - 2
+  }px, rgba(71, 85, 105, 0.55) ${dayW - 2}px, rgba(71, 85, 105, 0.55) ${dayW}px)`;
 
   return (
-    <div className="min-h-screen w-full bg-background p-4">
+    <div className="min-h-screen w-full bg-background p-4 text-foreground">
       <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:flex-row">
         <div className="min-w-0 flex-1 space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -1159,39 +1170,40 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="overflow-auto rounded-xl border">
+              <div className="overflow-auto rounded-xl border border-slate-200 bg-white">
                 <div
-                  className="min-w-[1100px]"
+                  className="min-w-[1100px] text-slate-900"
                   style={{
                     display: "grid",
                     gridTemplateColumns: `260px 110px repeat(${slotCount}, ${colW}px)`,
                   }}
                 >
                 {/* ヘッダ（上段：日付） */}
-                <div className="sticky left-0 top-0 z-50 bg-background border-b border-r p-3 font-medium">品目</div>
-                <div className="sticky top-0 z-20 bg-background border-b border-r p-3 font-medium">Stock</div>
+                <div className="sticky left-0 top-0 z-50 bg-white border-b border-r p-3 font-medium">品目</div>
+                <div className="sticky top-0 z-20 bg-white border-b border-r p-3 text-center font-medium">Stock</div>
                 {weekDates.map((date, i) => (
                   <div
                     key={`date-${date}`}
                     className={
-                      "sticky top-0 z-20 bg-background border-b p-3 text-center font-medium" +
+                      "sticky top-0 z-20 bg-white border-b p-3 text-center font-medium" +
                       (i < 6 ? " border-r" : "")
                     }
                     style={{ gridColumn: `span ${dateSpan}` }}
                   >
-                    {toMD(date)}
+                    <div className="text-sm font-semibold">{toMD(date)}</div>
+                    <div className="text-xs text-muted-foreground">({toWeekday(date)})</div>
                   </div>
                 ))}
 
                 {/* ヘッダ（下段：時間） */}
-                <div className="sticky left-0 top-[49px] z-50 bg-background border-b border-r p-2 text-xs text-muted-foreground" />
-                <div className="sticky top-[49px] z-20 bg-background border-b border-r p-2 text-xs text-muted-foreground" />
+                <div className="sticky left-0 top-[49px] z-50 bg-white border-b border-r p-2 text-xs text-muted-foreground" />
+                <div className="sticky top-[49px] z-20 bg-white border-b border-r p-2 text-xs text-muted-foreground" />
                 {weekDates.flatMap((date, dayIdx) =>
                   hours.map((h, hourIdx) => (
                     <div
                       key={`hour-${date}-${h}`}
                       className={
-                        "sticky top-[49px] z-20 bg-background border-b p-2 text-center text-xs text-muted-foreground" +
+                        "sticky top-[49px] z-20 bg-white border-b p-2 text-center text-xs text-muted-foreground" +
                         (hourIdx === hours.length - 1 && dayIdx < 6 ? " border-r" : "")
                       }
                     >
@@ -1211,7 +1223,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   return (
                     <React.Fragment key={item.id}>
                       {/* 左：品目（クリックでレシピモーダル） */}
-                      <div className="sticky left-0 z-40 bg-background border-b border-r p-3">
+                      <div className="sticky left-0 z-40 bg-white border-b border-r p-3">
                         <div className="flex items-center justify-between gap-2">
                           <button
                             type="button"
@@ -1230,7 +1242,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       </div>
 
                       {/* 中：開始在庫 */}
-                      <div className="bg-background border-b border-r p-3 text-right">
+                      <div className="bg-white border-b border-r p-3 text-right">
                         <div className="font-medium">{item.stock}</div>
                         <div className="text-xs text-muted-foreground">開始在庫</div>
                       </div>
@@ -1256,7 +1268,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                           className="absolute inset-0"
                           style={{
                             backgroundImage: `${slotGridBg}, ${daySeparatorBg}`,
-                            opacity: 0.65,
+                            opacity: 0.8,
                           }}
                         />
 
@@ -1289,7 +1301,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                               key={b.id}
                               className={
                                 "absolute top-[6px] h-[42px] rounded-xl border shadow-sm touch-none " +
-                                (isActive ? " bg-muted/70 border-ring" : " bg-muted/50 hover:bg-muted/70")
+                                (isActive
+                                  ? " border-sky-400 bg-sky-200"
+                                  : " border-sky-200 bg-sky-100 hover:bg-sky-200")
                               }
                               style={{ left, width }}
                               whileTap={{ scale: 0.99 }}
@@ -1336,7 +1350,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                               >
                                 <div className="flex h-full flex-col justify-between">
                                   <div className="flex items-center justify-between">
-                                    <div className="text-[11px] text-muted-foreground">
+                                    <div className="text-[11px] text-slate-700">
                                       {slotLabel({
                                         density: planDensity,
                                         weekDates: planWeekDates,
@@ -1344,12 +1358,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                                         slotIndex: b.start,
                                       })}
                                     </div>
-                                    <div className="text-[11px] text-muted-foreground">
+                                    <div className="text-[11px] text-slate-700">
                                       {durationLabel(b.len, planDensity)}
                                     </div>
                                   </div>
                                   <div className="text-sm font-semibold">+{b.amount}</div>
-                                  <div className="truncate text-[11px] text-muted-foreground">{b.memo || " "}</div>
+                                  <div className="truncate text-[11px] text-slate-600">{b.memo || " "}</div>
                                 </div>
                               </div>
                             </motion.div>
@@ -1384,8 +1398,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 </DialogTitle>
               </DialogHeader>
 
-            <div className="space-y-4">
-              <div className="grid grid-cols-12 items-center gap-2">
+            <div className="px-6 py-4">
+              <div className="space-y-5">
+              <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
                 <div className="col-span-4 text-sm text-muted-foreground">生産数量</div>
                 <div className="col-span-6">
                   <Input
@@ -1466,6 +1481,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   </motion.div>
                 ) : null}
               </AnimatePresence>
+              </div>
             </div>
 
               <DialogFooter className="gap-2">
@@ -1487,81 +1503,83 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
               </DialogHeader>
 
-            <div className="space-y-3">
-              <div className="text-sm text-muted-foreground">
-                係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
-              </div>
-
-              <div className="rounded-xl border">
-                <div className="grid grid-cols-12 gap-2 border-b bg-muted/30 p-2 text-xs text-muted-foreground">
-                  <div className="col-span-6">原材料名</div>
-                  <div className="col-span-3 text-right">係数</div>
-                  <div className="col-span-2">単位</div>
-                  <div className="col-span-1 text-right"> </div>
+            <div className="px-6 py-4">
+              <div className="space-y-4">
+                <div className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
+                  係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
                 </div>
 
-                <div className="divide-y">
-                  {recipeDraft.map((r, idx) => (
-                    <div key={`${r.material}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
-                      <div className="col-span-6">
-                        <Input
-                          value={r.material}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setRecipeDraft((prev) =>
-                              prev.map((x, i) => (i === idx ? { ...x, material: v } : x))
-                            );
-                          }}
-                          placeholder="例：原料A"
-                        />
-                      </div>
-                      <div className="col-span-3">
-                        <Input
-                          inputMode="decimal"
-                          value={String(r.perUnit)}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setRecipeDraft((prev) =>
-                              prev.map((x, i) => (i === idx ? { ...x, perUnit: safeNumber(v) } : x))
-                            );
-                          }}
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <Select
-                          value={r.unit}
-                          onValueChange={(v) => {
-                            const unit = v === "g" ? "g" : "kg";
-                            setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="単位" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="kg">kg</SelectItem>
-                            <SelectItem value="g">g</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="col-span-1 text-right">
-                        <Button
-                          variant="outline"
-                          onClick={() => setRecipeDraft((prev) => prev.filter((_, i) => i !== idx))}
-                        >
-                          -
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
+                <div className="rounded-xl border">
+                  <div className="grid grid-cols-12 gap-2 border-b bg-muted/30 p-2 text-xs text-muted-foreground">
+                    <div className="col-span-6">原材料名</div>
+                    <div className="col-span-3 text-right">係数</div>
+                    <div className="col-span-2">単位</div>
+                    <div className="col-span-1 text-right"> </div>
+                  </div>
 
-                  <div className="p-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => setRecipeDraft((prev) => [...prev, { material: "", perUnit: 0, unit: "kg" }])}
-                    >
-                      追加
-                    </Button>
+                  <div className="divide-y">
+                    {recipeDraft.map((r, idx) => (
+                      <div key={`${r.material}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
+                        <div className="col-span-6">
+                          <Input
+                            value={r.material}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRecipeDraft((prev) =>
+                                prev.map((x, i) => (i === idx ? { ...x, material: v } : x))
+                              );
+                            }}
+                            placeholder="例：原料A"
+                          />
+                        </div>
+                        <div className="col-span-3">
+                          <Input
+                            inputMode="decimal"
+                            value={String(r.perUnit)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRecipeDraft((prev) =>
+                                prev.map((x, i) => (i === idx ? { ...x, perUnit: safeNumber(v) } : x))
+                              );
+                            }}
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <Select
+                            value={r.unit}
+                            onValueChange={(v) => {
+                              const unit = v === "g" ? "g" : "kg";
+                              setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="単位" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="kg">kg</SelectItem>
+                              <SelectItem value="g">g</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="col-span-1 text-right">
+                          <Button
+                            variant="outline"
+                            onClick={() => setRecipeDraft((prev) => prev.filter((_, i) => i !== idx))}
+                          >
+                            -
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="p-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => setRecipeDraft((prev) => [...prev, { material: "", perUnit: 0, unit: "kg" }])}
+                      >
+                        追加
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
