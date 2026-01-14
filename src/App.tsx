@@ -584,8 +584,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const isPlanWeekView = toISODate(viewWeekStart) === toISODate(planWeekStart);
 
-  const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
-  const geminiModel = (import.meta.env.VITE_GEMINI_MODEL as string | undefined) ?? "gemini-1.5-flash";
+  const geminiApiKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined)?.trim() ?? "";
+  const hasGeminiApiKey = geminiApiKey.length > 0 && geminiApiKey !== "undefined" && geminiApiKey !== "null";
+  const geminiModel =
+    (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || "gemini-1.5-flash";
 
   const [blocks, setBlocks] = useState<Block[]>(() => DEFAULT_BLOCKS());
 
@@ -868,7 +870,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setChatBusy(true);
     setChatError(null);
 
-    if (!geminiApiKey) {
+    if (!hasGeminiApiKey) {
       setChatMessages((prev) => [
         ...prev,
         { id: uid("chat"), role: "assistant", content: "APIキーが未設定です。.envに設定してください。" },
@@ -1732,10 +1734,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
           </CardHeader>
           <CardContent className="flex h-[640px] flex-col gap-3">
-            <div className="rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
-              .envでVITE_GEMINI_API_KEYとVITE_GEMINI_MODELを設定してください。空き枠指定や期限指定の指示もOKです。
-            </div>
-            {!geminiApiKey ? (
+            {!hasGeminiApiKey ? (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
                 APIキーが未設定です。
               </div>
