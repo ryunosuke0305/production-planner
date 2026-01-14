@@ -94,6 +94,31 @@ type ExportPayloadV1 = {
   constraints: Record<string, unknown>;
 };
 
+type ChatRole = "user" | "assistant";
+
+type ChatMessage = {
+  id: string;
+  role: ChatRole;
+  content: string;
+};
+
+type ChatAction = {
+  type: "create_block" | "update_block" | "delete_block";
+  blockId?: string;
+  itemId?: string;
+  itemName?: string;
+  startSlot?: number;
+  startLabel?: string;
+  len?: number;
+  amount?: number;
+  memo?: string;
+};
+
+type ChatResponsePayload = {
+  summary?: string;
+  actions?: ChatAction[];
+};
+
 const SAMPLE_ITEMS: Item[] = [
   {
     id: "A",
@@ -192,6 +217,15 @@ function slotLabel(p: { density: Density; weekDates: string[]; hours: number[]; 
   const h = p.hours[hourIdx];
   if (!date) return "";
   return p.density === "day" ? `${toMD(date)}` : `${toMD(date)} ${h}:00`;
+}
+
+function extractJsonPayload(text: string): string | null {
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence?.[1]) return fence[1].trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  return text.slice(start, end + 1).trim();
 }
 
 function xToSlot(clientX: number, rect: { left: number; width: number }, slotCount: number): number {
@@ -356,6 +390,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const hours = useMemo(() => buildSlots(density), [density]);
   const slotsPerDay = hours.length;
   const slotCount = weekDates.length * slotsPerDay;
+  const slotIndexToLabel = useMemo(
+    () => Array.from({ length: slotCount }, (_, i) => slotLabel({ density, weekDates, hours, slotIndex: i })),
+    [density, hours, slotCount, weekDates]
+  );
+
+  const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+  const geminiModel = (import.meta.env.VITE_GEMINI_MODEL as string | undefined) ?? "gemini-1.5-flash";
 
   const [blocks, setBlocks] = useState<Block[]>(() => [
     { id: uid("b"), itemId: "A", start: 1, len: 2, amount: 40, memo: "" },
@@ -371,9 +412,21 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [activeRecipeItemId, setActiveRecipeItemId] = useState<string | null>(null);
   const [recipeDraft, setRecipeDraft] = useState<RecipeLine[]>([]);
 
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      id: uid("chat"),
+      role: "assistant",
+      content: "右のチャットから計画の変更指示を送ると、Geminiが計画を更新します。",
+    },
+  ]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+
   const dragStateRef = useRef<DragState | null>(null);
   const suppressClickRef = useRef(false);
   const laneRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   const activeBlock = useMemo(() => {
     if (!activeBlockId) return null;
@@ -415,6 +468,229 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         .filter((b) => b.len >= 1)
     );
   }, [density, slotCount]);
+
+  useEffect(() => {
+    if (!chatScrollRef.current) return;
+    chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+  }, [chatMessages, chatBusy]);
+
+  const buildPlanContext = () => {
+    const blockSummaries = blocks.map((b) => ({
+      id: b.id,
+      itemId: b.itemId,
+      itemName: items.find((x) => x.id === b.itemId)?.name ?? "",
+      startSlot: b.start,
+      startLabel: slotLabel({ density, weekDates, hours, slotIndex: b.start }),
+      len: b.len,
+      amount: b.amount,
+      memo: b.memo,
+    }));
+
+    return JSON.stringify(
+      {
+        weekStartISO: weekDates[0],
+        density,
+        slotsPerDay,
+        slotCount,
+        slotIndexToLabel,
+        items: items.map((item) => ({
+          id: item.id,
+          name: item.name,
+          unit: item.unit,
+          stock: item.stock,
+          recipe: item.recipe,
+        })),
+        blocks: blockSummaries,
+      },
+      null,
+      2
+    );
+  };
+
+  const resolveItemId = (action: ChatAction) => {
+    if (action.itemId && items.some((x) => x.id === action.itemId)) return action.itemId;
+    if (action.itemName) {
+      const match = items.find((x) => x.name.toLowerCase() === action.itemName?.toLowerCase());
+      if (match) return match.id;
+    }
+    return null;
+  };
+
+  const resolveSlotIndex = (action: ChatAction) => {
+    if (Number.isFinite(action.startSlot)) {
+      return clamp(Number(action.startSlot), 0, slotCount - 1);
+    }
+    if (action.startLabel) {
+      const idx = slotIndexToLabel.findIndex((label) => label === action.startLabel);
+      if (idx >= 0) return idx;
+    }
+    return null;
+  };
+
+  const resolveBlockId = (action: ChatAction, currentBlocks: Block[]) => {
+    if (action.blockId && currentBlocks.some((b) => b.id === action.blockId)) return action.blockId;
+    const itemId = resolveItemId(action);
+    const start = resolveSlotIndex(action);
+    if (!itemId || start === null) return null;
+    const found = currentBlocks.find((b) => b.itemId === itemId && b.start === start);
+    return found?.id ?? null;
+  };
+
+  const applyChatActions = (actions: ChatAction[]) => {
+    if (!actions.length) return;
+    setBlocks((prev) => {
+      let next = [...prev];
+      actions.forEach((action) => {
+        if (action.type === "create_block") {
+          const itemId = resolveItemId(action);
+          const start = resolveSlotIndex(action);
+          if (!itemId || start === null) return;
+          const len = clamp(action.len ?? 1, 1, slotCount - start);
+          next = [
+            ...next,
+            {
+              id: uid("b"),
+              itemId,
+              start,
+              len,
+              amount: Math.max(0, action.amount ?? 0),
+              memo: action.memo ?? "",
+            },
+          ];
+        }
+
+        if (action.type === "update_block") {
+          const targetId = resolveBlockId(action, next);
+          if (!targetId) return;
+          next = next.map((b) => {
+            if (b.id !== targetId) return b;
+            const itemId = resolveItemId(action) ?? b.itemId;
+            const start = resolveSlotIndex(action) ?? b.start;
+            const len = clamp(action.len ?? b.len, 1, slotCount - start);
+            return {
+              ...b,
+              itemId,
+              start,
+              len,
+              amount: action.amount ?? b.amount,
+              memo: action.memo ?? b.memo,
+            };
+          });
+        }
+
+        if (action.type === "delete_block") {
+          const targetId = resolveBlockId(action, next);
+          if (!targetId) return;
+          next = next.filter((b) => b.id !== targetId);
+        }
+      });
+      return next;
+    });
+  };
+
+  const sendChatMessage = async () => {
+    const trimmed = chatInput.trim();
+    if (!trimmed || chatBusy) return;
+    const userMessageId = uid("chat");
+    const userMessage: ChatMessage = { id: userMessageId, role: "user", content: trimmed };
+    setChatMessages((prev) => [...prev, userMessage]);
+    setChatInput("");
+    setChatBusy(true);
+    setChatError(null);
+
+    if (!geminiApiKey) {
+      setChatMessages((prev) => [
+        ...prev,
+        { id: uid("chat"), role: "assistant", content: "APIキーが未設定です。.envに設定してください。" },
+      ]);
+      setChatBusy(false);
+      return;
+    }
+
+    const systemInstruction = [
+      "あなたは製造計画のアシスタントです。",
+      "返答は必ずJSONのみで、説明文やコードブロックは含めません。",
+      "次のスキーマに従ってください。",
+      "{",
+      '  "summary": "ユーザーに伝える短い要約",',
+      '  "actions": [',
+      "    {",
+      '      "type": "create_block | update_block | delete_block",',
+      '      "blockId": "既存ブロックID（更新/削除時に推奨）",',
+      '      "itemId": "品目ID",',
+      '      "itemName": "品目名（itemIdが不明な場合）",',
+      '      "startSlot": "開始スロット番号（0始まり）",',
+      '      "startLabel": "開始ラベル（startSlotが不明な場合）",',
+      '      "len": "スロット長",',
+      '      "amount": "生産数量",',
+      '      "memo": "メモ"',
+      "    }",
+      "  ]",
+      "}",
+      "startSlotかstartLabelのどちらかは必ず指定してください。",
+      "既存ブロックの更新/削除ではblockIdを優先してください。",
+    ].join("\n");
+
+    const planContext = buildPlanContext();
+    const messageWithContext = `${trimmed}\n\n現在の計画データ(JSON):\n${planContext}`;
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+          geminiModel
+        )}:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
+            contents: [
+              ...chatMessages.map((msg) => ({
+                role: msg.role === "assistant" ? "model" : "user",
+                parts: [{ text: msg.content }],
+              })),
+              { role: "user", parts: [{ text: messageWithContext }] },
+            ],
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Gemini APIエラー: ${response.status}`);
+      }
+      const data = await response.json();
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      const jsonText = extractJsonPayload(rawText) ?? rawText;
+      let parsed: ChatResponsePayload | null = null;
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch (error) {
+        parsed = null;
+      }
+
+      if (parsed?.actions) {
+        applyChatActions(parsed.actions);
+      }
+
+      const assistantContent =
+        parsed?.summary ??
+        (parsed?.actions?.length ? `更新アクションを${parsed.actions.length}件適用しました。` : rawText);
+
+      setChatMessages((prev) => [
+        ...prev,
+        { id: uid("chat"), role: "assistant", content: assistantContent.trim() || "更新しました。" },
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Gemini API呼び出しに失敗しました。";
+      setChatError(message);
+      setChatMessages((prev) => [
+        ...prev,
+        { id: uid("chat"), role: "assistant", content: "API呼び出しでエラーが発生しました。" },
+      ]);
+    } finally {
+      setChatBusy(false);
+    }
+  };
 
   const openPlanEdit = (block: Block) => {
     setActiveBlockId(block.id);
@@ -623,56 +899,57 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   return (
     <div className="min-h-screen w-full bg-background p-4">
-      <div className="mx-auto max-w-7xl space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-1">
-            <div className="text-2xl font-semibold tracking-tight">製造計画（ガントチャート）</div>
-            <div className="text-sm text-muted-foreground">
-              バーをドラッグで移動、左右ハンドルで幅調整できます。空白クリックで新規作成します。
+      <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:flex-row">
+        <div className="min-w-0 flex-1 space-y-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="space-y-1">
+              <div className="text-2xl font-semibold tracking-tight">製造計画（ガントチャート）</div>
+              <div className="text-sm text-muted-foreground">
+                バーをドラッグで移動、左右ハンドルで幅調整できます。空白クリックで新規作成します。
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={exportPlanAsJson}>
+                JSONエクスポート
+              </Button>
+              <Button variant="outline" onClick={() => shiftWeek(-7)}>
+                前の週
+              </Button>
+              <Button variant="outline" onClick={() => shiftWeek(7)}>
+                次の週
+              </Button>
+
+              <div className="w-44">
+                <Select value={density} onValueChange={(v) => setDensity(v as Density)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="表示密度" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="hour">1時間</SelectItem>
+                    <SelectItem value="2hour">2時間</SelectItem>
+                    <SelectItem value="day">日単位</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={exportPlanAsJson}>
-              JSONエクスポート
-            </Button>
-            <Button variant="outline" onClick={() => shiftWeek(-7)}>
-              前の週
-            </Button>
-            <Button variant="outline" onClick={() => shiftWeek(7)}>
-              次の週
-            </Button>
-
-            <div className="w-44">
-              <Select value={density} onValueChange={(v) => setDensity(v as Density)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="表示密度" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="hour">1時間</SelectItem>
-                  <SelectItem value="2hour">2時間</SelectItem>
-                  <SelectItem value="day">日単位</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </div>
-
-        <Card className="rounded-2xl shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-medium">
-              週表示：{toMD(weekDates[0])} 〜 {toMD(weekDates[6])}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-auto rounded-xl border">
-              <div
-                className="min-w-[1100px]"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: `260px 110px repeat(${slotCount}, ${colW}px)`,
-                }}
-              >
+          <Card className="rounded-2xl shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base font-medium">
+                週表示：{toMD(weekDates[0])} 〜 {toMD(weekDates[6])}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-auto rounded-xl border">
+                <div
+                  className="min-w-[1100px]"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: `260px 110px repeat(${slotCount}, ${colW}px)`,
+                  }}
+                >
                 {/* ヘッダ（上段：日付） */}
                 <div className="sticky left-0 top-0 z-50 bg-background border-b border-r p-3 font-medium">品目</div>
                 <div className="sticky top-0 z-20 bg-background border-b border-r p-3 font-medium">Stock</div>
@@ -858,25 +1135,25 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     </React.Fragment>
                   );
                 })}
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        {/* 計画編集モーダル */}
-        <Dialog open={openPlan} onOpenChange={setOpenPlan}>
-          <DialogContent className="max-w-xl">
-            <DialogHeader>
-              <DialogTitle>
-                {activeItem ? activeItem.name : ""}
-                {activeBlock ? (
-                  <span className="ml-2 text-sm font-normal text-muted-foreground">
-                    {slotLabel({ density, weekDates, hours, slotIndex: activeBlock.start })}
-                    {activeBlock.len ? `（${durationLabel(activeBlock.len, density)}）` : ""}
-                  </span>
-                ) : null}
-              </DialogTitle>
-            </DialogHeader>
+          {/* 計画編集モーダル */}
+          <Dialog open={openPlan} onOpenChange={setOpenPlan}>
+            <DialogContent className="max-w-xl">
+              <DialogHeader>
+                <DialogTitle>
+                  {activeItem ? activeItem.name : ""}
+                  {activeBlock ? (
+                    <span className="ml-2 text-sm font-normal text-muted-foreground">
+                      {slotLabel({ density, weekDates, hours, slotIndex: activeBlock.start })}
+                      {activeBlock.len ? `（${durationLabel(activeBlock.len, density)}）` : ""}
+                    </span>
+                  ) : null}
+                </DialogTitle>
+              </DialogHeader>
 
             <div className="space-y-4">
               <div className="grid grid-cols-12 items-center gap-2">
@@ -957,24 +1234,24 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               </AnimatePresence>
             </div>
 
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setOpenPlan(false)}>
-                キャンセル
-              </Button>
-              <Button variant="destructive" onClick={onPlanDelete}>
-                削除
-              </Button>
-              <Button onClick={onPlanSave}>保存</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+              <DialogFooter className="gap-2">
+                <Button variant="outline" onClick={() => setOpenPlan(false)}>
+                  キャンセル
+                </Button>
+                <Button variant="destructive" onClick={onPlanDelete}>
+                  削除
+                </Button>
+                <Button onClick={onPlanSave}>保存</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
-        {/* レシピ設定モーダル */}
-        <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
-            </DialogHeader>
+          {/* レシピ設定モーダル */}
+          <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
+              </DialogHeader>
 
             <div className="space-y-3">
               <div className="text-sm text-muted-foreground">
@@ -1056,14 +1333,77 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               </div>
             </div>
 
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setOpenRecipe(false)}>
-                キャンセル
-              </Button>
-              <Button onClick={onRecipeSave}>保存</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+              <DialogFooter className="gap-2">
+                <Button variant="outline" onClick={() => setOpenRecipe(false)}>
+                  キャンセル
+                </Button>
+                <Button onClick={onRecipeSave}>保存</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        <div className="w-full shrink-0 lg:w-[360px]">
+          <Card className="rounded-2xl shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
+            </CardHeader>
+            <CardContent className="flex h-[640px] flex-col gap-3">
+              <div className="rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
+                .envでVITE_GEMINI_API_KEYとVITE_GEMINI_MODELを設定してください。
+              </div>
+              {!geminiApiKey ? (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+                  APIキーが未設定です。
+                </div>
+              ) : null}
+              {chatError ? (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+                  {chatError}
+                </div>
+              ) : null}
+              <div ref={chatScrollRef} className="flex-1 space-y-2 overflow-y-auto rounded-md border bg-background p-2">
+                {chatMessages.map((msg) => (
+                  <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div
+                      className={
+                        "max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm " +
+                        (msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted")
+                      }
+                    >
+                      {msg.content}
+                    </div>
+                  </div>
+                ))}
+                {chatBusy ? (
+                  <div className="flex justify-start">
+                    <div className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">送信中...</div>
+                  </div>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                <Textarea
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      void sendChatMessage();
+                    }
+                  }}
+                  placeholder="例：Item A を 9/12 10:00から2時間、40cs 追加して"
+                  rows={3}
+                />
+                <div className="flex items-center justify-between">
+                  <div className="text-xs text-muted-foreground">Ctrl+Enter / Cmd+Enter で送信</div>
+                  <Button onClick={() => void sendChatMessage()} disabled={chatBusy}>
+                    送信
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );
