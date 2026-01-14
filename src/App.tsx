@@ -584,7 +584,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const isPlanWeekView = toISODate(viewWeekStart) === toISODate(planWeekStart);
 
-  const geminiApiKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined)?.trim() ?? "";
+  const rawGeminiApiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+  const geminiApiKey = rawGeminiApiKey?.trim() ?? "";
   const hasGeminiApiKey = geminiApiKey.length > 0 && geminiApiKey !== "undefined" && geminiApiKey !== "null";
   const geminiModel =
     (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || "gemini-1.5-flash";
@@ -623,6 +624,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const suppressClickRef = useRef(false);
   const laneRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (hasGeminiApiKey) return;
+    const status =
+      rawGeminiApiKey === undefined
+        ? "VITE_GEMINI_API_KEYが未定義です。"
+        : rawGeminiApiKey === ""
+          ? "VITE_GEMINI_API_KEYが空文字です。"
+          : "VITE_GEMINI_API_KEYが無効な値です。";
+    console.warn(`Gemini APIキーを読み取れませんでした: ${status}`);
+  }, [hasGeminiApiKey, rawGeminiApiKey]);
 
   const materialMap = useMemo(() => {
     return new Map(materialsMaster.map((m) => [m.id, m]));
