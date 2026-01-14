@@ -26,7 +26,7 @@ import { Badge } from "@/components/ui/badge";
  * 追加機能（直近の要件）
  * - JSONエクスポート：生成AIへAPI連携する前提の入力データ（品目/レシピ/ブロック/週/スロット定義等）を出力
  *
- * 本ファイルは index.tsx で動作することを前提に、
+ * 本ファイルは App.tsx で動作することを前提に、
  * JSX の閉じ漏れや JSDoc/JSX のパーサ誤検知を避けるため、
  * 型は TypeScript の interface/type を使用しています。
  */
