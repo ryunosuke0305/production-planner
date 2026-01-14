@@ -27,7 +27,7 @@ npm run dev
 
 ## Docker での起動（単一コンテナ）
 
-永続化データは `data/` をバインドマウントしてください（`plan.json` などが保存されます）。
+永続化データは `data/` をバインドマウントしてください（`plan.sqlite` が保存されます）。
 
 ```bash
 docker build -t production-planner .
@@ -48,7 +48,8 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 
 ## データ保存について
 
-- 画面上の計画データは開発サーバー経由で `data/plan.json` に保存され、再読み込みしても保持されます。
+- 画面上の計画データは開発サーバー経由で `data/plan.sqlite` に保存され、再読み込みしても保持されます。
+- 既存の `data/plan.json` を SQLite に移行する場合は `npm run migrate:plan` を実行してください（再実行しても最新の内容で上書きされます）。
 - `.env` は `data/` ディレクトリにまとめて配置してください（例: `data/.env`）。
 - `VITE_GEMINI_API_KEY` と `VITE_GEMINI_MODEL` を設定するとチャット機能が利用できます（未設定時はUI上で案内メッセージを表示します）。
 
@@ -56,12 +57,19 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 
 ### `/api/plan`（Vite ミドルウェア）
 
-開発サーバー/プレビューサーバーに組み込まれた簡易 API です。`data/plan.json` を読み書きします。
+開発サーバー/プレビューサーバーに組み込まれた簡易 API です。`data/plan.sqlite` を読み書きします。
 
 | メソッド | 説明 | 入出力 |
 | --- | --- | --- |
-| GET | 計画データを取得 | 204（未保存時）または JSON |
-| POST | 計画データを保存 | JSON を受け取り `data/plan.json` に保存 |
+| GET | 計画データを取得（条件付き検索可） | 204（未保存時）または JSON |
+| POST | 計画データを保存 | JSON を受け取り `data/plan.sqlite` に保存 |
+
+#### GET クエリパラメータ
+
+- `from`: 取得開始日（`YYYY-MM-DD`）
+- `to`: 取得終了日（`YYYY-MM-DD`）
+- `itemId`: 品目 ID でブロックを絞り込み
+- `itemName`: 品目名（部分一致・小文字化）でブロックを絞り込み
 
 ### Gemini API
 
@@ -71,7 +79,8 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 
 ```
 .
-├─ data/                 # 永続データ置き場（.env / plan.json もここに配置）
+├─ data/                 # 永続データ置き場（.env / plan.sqlite もここに配置）
+├─ scripts/              # SQLite 移行スクリプトなど
 ├─ src/
 │  ├─ App.tsx             # 製造計画ガントチャートの本体
 │  ├─ main.tsx            # エントリポイント
@@ -84,7 +93,7 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 
 ### 計画保存データ（`/api/plan`）
 
-`data/plan.json` に保存されるデータの最小構造です。
+API でやり取りする JSON は従来と同じ構造で、保存先は SQLite です。
 
 ```json
 {
@@ -114,6 +123,22 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 - `density`: `"hour" | "2hour" | "day"`
 - `start`: 0 始まりのスロット番号
 - `len`: スロット長（`density` に依存）
+
+### SQLite スキーマ（`data/plan.sqlite`）
+
+```
+meta(key TEXT PRIMARY KEY, value TEXT)
+materials(id TEXT PRIMARY KEY, name TEXT, unit TEXT)
+items(id TEXT PRIMARY KEY, name TEXT, unit TEXT, stock REAL)
+item_recipes(item_id TEXT, material_id TEXT, per_unit REAL, unit TEXT, PRIMARY KEY(item_id, material_id))
+blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, amount REAL, memo TEXT)
+```
+
+#### インデックス方針
+
+- 期間検索: `blocks(start)`（スロット範囲の検索に使用）
+- 品目検索: `blocks(item_id)`
+- 期間 + 品目の複合検索: `blocks(item_id, start)`
 
 ### JSON エクスポート（`ExportPayloadV1`）
 
