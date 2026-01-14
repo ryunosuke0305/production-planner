@@ -1724,141 +1724,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-
-        {/* レシピ設定モーダル */}
-        <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
-            </DialogHeader>
-
-          <div className="px-6 py-4">
-            <div className="space-y-4">
-              <div className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
-                係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
-              </div>
-              <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
-                原料はマスタから選択します。未登録の場合は「マスタ管理」画面で追加してください。
-              </div>
-
-              <div className="rounded-xl border">
-                <div className="grid grid-cols-12 gap-2 border-b bg-muted/30 p-2 text-xs text-muted-foreground">
-                  <div className="col-span-6">原材料名</div>
-                  <div className="col-span-3 text-right">係数</div>
-                  <div className="col-span-2">単位</div>
-                  <div className="col-span-1 text-right"> </div>
-                </div>
-
-                <div className="divide-y">
-                  {recipeDraft.map((r, idx) => (
-                    <div key={`${r.materialId}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
-                      <div className="col-span-6">
-                        <Select
-                          value={r.materialId}
-                          onValueChange={(value) => {
-                            const selected = materialMap.get(value);
-                            setRecipeDraft((prev) =>
-                              prev.map((x, i) =>
-                                i === idx
-                                  ? {
-                                      ...x,
-                                      materialId: value,
-                                      unit: selected?.unit ?? x.unit,
-                                    }
-                                  : x
-                              )
-                            );
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="原料を選択" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {materialsMaster.length ? (
-                              materialsMaster.map((m) => (
-                                <SelectItem key={m.id} value={m.id}>
-                                  {m.name}
-                                </SelectItem>
-                              ))
-                            ) : (
-                              <SelectItem value="__none__" disabled>
-                                原料が未登録です
-                              </SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="col-span-3">
-                        <Input
-                          inputMode="decimal"
-                          value={String(r.perUnit)}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setRecipeDraft((prev) =>
-                              prev.map((x, i) => (i === idx ? { ...x, perUnit: safeNumber(v) } : x))
-                            );
-                          }}
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <Select
-                          value={r.unit}
-                          onValueChange={(v) => {
-                            const unit = v === "g" ? "g" : "kg";
-                            setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="単位" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="kg">kg</SelectItem>
-                            <SelectItem value="g">g</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="col-span-1 text-right">
-                        <Button
-                          variant="outline"
-                          onClick={() => setRecipeDraft((prev) => prev.filter((_, i) => i !== idx))}
-                        >
-                          -
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-
-                  <div className="p-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        const fallbackMaterial = materialsMaster[0];
-                        setRecipeDraft((prev) => [
-                          ...prev,
-                          {
-                            materialId: fallbackMaterial?.id ?? "",
-                            perUnit: 0,
-                            unit: fallbackMaterial?.unit ?? "kg",
-                          },
-                        ]);
-                      }}
-                    >
-                      追加
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setOpenRecipe(false)}>
-                キャンセル
-              </Button>
-              <Button onClick={onRecipeSave}>保存</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
 
       <div className="w-full shrink-0 lg:w-[360px]">
@@ -2282,6 +2147,141 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         </header>
 
         <main className="p-4">{activeView === "schedule" ? scheduleView : masterView}</main>
+
+        {/* レシピ設定モーダル */}
+        <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
+            </DialogHeader>
+
+            <div className="px-6 py-4">
+              <div className="space-y-4">
+                <div className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
+                  係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
+                </div>
+                <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+                  原料はマスタから選択します。未登録の場合は「マスタ管理」画面で追加してください。
+                </div>
+
+                <div className="rounded-xl border">
+                  <div className="grid grid-cols-12 gap-2 border-b bg-muted/30 p-2 text-xs text-muted-foreground">
+                    <div className="col-span-6">原材料名</div>
+                    <div className="col-span-3 text-right">係数</div>
+                    <div className="col-span-2">単位</div>
+                    <div className="col-span-1 text-right"> </div>
+                  </div>
+
+                  <div className="divide-y">
+                    {recipeDraft.map((r, idx) => (
+                      <div key={`${r.materialId}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
+                        <div className="col-span-6">
+                          <Select
+                            value={r.materialId}
+                            onValueChange={(value) => {
+                              const selected = materialMap.get(value);
+                              setRecipeDraft((prev) =>
+                                prev.map((x, i) =>
+                                  i === idx
+                                    ? {
+                                        ...x,
+                                        materialId: value,
+                                        unit: selected?.unit ?? x.unit,
+                                      }
+                                    : x
+                                )
+                              );
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="原料を選択" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {materialsMaster.length ? (
+                                materialsMaster.map((m) => (
+                                  <SelectItem key={m.id} value={m.id}>
+                                    {m.name}
+                                  </SelectItem>
+                                ))
+                              ) : (
+                                <SelectItem value="__none__" disabled>
+                                  原料が未登録です
+                                </SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="col-span-3">
+                          <Input
+                            inputMode="decimal"
+                            value={String(r.perUnit)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRecipeDraft((prev) =>
+                                prev.map((x, i) => (i === idx ? { ...x, perUnit: safeNumber(v) } : x))
+                              );
+                            }}
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <Select
+                            value={r.unit}
+                            onValueChange={(v) => {
+                              const unit = v === "g" ? "g" : "kg";
+                              setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="単位" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="kg">kg</SelectItem>
+                              <SelectItem value="g">g</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="col-span-1 text-right">
+                          <Button
+                            variant="outline"
+                            onClick={() => setRecipeDraft((prev) => prev.filter((_, i) => i !== idx))}
+                          >
+                            -
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="p-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          const fallbackMaterial = materialsMaster[0];
+                          setRecipeDraft((prev) => [
+                            ...prev,
+                            {
+                              materialId: fallbackMaterial?.id ?? "",
+                              perUnit: 0,
+                              unit: fallbackMaterial?.unit ?? "kg",
+                            },
+                          ]);
+                        }}
+                      >
+                        追加
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setOpenRecipe(false)}>
+                キャンセル
+              </Button>
+              <Button onClick={onRecipeSave}>保存</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
