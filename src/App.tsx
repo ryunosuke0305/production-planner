@@ -37,8 +37,14 @@ type RecipeUnit = "kg" | "g";
 
 type ItemUnit = "cs" | "kg";
 
+type Material = {
+  id: string;
+  name: string;
+  unit: RecipeUnit;
+};
+
 type RecipeLine = {
-  material: string;
+  materialId: string;
   perUnit: number;
   unit: RecipeUnit;
 };
@@ -79,8 +85,14 @@ type ExportPayloadV1 = {
     name: string;
     unit: ItemUnit;
     stock: number;
-    recipe: RecipeLine[];
+    recipe: Array<{
+      materialId: string;
+      materialName: string;
+      perUnit: number;
+      unit: RecipeUnit;
+    }>;
   }>;
+  materials: Material[];
   blocks: Array<{
     id: string;
     itemId: string;
@@ -123,9 +135,18 @@ type PlanPayload = {
   version: 1;
   weekStartISO: string;
   density: Density;
+  materials: Material[];
   items: Item[];
   blocks: Block[];
 };
+
+const SAMPLE_MATERIALS: Material[] = [
+  { id: "MAT-A", name: "原料A", unit: "kg" },
+  { id: "MAT-B", name: "原料B", unit: "kg" },
+  { id: "MAT-C", name: "原料C", unit: "kg" },
+  { id: "MAT-D", name: "原料D", unit: "kg" },
+  { id: "MAT-E", name: "原料E", unit: "kg" },
+];
 
 const SAMPLE_ITEMS: Item[] = [
   {
@@ -134,8 +155,8 @@ const SAMPLE_ITEMS: Item[] = [
     unit: "cs",
     stock: 140,
     recipe: [
-      { material: "原料A", perUnit: 0.25, unit: "kg" },
-      { material: "原料B", perUnit: 0.5, unit: "kg" },
+      { materialId: "MAT-A", perUnit: 0.25, unit: "kg" },
+      { materialId: "MAT-B", perUnit: 0.5, unit: "kg" },
     ],
   },
   {
@@ -144,8 +165,8 @@ const SAMPLE_ITEMS: Item[] = [
     unit: "cs",
     stock: 70,
     recipe: [
-      { material: "原料A", perUnit: 0.1, unit: "kg" },
-      { material: "原料C", perUnit: 0.2, unit: "kg" },
+      { materialId: "MAT-A", perUnit: 0.1, unit: "kg" },
+      { materialId: "MAT-C", perUnit: 0.2, unit: "kg" },
     ],
   },
   {
@@ -154,8 +175,8 @@ const SAMPLE_ITEMS: Item[] = [
     unit: "kg",
     stock: 320,
     recipe: [
-      { material: "原料D", perUnit: 0.35, unit: "kg" },
-      { material: "原料E", perUnit: 0.05, unit: "kg" },
+      { materialId: "MAT-D", perUnit: 0.35, unit: "kg" },
+      { materialId: "MAT-E", perUnit: 0.05, unit: "kg" },
     ],
   },
 ];
@@ -191,9 +212,14 @@ function buildWeekDates(start: Date): string[] {
   return out;
 }
 
-function calcMaterials(item: Item, amount: number): Array<{ material: string; qty: number; unit: RecipeUnit }> {
+function calcMaterials(
+  item: Item,
+  amount: number,
+  materialMap: Map<string, Material>
+): Array<{ materialId: string; materialName: string; qty: number; unit: RecipeUnit }> {
   return item.recipe.map((r) => ({
-    material: r.material,
+    materialId: r.materialId,
+    materialName: materialMap.get(r.materialId)?.name ?? "未登録原料",
     qty: r.perUnit * amount,
     unit: r.unit,
   }));
@@ -270,10 +296,10 @@ function sanitizeItems(raw: unknown): Item[] {
             .map((r) => {
               if (!r || typeof r !== "object") return null;
               const rRecord = r as Record<string, unknown>;
-              const material = asString(rRecord.material).trim();
-              if (!material) return null;
+              const materialId = asString(rRecord.materialId || rRecord.material).trim();
+              if (!materialId) return null;
               return {
-                material,
+                materialId,
                 perUnit: asNumber(rRecord.perUnit),
                 unit: asRecipeUnit(rRecord.unit),
               };
@@ -289,6 +315,24 @@ function sanitizeItems(raw: unknown): Item[] {
       } satisfies Item;
     })
     .filter((item): item is Item => item !== null);
+}
+
+function sanitizeMaterials(raw: unknown): Material[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const record = entry as Record<string, unknown>;
+      const id = asString(record.id).trim();
+      const name = asString(record.name).trim();
+      if (!id || !name) return null;
+      return {
+        id,
+        name,
+        unit: asRecipeUnit(record.unit),
+      } satisfies Material;
+    })
+    .filter((material): material is Material => material !== null);
 }
 
 function sanitizeBlocks(raw: unknown): Block[] {
@@ -322,9 +366,28 @@ function parsePlanPayload(raw: unknown): PlanPayload | null {
     version: 1,
     weekStartISO,
     density: asDensity(record.density),
+    materials: sanitizeMaterials(record.materials),
     items: sanitizeItems(record.items),
     blocks: sanitizeBlocks(record.blocks),
   };
+}
+
+function mergeMaterialsFromItems(items: Item[], materials: Material[]): Material[] {
+  const next = [...materials];
+  const known = new Map(materials.map((m) => [m.id, m]));
+  items.forEach((item) => {
+    item.recipe.forEach((line) => {
+      if (known.has(line.materialId)) return;
+      const created: Material = {
+        id: line.materialId,
+        name: line.materialId,
+        unit: line.unit,
+      };
+      known.set(created.id, created);
+      next.push(created);
+    });
+  });
+  return next;
 }
 
 function buildSlots(density: Density): number[] {
@@ -412,12 +475,14 @@ function buildExportPayload(p: {
   hours: number[];
   slotsPerDay: number;
   slotCount: number;
+  materials: Material[];
   items: Item[];
   blocks: Block[];
 }): ExportPayloadV1 {
   const slotIndexToLabel = new Array(p.slotCount).fill("").map((_, i) =>
     slotLabel({ density: p.density, weekDates: p.weekDates, hours: p.hours, slotIndex: i })
   );
+  const materialMap = new Map(p.materials.map((m) => [m.id, m]));
 
   return {
     schemaVersion: "1.0.0",
@@ -438,8 +503,14 @@ function buildExportPayload(p: {
       name: it.name,
       unit: it.unit,
       stock: it.stock,
-      recipe: it.recipe.map((r) => ({ ...r })),
+      recipe: it.recipe.map((r) => ({
+        materialId: r.materialId,
+        materialName: materialMap.get(r.materialId)?.name ?? "未登録原料",
+        perUnit: r.perUnit,
+        unit: r.unit,
+      })),
     })),
+    materials: p.materials.map((m) => ({ ...m })),
     blocks: p.blocks.map((b) => ({
       id: b.id,
       itemId: b.itemId,
@@ -496,10 +567,11 @@ function buildExportPayload(p: {
       hours: [],
       slotIndexToLabel: [],
     },
-    items: [],
-    blocks: [],
-    constraints: {},
-  };
+  items: [],
+  materials: [],
+  blocks: [],
+  constraints: {},
+};
   // eslint-disable-next-line no-console
   console.assert(typeof dummy.schemaVersion === "string", "export schemaVersion");
   // eslint-disable-next-line no-console
@@ -519,6 +591,8 @@ type DragState = {
 };
 
 export default function ManufacturingPlanGanttApp(): JSX.Element {
+  const [navOpen, setNavOpen] = useState(false);
+  const [activeView, setActiveView] = useState<"schedule" | "master">("schedule");
   const [planWeekStart, setPlanWeekStart] = useState<Date>(() => getDefaultWeekStart());
   const [viewWeekStart, setViewWeekStart] = useState<Date>(() => getDefaultWeekStart());
 
@@ -528,6 +602,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   // 実運用ではユーザー設定から取得する想定
   const timezone = "Asia/Tokyo";
 
+  const [materialsMaster, setMaterialsMaster] = useState<Material[]>(SAMPLE_MATERIALS);
   const [items, setItems] = useState<Item[]>(SAMPLE_ITEMS);
 
   const weekDates = useMemo(() => buildWeekDates(viewWeekStart), [viewWeekStart]);
@@ -564,6 +639,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [openRecipe, setOpenRecipe] = useState(false);
   const [activeRecipeItemId, setActiveRecipeItemId] = useState<string | null>(null);
   const [recipeDraft, setRecipeDraft] = useState<RecipeLine[]>([]);
+  const [materialNameDraft, setMaterialNameDraft] = useState("");
+  const [materialUnitDraft, setMaterialUnitDraft] = useState<RecipeUnit>("kg");
+  const [materialFormError, setMaterialFormError] = useState<string | null>(null);
+  const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null);
+  const [editingMaterialName, setEditingMaterialName] = useState("");
+  const [editingMaterialUnit, setEditingMaterialUnit] = useState<RecipeUnit>("kg");
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -581,6 +662,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const laneRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
+  const materialMap = useMemo(() => {
+    return new Map(materialsMaster.map((m) => [m.id, m]));
+  }, [materialsMaster]);
+
   const activeBlock = useMemo(() => {
     if (!activeBlockId) return null;
     return blocks.find((b) => b.id === activeBlockId) ?? null;
@@ -594,8 +679,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const materials = useMemo(() => {
     if (!activeItem) return [];
     const amount = Math.max(0, safeNumber(formAmount));
-    return calcMaterials(activeItem, amount);
-  }, [activeItem, formAmount]);
+    return calcMaterials(activeItem, amount, materialMap);
+  }, [activeItem, formAmount, materialMap]);
 
   const activeRecipeItem = useMemo(() => {
     if (!activeRecipeItemId) return null;
@@ -640,7 +725,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         }
         setPlanDensity(payload.density);
         setViewDensity(payload.density);
-        setItems(payload.items.length ? payload.items : SAMPLE_ITEMS);
+        const loadedItems = payload.items.length ? payload.items : SAMPLE_ITEMS;
+        const loadedMaterials = payload.materials.length ? payload.materials : SAMPLE_MATERIALS;
+        setMaterialsMaster(mergeMaterialsFromItems(loadedItems, loadedMaterials));
+        setItems(loadedItems);
         setBlocks(payload.blocks.length ? payload.blocks : DEFAULT_BLOCKS());
       } catch {
         // 読み込み失敗時は既定値を維持
@@ -666,6 +754,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             version: 1,
             weekStartISO: toISODate(planWeekStart),
             density: planDensity,
+            materials: materialsMaster,
             items,
             blocks,
           } satisfies PlanPayload),
@@ -679,7 +768,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return () => {
       controller.abort();
     };
-  }, [blocks, isPlanLoaded, items, planDensity, planWeekStart]);
+  }, [blocks, isPlanLoaded, items, materialsMaster, planDensity, planWeekStart]);
 
   useEffect(() => {
     if (!chatScrollRef.current) return;
@@ -705,12 +794,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         slotsPerDay: planSlotsPerDay,
         slotCount: planSlotCount,
         slotIndexToLabel: planSlotIndexToLabel,
+        materials: materialsMaster,
         items: items.map((item) => ({
           id: item.id,
           name: item.name,
           unit: item.unit,
           stock: item.stock,
-          recipe: item.recipe,
+          recipe: item.recipe.map((line) => ({
+            ...line,
+            materialName: materialMap.get(line.materialId)?.name ?? "未登録原料",
+          })),
         })),
         blocks: blockSummaries,
       },
@@ -1047,6 +1140,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const onRecipeSave = () => {
     if (!activeRecipeItemId) return;
+    const validMaterialIds = new Set(materialsMaster.map((m) => m.id));
     setItems((prev) =>
       prev.map((it) =>
         it.id === activeRecipeItemId
@@ -1054,16 +1148,95 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               ...it,
               recipe: recipeDraft
                 .map((r) => ({
-                  material: (r.material ?? "").trim(),
+                  materialId: (r.materialId ?? "").trim(),
                   perUnit: Number.isFinite(Number(r.perUnit)) ? Number(r.perUnit) : 0,
                   unit: r.unit === "g" ? "g" : "kg",
                 }))
-                .filter((r) => r.material.length > 0),
+                .filter((r) => r.materialId.length > 0 && validMaterialIds.has(r.materialId)),
             }
           : it
       )
     );
     setOpenRecipe(false);
+  };
+
+  const onCreateMaterial = () => {
+    const name = materialNameDraft.trim();
+    if (!name) {
+      setMaterialFormError("原料名を入力してください。");
+      return;
+    }
+    if (materialsMaster.some((m) => m.name === name)) {
+      setMaterialFormError("同じ原料名がすでに登録されています。");
+      return;
+    }
+    const newMaterial: Material = {
+      id: uid("mat"),
+      name,
+      unit: materialUnitDraft,
+    };
+    setMaterialsMaster((prev) => [...prev, newMaterial]);
+    setMaterialNameDraft("");
+    setMaterialUnitDraft("kg");
+    setMaterialFormError(null);
+  };
+
+  const onStartEditMaterial = (material: Material) => {
+    setEditingMaterialId(material.id);
+    setEditingMaterialName(material.name);
+    setEditingMaterialUnit(material.unit);
+    setMaterialFormError(null);
+  };
+
+  const onCancelEditMaterial = () => {
+    setEditingMaterialId(null);
+    setEditingMaterialName("");
+    setEditingMaterialUnit("kg");
+    setMaterialFormError(null);
+  };
+
+  const onSaveEditMaterial = () => {
+    if (!editingMaterialId) return;
+    const nextName = editingMaterialName.trim();
+    if (!nextName) {
+      setMaterialFormError("原料名を入力してください。");
+      return;
+    }
+    if (materialsMaster.some((m) => m.name === nextName && m.id !== editingMaterialId)) {
+      setMaterialFormError("同じ原料名がすでに登録されています。");
+      return;
+    }
+    setMaterialsMaster((prev) =>
+      prev.map((m) =>
+        m.id === editingMaterialId
+          ? {
+              ...m,
+              name: nextName,
+              unit: editingMaterialUnit,
+            }
+          : m
+      )
+    );
+    setMaterialFormError(null);
+    onCancelEditMaterial();
+  };
+
+  const onDeleteMaterial = (materialId: string) => {
+    const target = materialsMaster.find((m) => m.id === materialId);
+    if (!target) return;
+    const confirmed = window.confirm(`${target.name} を削除しますか？`);
+    if (!confirmed) return;
+    setMaterialsMaster((prev) => prev.filter((m) => m.id !== materialId));
+    setItems((prev) =>
+      prev.map((item) => ({
+        ...item,
+        recipe: item.recipe.filter((line) => line.materialId !== materialId),
+      }))
+    );
+    setRecipeDraft((prev) => prev.filter((line) => line.materialId !== materialId));
+    if (editingMaterialId === materialId) {
+      onCancelEditMaterial();
+    }
   };
 
   const eodStockByItem = useMemo(() => {
@@ -1103,6 +1276,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       hours: exportHours,
       slotsPerDay: exportSlotsPerDay,
       slotCount: exportSlotCount,
+      materials: materialsMaster,
       items,
       blocks,
     });
@@ -1125,537 +1299,779 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     dayW - 2
   }px, rgba(71, 85, 105, 0.55) ${dayW - 2}px, rgba(71, 85, 105, 0.55) ${dayW}px)`;
 
-  return (
-    <div className="min-h-screen w-full bg-background p-4 text-foreground">
-      <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:flex-row">
-        <div className="min-w-0 flex-1 space-y-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="space-y-1">
-              <div className="text-2xl font-semibold tracking-tight">製造計画（ガントチャート）</div>
-              <div className="text-sm text-muted-foreground">
-                バーをドラッグで移動、左右ハンドルで幅調整できます。空白クリックで新規作成します。
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" onClick={exportPlanAsJson}>
-                JSONエクスポート
-              </Button>
-              <Button variant="outline" onClick={() => shiftWeek(-7)}>
-                前の週
-              </Button>
-              <Button variant="outline" onClick={() => shiftWeek(7)}>
-                次の週
-              </Button>
-
-              <div className="w-44">
-                <Select value={viewDensity} onValueChange={(v) => setViewDensity(v as Density)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="表示密度" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="hour">1時間</SelectItem>
-                    <SelectItem value="2hour">2時間</SelectItem>
-                    <SelectItem value="day">日単位</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+  const scheduleView = (
+    <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:flex-row">
+      <div className="min-w-0 flex-1 space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-1">
+            <div className="text-2xl font-semibold tracking-tight">製造計画（ガントチャート）</div>
+            <div className="text-sm text-muted-foreground">
+              バーをドラッグで移動、左右ハンドルで幅調整できます。空白クリックで新規作成します。
             </div>
           </div>
 
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base font-medium">
-                週表示：{toMD(weekDates[0])} 〜 {toMD(weekDates[6])}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-auto rounded-xl border border-slate-200 bg-white">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={exportPlanAsJson}>
+              JSONエクスポート
+            </Button>
+            <Button variant="outline" onClick={() => shiftWeek(-7)}>
+              前の週
+            </Button>
+            <Button variant="outline" onClick={() => shiftWeek(7)}>
+              次の週
+            </Button>
+
+            <div className="w-44">
+              <Select value={viewDensity} onValueChange={(v) => setViewDensity(v as Density)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="表示密度" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="hour">1時間</SelectItem>
+                  <SelectItem value="2hour">2時間</SelectItem>
+                  <SelectItem value="day">日単位</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base font-medium">
+              週表示：{toMD(weekDates[0])} 〜 {toMD(weekDates[6])}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-auto rounded-xl border border-slate-200 bg-white">
+              <div
+                className="min-w-[1100px] text-slate-900"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `260px 110px repeat(${slotCount}, ${colW}px)`,
+                }}
+              >
+              {/* ヘッダ（上段：日付） */}
+              <div className="sticky left-0 top-0 z-50 bg-white border-b border-r p-3 font-medium">品目</div>
+              <div className="sticky top-0 z-20 bg-white border-b border-r p-3 text-center font-medium">Stock</div>
+              {weekDates.map((date, i) => (
                 <div
-                  className="min-w-[1100px] text-slate-900"
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: `260px 110px repeat(${slotCount}, ${colW}px)`,
-                  }}
+                  key={`date-${date}`}
+                  className={
+                    "sticky top-0 z-20 bg-white border-b p-3 text-center font-medium" +
+                    (i < 6 ? " border-r" : "")
+                  }
+                  style={{ gridColumn: `span ${dateSpan}` }}
                 >
-                {/* ヘッダ（上段：日付） */}
-                <div className="sticky left-0 top-0 z-50 bg-white border-b border-r p-3 font-medium">品目</div>
-                <div className="sticky top-0 z-20 bg-white border-b border-r p-3 text-center font-medium">Stock</div>
-                {weekDates.map((date, i) => (
+                  <div className="text-sm font-semibold">{toMD(date)}</div>
+                  <div className="text-xs text-muted-foreground">({toWeekday(date)})</div>
+                </div>
+              ))}
+
+              {/* ヘッダ（下段：時間） */}
+              <div className="sticky left-0 top-[49px] z-50 bg-white border-b border-r p-2 text-xs text-muted-foreground" />
+              <div className="sticky top-[49px] z-20 bg-white border-b border-r p-2 text-xs text-muted-foreground" />
+              {weekDates.flatMap((date, dayIdx) =>
+                hours.map((h, hourIdx) => (
                   <div
-                    key={`date-${date}`}
+                    key={`hour-${date}-${h}`}
                     className={
-                      "sticky top-0 z-20 bg-white border-b p-3 text-center font-medium" +
-                      (i < 6 ? " border-r" : "")
+                      "sticky top-[49px] z-20 bg-white border-b p-2 text-center text-xs text-muted-foreground" +
+                      (hourIdx === hours.length - 1 && dayIdx < 6 ? " border-r" : "")
                     }
-                    style={{ gridColumn: `span ${dateSpan}` }}
                   >
-                    <div className="text-sm font-semibold">{toMD(date)}</div>
-                    <div className="text-xs text-muted-foreground">({toWeekday(date)})</div>
+                    {viewDensity === "day" ? "" : `${h}`}
                   </div>
-                ))}
+                ))
+              )}
 
-                {/* ヘッダ（下段：時間） */}
-                <div className="sticky left-0 top-[49px] z-50 bg-white border-b border-r p-2 text-xs text-muted-foreground" />
-                <div className="sticky top-[49px] z-20 bg-white border-b border-r p-2 text-xs text-muted-foreground" />
-                {weekDates.flatMap((date, dayIdx) =>
-                  hours.map((h, hourIdx) => (
-                    <div
-                      key={`hour-${date}-${h}`}
-                      className={
-                        "sticky top-[49px] z-20 bg-white border-b p-2 text-center text-xs text-muted-foreground" +
-                        (hourIdx === hours.length - 1 && dayIdx < 6 ? " border-r" : "")
-                      }
-                    >
-                      {viewDensity === "day" ? "" : `${h}`}
+              {/* 行（品目） */}
+              {items.map((item) => {
+                const laneBlocks = (isPlanWeekView ? blocks : [])
+                  .filter((b) => b.itemId === item.id)
+                  .sort((a, b) => a.start - b.start);
+
+                const eod = eodStockByItem[item.id] ?? new Array(7).fill(item.stock);
+
+                return (
+                  <React.Fragment key={item.id}>
+                    {/* 左：品目（クリックでレシピモーダル） */}
+                    <div className="sticky left-0 z-40 bg-white border-b border-r p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          className="text-left font-medium underline-offset-4 hover:underline"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openRecipeEdit(item.id);
+                          }}
+                        >
+                          {item.name}
+                        </button>
+                        <Badge variant="secondary">{item.unit}</Badge>
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">レシピ {item.recipe.length}件</div>
                     </div>
-                  ))
-                )}
 
-                {/* 行（品目） */}
-                {items.map((item) => {
-                  const laneBlocks = (isPlanWeekView ? blocks : [])
-                    .filter((b) => b.itemId === item.id)
-                    .sort((a, b) => a.start - b.start);
+                    {/* 中：開始在庫 */}
+                    <div className="bg-white border-b border-r p-3 text-right">
+                      <div className="font-medium">{item.stock}</div>
+                      <div className="text-xs text-muted-foreground">開始在庫</div>
+                    </div>
 
-                  const eod = eodStockByItem[item.id] ?? new Array(7).fill(item.stock);
+                    {/* 右：レーン */}
+                    <div
+                      className="relative border-b overflow-hidden"
+                      style={{ gridColumn: `span ${slotCount}`, height: 64 }}
+                      ref={(el) => {
+                        laneRefs.current[item.id] = el;
+                      }}
+                      onClick={(e) => {
+                        if (suppressClickRef.current) return;
+                        if (e.defaultPrevented) return;
 
-                  return (
-                    <React.Fragment key={item.id}>
-                      {/* 左：品目（クリックでレシピモーダル） */}
-                      <div className="sticky left-0 z-40 bg-white border-b border-r p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            className="text-left font-medium underline-offset-4 hover:underline"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              openRecipeEdit(item.id);
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const slot = xToSlot(e.clientX, { left: rect.left, width: rect.width }, slotCount);
+                        createBlockAt(item.id, slot);
+                      }}
+                    >
+                      {/* 目盛線（スロット + 日境界） */}
+                      <div
+                        className="absolute inset-0"
+                        style={{
+                          backgroundImage: `${slotGridBg}, ${daySeparatorBg}`,
+                          opacity: 0.8,
+                        }}
+                      />
+
+                      {/* 日末在庫（EOD） */}
+                      {weekDates.map((date, dayIdx) => {
+                        const x = (dayIdx + 1) * dayW;
+                        return (
+                          <div
+                            key={`eod-${item.id}-${date}`}
+                            className="absolute bottom-[4px]"
+                            style={{ left: x - 8, transform: "translateX(-100%)" }}
+                          >
+                            <div className="rounded-md border bg-background/90 px-2 py-0.5 text-[11px] text-muted-foreground shadow-sm">
+                              EOD {eod[dayIdx]}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* ブロック */}
+                      {laneBlocks.map((b) => {
+                        const viewStart = clamp(convertSlotIndex(b.start, planDensity, viewDensity, "floor"), 0, slotCount - 1);
+                        const viewLen = clamp(convertSlotLength(b.len, planDensity, viewDensity, "ceil"), 1, slotCount - viewStart);
+                        const left = viewStart * colW;
+                        const width = viewLen * colW;
+                        const isActive = b.id === activeBlockId;
+
+                        return (
+                          <motion.div
+                            key={b.id}
+                            className={
+                              "absolute top-[6px] h-[42px] rounded-xl border shadow-sm touch-none " +
+                              (isActive
+                                ? " border-sky-400 bg-sky-200"
+                                : " border-sky-200 bg-sky-100 hover:bg-sky-200")
+                            }
+                            style={{ left, width }}
+                            whileTap={{ scale: 0.99 }}
+                            onClick={(ev) => {
+                              if (suppressClickRef.current) return;
+                              ev.preventDefault();
+                              ev.stopPropagation();
+                              openPlanEdit(b);
                             }}
                           >
-                            {item.name}
-                          </button>
-                          <Badge variant="secondary">{item.unit}</Badge>
-                        </div>
-                        <div className="mt-1 text-xs text-muted-foreground">レシピ {item.recipe.length}件</div>
-                      </div>
-
-                      {/* 中：開始在庫 */}
-                      <div className="bg-white border-b border-r p-3 text-right">
-                        <div className="font-medium">{item.stock}</div>
-                        <div className="text-xs text-muted-foreground">開始在庫</div>
-                      </div>
-
-                      {/* 右：レーン */}
-                      <div
-                        className="relative border-b overflow-hidden"
-                        style={{ gridColumn: `span ${slotCount}`, height: 64 }}
-                        ref={(el) => {
-                          laneRefs.current[item.id] = el;
-                        }}
-                        onClick={(e) => {
-                          if (suppressClickRef.current) return;
-                          if (e.defaultPrevented) return;
-
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const slot = xToSlot(e.clientX, { left: rect.left, width: rect.width }, slotCount);
-                          createBlockAt(item.id, slot);
-                        }}
-                      >
-                        {/* 目盛線（スロット + 日境界） */}
-                        <div
-                          className="absolute inset-0"
-                          style={{
-                            backgroundImage: `${slotGridBg}, ${daySeparatorBg}`,
-                            opacity: 0.8,
-                          }}
-                        />
-
-                        {/* 日末在庫（EOD） */}
-                        {weekDates.map((date, dayIdx) => {
-                          const x = (dayIdx + 1) * dayW;
-                          return (
+                            {/* 左リサイズ */}
                             <div
-                              key={`eod-${item.id}-${date}`}
-                              className="absolute bottom-[4px]"
-                              style={{ left: x - 8, transform: "translateX(-100%)" }}
-                            >
-                              <div className="rounded-md border bg-background/90 px-2 py-0.5 text-[11px] text-muted-foreground shadow-sm">
-                                EOD {eod[dayIdx]}
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {/* ブロック */}
-                        {laneBlocks.map((b) => {
-                          const viewStart = clamp(convertSlotIndex(b.start, planDensity, viewDensity, "floor"), 0, slotCount - 1);
-                          const viewLen = clamp(convertSlotLength(b.len, planDensity, viewDensity, "ceil"), 1, slotCount - viewStart);
-                          const left = viewStart * colW;
-                          const width = viewLen * colW;
-                          const isActive = b.id === activeBlockId;
-
-                          return (
-                            <motion.div
-                              key={b.id}
-                              className={
-                                "absolute top-[6px] h-[42px] rounded-xl border shadow-sm touch-none " +
-                                (isActive
-                                  ? " border-sky-400 bg-sky-200"
-                                  : " border-sky-200 bg-sky-100 hover:bg-sky-200")
-                              }
-                              style={{ left, width }}
-                              whileTap={{ scale: 0.99 }}
-                              onClick={(ev) => {
-                                if (suppressClickRef.current) return;
+                              className="absolute left-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-l-xl touch-none"
+                              onPointerDown={(ev) => {
                                 ev.preventDefault();
                                 ev.stopPropagation();
-                                openPlanEdit(b);
+                                beginPointer({ kind: "resizeL", blockId: b.id, itemId: item.id, clientX: ev.clientX });
+                              }}
+                              title="幅調整（左）"
+                            />
+
+                            {/* 右リサイズ */}
+                            <div
+                              className="absolute right-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-r-xl touch-none"
+                              onPointerDown={(ev) => {
+                                ev.preventDefault();
+                                ev.stopPropagation();
+                                beginPointer({ kind: "resizeR", blockId: b.id, itemId: item.id, clientX: ev.clientX });
+                              }}
+                              title="幅調整（右）"
+                            />
+
+                            {/* 移動 */}
+                            <div
+                              className="absolute inset-0 z-10 cursor-grab select-none rounded-xl p-2 touch-none"
+                              onPointerDown={(ev) => {
+                                const r = ev.currentTarget.getBoundingClientRect();
+                                const x = ev.clientX - r.left;
+                                if (x <= 8 || x >= r.width - 8) return;
+                                ev.preventDefault();
+                                ev.stopPropagation();
+                                beginPointer({ kind: "move", blockId: b.id, itemId: item.id, clientX: ev.clientX });
                               }}
                             >
-                              {/* 左リサイズ */}
-                              <div
-                                className="absolute left-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-l-xl touch-none"
-                                onPointerDown={(ev) => {
-                                  ev.preventDefault();
-                                  ev.stopPropagation();
-                                  beginPointer({ kind: "resizeL", blockId: b.id, itemId: item.id, clientX: ev.clientX });
-                                }}
-                                title="幅調整（左）"
-                              />
-
-                              {/* 右リサイズ */}
-                              <div
-                                className="absolute right-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-r-xl touch-none"
-                                onPointerDown={(ev) => {
-                                  ev.preventDefault();
-                                  ev.stopPropagation();
-                                  beginPointer({ kind: "resizeR", blockId: b.id, itemId: item.id, clientX: ev.clientX });
-                                }}
-                                title="幅調整（右）"
-                              />
-
-                              {/* 移動 */}
-                              <div
-                                className="absolute inset-0 z-10 cursor-grab select-none rounded-xl p-2 touch-none"
-                                onPointerDown={(ev) => {
-                                  const r = ev.currentTarget.getBoundingClientRect();
-                                  const x = ev.clientX - r.left;
-                                  if (x <= 8 || x >= r.width - 8) return;
-                                  ev.preventDefault();
-                                  ev.stopPropagation();
-                                  beginPointer({ kind: "move", blockId: b.id, itemId: item.id, clientX: ev.clientX });
-                                }}
-                              >
-                                <div className="flex h-full flex-col justify-between">
-                                  <div className="flex items-center justify-between">
-                                    <div className="text-[11px] text-slate-700">
-                                      {slotLabel({
-                                        density: planDensity,
-                                        weekDates: planWeekDates,
-                                        hours: planHours,
-                                        slotIndex: b.start,
-                                      })}
-                                    </div>
-                                    <div className="text-[11px] text-slate-700">
-                                      {durationLabel(b.len, planDensity)}
-                                    </div>
+                              <div className="flex h-full flex-col justify-between">
+                                <div className="flex items-center justify-between">
+                                  <div className="text-[11px] text-slate-700">
+                                    {slotLabel({
+                                      density: planDensity,
+                                      weekDates: planWeekDates,
+                                      hours: planHours,
+                                      slotIndex: b.start,
+                                    })}
                                   </div>
-                                  <div className="text-sm font-semibold">+{b.amount}</div>
-                                  <div className="truncate text-[11px] text-slate-600">{b.memo || " "}</div>
+                                  <div className="text-[11px] text-slate-700">
+                                    {durationLabel(b.len, planDensity)}
+                                  </div>
                                 </div>
+                                <div className="text-sm font-semibold">+{b.amount}</div>
+                                <div className="truncate text-[11px] text-slate-600">{b.memo || " "}</div>
                               </div>
-                            </motion.div>
-                          );
-                        })}
-                      </div>
-                    </React.Fragment>
-                  );
-                })}
-                </div>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  </React.Fragment>
+                );
+              })}
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* 計画編集モーダル */}
-          <Dialog open={openPlan} onOpenChange={setOpenPlan}>
-            <DialogContent className="max-w-xl">
-              <DialogHeader>
-                <DialogTitle>
-                  {activeItem ? activeItem.name : ""}
-                  {activeBlock ? (
-                    <span className="ml-2 text-sm font-normal text-muted-foreground">
+        {/* 計画編集モーダル */}
+        <Dialog open={openPlan} onOpenChange={setOpenPlan}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>
+                {activeItem ? activeItem.name : ""}
+                {activeBlock ? (
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">
+                    {slotLabel({
+                      density: planDensity,
+                      weekDates: planWeekDates,
+                      hours: planHours,
+                      slotIndex: activeBlock.start,
+                    })}
+                    {activeBlock.len ? `（${durationLabel(activeBlock.len, planDensity)}）` : ""}
+                  </span>
+                ) : null}
+              </DialogTitle>
+            </DialogHeader>
+
+          <div className="px-6 py-4">
+            <div className="space-y-5">
+            <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
+              <div className="col-span-4 text-sm text-muted-foreground">生産数量</div>
+              <div className="col-span-6">
+                <Input
+                  inputMode="decimal"
+                  value={formAmount}
+                  onChange={(e) => setFormAmount(e.target.value)}
+                  placeholder="0"
+                />
+              </div>
+              <div className="col-span-2 text-sm text-muted-foreground">{activeItem?.unit ?? ""}</div>
+            </div>
+
+            <Card className="rounded-2xl">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">原材料（数量から自動計算）</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {activeItem ? (
+                  materials.map((m) => (
+                    <div key={m.materialId} className="flex items-center justify-between">
+                      <div className="text-sm">{m.materialName}</div>
+                      <div className="font-medium">
+                        {Number.isFinite(m.qty)
+                          ? m.qty
+                              .toFixed(3)
+                              .replace(/\.0+$/, "")
+                              .replace(/(\.[0-9]*?)0+$/, "$1")
+                          : "0"}
+                        <span className="ml-1 text-sm text-muted-foreground">{m.unit}</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-muted-foreground"> </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <div className="space-y-2">
+              <div className="text-sm text-muted-foreground">メモ</div>
+              <Textarea
+                value={formMemo}
+                onChange={(e) => setFormMemo(e.target.value)}
+                placeholder="段取り・注意点・引当メモなど"
+              />
+            </div>
+
+            <AnimatePresence>
+              {activeBlock ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 6 }}
+                  className="rounded-xl border p-3 text-sm"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="text-muted-foreground">現在のブロック</div>
+                    <Badge variant="secondary">編集</Badge>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between">
+                    <div>期間</div>
+                    <div className="font-medium">
                       {slotLabel({
                         density: planDensity,
                         weekDates: planWeekDates,
                         hours: planHours,
                         slotIndex: activeBlock.start,
                       })}
-                      {activeBlock.len ? `（${durationLabel(activeBlock.len, planDensity)}）` : ""}
-                    </span>
-                  ) : null}
-                </DialogTitle>
-              </DialogHeader>
-
-            <div className="px-6 py-4">
-              <div className="space-y-5">
-              <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
-                <div className="col-span-4 text-sm text-muted-foreground">生産数量</div>
-                <div className="col-span-6">
-                  <Input
-                    inputMode="decimal"
-                    value={formAmount}
-                    onChange={(e) => setFormAmount(e.target.value)}
-                    placeholder="0"
-                  />
-                </div>
-                <div className="col-span-2 text-sm text-muted-foreground">{activeItem?.unit ?? ""}</div>
-              </div>
-
-              <Card className="rounded-2xl">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">原材料（数量から自動計算）</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {activeItem ? (
-                    materials.map((m) => (
-                      <div key={m.material} className="flex items-center justify-between">
-                        <div className="text-sm">{m.material}</div>
-                        <div className="font-medium">
-                          {Number.isFinite(m.qty)
-                            ? m.qty
-                                .toFixed(3)
-                                .replace(/\.0+$/, "")
-                                .replace(/(\.[0-9]*?)0+$/, "$1")
-                            : "0"}
-                          <span className="ml-1 text-sm text-muted-foreground">{m.unit}</span>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-sm text-muted-foreground"> </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <div className="space-y-2">
-                <div className="text-sm text-muted-foreground">メモ</div>
-                <Textarea
-                  value={formMemo}
-                  onChange={(e) => setFormMemo(e.target.value)}
-                  placeholder="段取り・注意点・引当メモなど"
-                />
-              </div>
-
-              <AnimatePresence>
-                {activeBlock ? (
-                  <motion.div
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 6 }}
-                    className="rounded-xl border p-3 text-sm"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="text-muted-foreground">現在のブロック</div>
-                      <Badge variant="secondary">編集</Badge>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between">
-                      <div>期間</div>
-                      <div className="font-medium">
-                        {slotLabel({
-                          density: planDensity,
-                          weekDates: planWeekDates,
-                          hours: planHours,
-                          slotIndex: activeBlock.start,
-                        })}
-                        <span className="mx-1 text-muted-foreground">→</span>
-                        {slotLabel({
-                          density: planDensity,
-                          weekDates: planWeekDates,
-                          hours: planHours,
-                          slotIndex: Math.min(planSlotCount - 1, activeBlock.start + activeBlock.len - 1),
-                        })}
-                      </div>
-                    </div>
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
-              </div>
-            </div>
-
-              <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setOpenPlan(false)}>
-                  キャンセル
-                </Button>
-                <Button variant="destructive" onClick={onPlanDelete}>
-                  削除
-                </Button>
-                <Button onClick={onPlanSave}>保存</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          {/* レシピ設定モーダル */}
-          <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
-              </DialogHeader>
-
-            <div className="px-6 py-4">
-              <div className="space-y-4">
-                <div className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
-                  係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
-                </div>
-
-                <div className="rounded-xl border">
-                  <div className="grid grid-cols-12 gap-2 border-b bg-muted/30 p-2 text-xs text-muted-foreground">
-                    <div className="col-span-6">原材料名</div>
-                    <div className="col-span-3 text-right">係数</div>
-                    <div className="col-span-2">単位</div>
-                    <div className="col-span-1 text-right"> </div>
-                  </div>
-
-                  <div className="divide-y">
-                    {recipeDraft.map((r, idx) => (
-                      <div key={`${r.material}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
-                        <div className="col-span-6">
-                          <Input
-                            value={r.material}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setRecipeDraft((prev) =>
-                                prev.map((x, i) => (i === idx ? { ...x, material: v } : x))
-                              );
-                            }}
-                            placeholder="例：原料A"
-                          />
-                        </div>
-                        <div className="col-span-3">
-                          <Input
-                            inputMode="decimal"
-                            value={String(r.perUnit)}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setRecipeDraft((prev) =>
-                                prev.map((x, i) => (i === idx ? { ...x, perUnit: safeNumber(v) } : x))
-                              );
-                            }}
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <Select
-                            value={r.unit}
-                            onValueChange={(v) => {
-                              const unit = v === "g" ? "g" : "kg";
-                              setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
-                            }}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="単位" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="kg">kg</SelectItem>
-                              <SelectItem value="g">g</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="col-span-1 text-right">
-                          <Button
-                            variant="outline"
-                            onClick={() => setRecipeDraft((prev) => prev.filter((_, i) => i !== idx))}
-                          >
-                            -
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-
-                    <div className="p-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => setRecipeDraft((prev) => [...prev, { material: "", perUnit: 0, unit: "kg" }])}
-                      >
-                        追加
-                      </Button>
+                      <span className="mx-1 text-muted-foreground">→</span>
+                      {slotLabel({
+                        density: planDensity,
+                        weekDates: planWeekDates,
+                        hours: planHours,
+                        slotIndex: Math.min(planSlotCount - 1, activeBlock.start + activeBlock.len - 1),
+                      })}
                     </div>
                   </div>
-                </div>
-              </div>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
             </div>
+          </div>
 
-              <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setOpenRecipe(false)}>
-                  キャンセル
-                </Button>
-                <Button onClick={onRecipeSave}>保存</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setOpenPlan(false)}>
+                キャンセル
+              </Button>
+              <Button variant="destructive" onClick={onPlanDelete}>
+                削除
+              </Button>
+              <Button onClick={onPlanSave}>保存</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-        <div className="w-full shrink-0 lg:w-[360px]">
-          <Card className="rounded-2xl shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
-            </CardHeader>
-            <CardContent className="flex h-[640px] flex-col gap-3">
-              <div className="rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
-                .envでVITE_GEMINI_API_KEYとVITE_GEMINI_MODELを設定してください。空き枠指定や期限指定の指示もOKです。
+        {/* レシピ設定モーダル */}
+        <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
+            </DialogHeader>
+
+          <div className="px-6 py-4">
+            <div className="space-y-4">
+              <div className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
+                係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
               </div>
-              {!geminiApiKey ? (
-                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
-                  APIキーが未設定です。
+              <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+                原料はマスタから選択します。未登録の場合は「マスタ管理」画面で追加してください。
+              </div>
+
+              <div className="rounded-xl border">
+                <div className="grid grid-cols-12 gap-2 border-b bg-muted/30 p-2 text-xs text-muted-foreground">
+                  <div className="col-span-6">原材料名</div>
+                  <div className="col-span-3 text-right">係数</div>
+                  <div className="col-span-2">単位</div>
+                  <div className="col-span-1 text-right"> </div>
                 </div>
-              ) : null}
-              {chatError ? (
-                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
-                  {chatError}
-                </div>
-              ) : null}
-              <div ref={chatScrollRef} className="flex-1 space-y-2 overflow-y-auto rounded-md border bg-background p-2">
-                {chatMessages.map((msg) => (
-                  <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <div
-                      className={
-                        "max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm " +
-                        (msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted")
-                      }
+
+                <div className="divide-y">
+                  {recipeDraft.map((r, idx) => (
+                    <div key={`${r.materialId}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
+                      <div className="col-span-6">
+                        <Select
+                          value={r.materialId}
+                          onValueChange={(value) => {
+                            const selected = materialMap.get(value);
+                            setRecipeDraft((prev) =>
+                              prev.map((x, i) =>
+                                i === idx
+                                  ? {
+                                      ...x,
+                                      materialId: value,
+                                      unit: selected?.unit ?? x.unit,
+                                    }
+                                  : x
+                              )
+                            );
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="原料を選択" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {materialsMaster.length ? (
+                              materialsMaster.map((m) => (
+                                <SelectItem key={m.id} value={m.id}>
+                                  {m.name}
+                                </SelectItem>
+                              ))
+                            ) : (
+                              <SelectItem value="__none__" disabled>
+                                原料が未登録です
+                              </SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="col-span-3">
+                        <Input
+                          inputMode="decimal"
+                          value={String(r.perUnit)}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setRecipeDraft((prev) =>
+                              prev.map((x, i) => (i === idx ? { ...x, perUnit: safeNumber(v) } : x))
+                            );
+                          }}
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <Select
+                          value={r.unit}
+                          onValueChange={(v) => {
+                            const unit = v === "g" ? "g" : "kg";
+                            setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="単位" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="kg">kg</SelectItem>
+                            <SelectItem value="g">g</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="col-span-1 text-right">
+                        <Button
+                          variant="outline"
+                          onClick={() => setRecipeDraft((prev) => prev.filter((_, i) => i !== idx))}
+                        >
+                          -
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+
+                  <div className="p-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const fallbackMaterial = materialsMaster[0];
+                        setRecipeDraft((prev) => [
+                          ...prev,
+                          {
+                            materialId: fallbackMaterial?.id ?? "",
+                            perUnit: 0,
+                            unit: fallbackMaterial?.unit ?? "kg",
+                          },
+                        ]);
+                      }}
                     >
-                      {msg.content}
-                    </div>
+                      追加
+                    </Button>
                   </div>
-                ))}
-                {chatBusy ? (
-                  <div className="flex justify-start">
-                    <div className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">送信中...</div>
-                  </div>
-                ) : null}
-              </div>
-              <div className="space-y-2">
-                <Textarea
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                      e.preventDefault();
-                      void sendChatMessage();
-                    }
-                  }}
-                  placeholder="例：Item A を 9/12 10:00から2時間、40cs 追加して"
-                  rows={3}
-                />
-                <div className="flex items-center justify-between">
-                  <div className="text-xs text-muted-foreground">Ctrl+Enter / Cmd+Enter で送信</div>
-                  <Button onClick={() => void sendChatMessage()} disabled={chatBusy}>
-                    送信
-                  </Button>
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
+
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setOpenRecipe(false)}>
+                キャンセル
+              </Button>
+              <Button onClick={onRecipeSave}>保存</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      <div className="w-full shrink-0 lg:w-[360px]">
+        <Card className="rounded-2xl shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
+          </CardHeader>
+          <CardContent className="flex h-[640px] flex-col gap-3">
+            <div className="rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
+              .envでVITE_GEMINI_API_KEYとVITE_GEMINI_MODELを設定してください。空き枠指定や期限指定の指示もOKです。
+            </div>
+            {!geminiApiKey ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+                APIキーが未設定です。
+              </div>
+            ) : null}
+            {chatError ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+                {chatError}
+              </div>
+            ) : null}
+            <div ref={chatScrollRef} className="flex-1 space-y-2 overflow-y-auto rounded-md border bg-background p-2">
+              {chatMessages.map((msg) => (
+                <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div
+                    className={
+                      "max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm " +
+                      (msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted")
+                    }
+                  >
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+              {chatBusy ? (
+                <div className="flex justify-start">
+                  <div className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">送信中...</div>
+                </div>
+              ) : null}
+            </div>
+            <div className="space-y-2">
+              <Textarea
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    void sendChatMessage();
+                  }
+                }}
+                placeholder="例：Item A を 9/12 10:00から2時間、40cs 追加して"
+                rows={3}
+              />
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-muted-foreground">Ctrl+Enter / Cmd+Enter で送信</div>
+                <Button onClick={() => void sendChatMessage()} disabled={chatBusy}>
+                  送信
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+
+  const masterView = (
+    <div className="mx-auto w-full max-w-5xl space-y-4">
+      <div className="space-y-1">
+        <div className="text-2xl font-semibold tracking-tight">マスタ管理</div>
+        <div className="text-sm text-muted-foreground">原料マスタの登録・編集・削除を行います。</div>
+      </div>
+
+      <Card className="rounded-2xl">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium">原料を追加</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-12 items-center gap-2">
+            <div className="col-span-6">
+              <Input
+                value={materialNameDraft}
+                onChange={(e) => {
+                  setMaterialNameDraft(e.target.value);
+                  setMaterialFormError(null);
+                }}
+                placeholder="原料名"
+              />
+            </div>
+            <div className="col-span-4">
+              <Select
+                value={materialUnitDraft}
+                onValueChange={(value) => {
+                  setMaterialUnitDraft(value as RecipeUnit);
+                  setMaterialFormError(null);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="単位" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="kg">kg</SelectItem>
+                  <SelectItem value="g">g</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="col-span-2">
+              <Button onClick={onCreateMaterial} className="w-full">
+                追加
+              </Button>
+            </div>
+          </div>
+          {materialFormError ? (
+            <div className="text-sm text-destructive">{materialFormError}</div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium">原料一覧</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {materialsMaster.length ? (
+            <div className="divide-y rounded-lg border">
+              <div className="grid grid-cols-12 gap-2 bg-muted/30 p-2 text-xs text-muted-foreground">
+                <div className="col-span-6">原料名</div>
+                <div className="col-span-2">単位</div>
+                <div className="col-span-4 text-right">操作</div>
+              </div>
+              {materialsMaster.map((material) => {
+                const isEditing = editingMaterialId === material.id;
+                return (
+                  <div key={material.id} className="grid grid-cols-12 items-center gap-2 p-2">
+                    <div className="col-span-6">
+                      {isEditing ? (
+                        <Input
+                          value={editingMaterialName}
+                          onChange={(e) => {
+                            setEditingMaterialName(e.target.value);
+                            setMaterialFormError(null);
+                          }}
+                        />
+                      ) : (
+                        <div className="text-sm font-medium">{material.name}</div>
+                      )}
+                    </div>
+                    <div className="col-span-2">
+                      {isEditing ? (
+                        <Select value={editingMaterialUnit} onValueChange={(value) => setEditingMaterialUnit(value as RecipeUnit)}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="単位" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="kg">kg</SelectItem>
+                            <SelectItem value="g">g</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="text-sm text-muted-foreground">{material.unit}</div>
+                      )}
+                    </div>
+                    <div className="col-span-4 flex justify-end gap-2">
+                      {isEditing ? (
+                        <>
+                          <Button variant="outline" onClick={onCancelEditMaterial}>
+                            キャンセル
+                          </Button>
+                          <Button onClick={onSaveEditMaterial}>保存</Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button variant="outline" onClick={() => onStartEditMaterial(material)}>
+                            編集
+                          </Button>
+                          <Button variant="destructive" onClick={() => onDeleteMaterial(material.id)}>
+                            削除
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+              原料マスタが未登録です。上のフォームから追加してください。
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <div
+        className={`fixed inset-0 z-40 bg-black/30 transition ${
+          navOpen ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
+        onClick={() => setNavOpen(false)}
+      />
+      <aside
+        className={`fixed left-0 top-0 z-50 h-full w-64 border-r bg-background shadow-sm transition-transform ${
+          navOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="flex h-full flex-col gap-4 p-4">
+          <div className="flex items-center justify-between">
+            <div className="text-lg font-semibold">メニュー</div>
+            <button
+              type="button"
+              className="rounded-md border px-2 py-1 text-sm"
+              onClick={() => setNavOpen(false)}
+            >
+              閉じる
+            </button>
+          </div>
+          <nav className="space-y-1">
+            <button
+              type="button"
+              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
+                activeView === "schedule" ? "bg-muted font-semibold" : "hover:bg-muted/50"
+              }`}
+              onClick={() => {
+                setActiveView("schedule");
+                setNavOpen(false);
+              }}
+            >
+              スケジュール
+            </button>
+            <button
+              type="button"
+              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
+                activeView === "master" ? "bg-muted font-semibold" : "hover:bg-muted/50"
+              }`}
+              onClick={() => {
+                setActiveView("master");
+                setNavOpen(false);
+              }}
+            >
+              マスタ管理
+            </button>
+          </nav>
         </div>
+      </aside>
+
+      <div className="min-h-screen">
+        <header className="sticky top-0 z-30 flex items-center gap-3 border-b bg-background/95 px-4 py-3 shadow-sm backdrop-blur">
+          <button
+            type="button"
+            className="rounded-md border p-2 hover:bg-muted"
+            onClick={() => setNavOpen((prev) => !prev)}
+            aria-label="メニューを開く"
+          >
+            <span className="block h-0.5 w-5 bg-foreground" />
+            <span className="mt-1 block h-0.5 w-5 bg-foreground" />
+            <span className="mt-1 block h-0.5 w-5 bg-foreground" />
+          </button>
+          <div>
+            <div className="text-sm text-muted-foreground">画面</div>
+            <div className="text-base font-semibold">
+              {activeView === "schedule" ? "スケジュール" : "マスタ管理"}
+            </div>
+          </div>
+        </header>
+
+        <main className="p-4">{activeView === "schedule" ? scheduleView : masterView}</main>
       </div>
     </div>
   );
