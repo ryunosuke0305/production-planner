@@ -62,7 +62,7 @@ const createPlanApiMiddleware = () => {
 };
 
 export default defineConfig({
-  envDir: ".",
+  envDir: "data",
   plugins: [react()],
   configureServer(server) {
     server.middlewares.use("/api/plan", createPlanApiMiddleware());
