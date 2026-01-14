@@ -16,6 +16,17 @@ npm run dev
 
 起動後、ターミナルに表示される URL（例: `http://localhost:5173`）へアクセスしてください。
 
+## Docker での起動（単一コンテナ）
+
+永続化データは `data/` をバインドマウントしてください（`plan.json` などが保存されます）。
+
+```bash
+docker build -t production-planner .
+docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
+```
+
+起動後、`http://localhost:4173` へアクセスしてください。
+
 ## Windows 向け簡易起動
 
 `run.bat` をダブルクリックまたは PowerShell から実行すると、依存関係の導入後に開発サーバーを起動します。
