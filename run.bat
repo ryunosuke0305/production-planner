@@ -26,14 +26,6 @@ if %NODE_MAJOR% LSS 20 (
   exit /b 1
 )
 
-if %NODE_MAJOR% GTR 22 (
-  echo [ERROR] Node.js v%NODE_MAJOR%.x は better-sqlite3 の事前ビルドが無く、
-  echo [ERROR] Visual Studio の C++ ビルド環境が必要になります。
-  echo [ERROR] LTS の 20.x または 22.x を使用してください。
-  pause
-  exit /b 1
-)
-
 echo [INFO] 依存関係をインストールします...
 call npm install
 if errorlevel 1 goto :error
