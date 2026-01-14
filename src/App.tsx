@@ -556,6 +556,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const [materialsMaster, setMaterialsMaster] = useState<Material[]>(SAMPLE_MATERIALS);
   const [items, setItems] = useState<Item[]>(SAMPLE_ITEMS);
+  const [itemNameDraft, setItemNameDraft] = useState("");
+  const [itemUnitDraft, setItemUnitDraft] = useState<ItemUnit>("cs");
+  const [itemStockDraft, setItemStockDraft] = useState("0");
+  const [itemFormError, setItemFormError] = useState<string | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editingItemName, setEditingItemName] = useState("");
+  const [editingItemUnit, setEditingItemUnit] = useState<ItemUnit>("cs");
+  const [editingItemStock, setEditingItemStock] = useState("0");
 
   const weekDates = useMemo(() => buildWeekDates(viewWeekStart), [viewWeekStart]);
   const hours = useMemo(() => buildSlots(viewDensity), [viewDensity]);
@@ -1116,6 +1124,98 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setOpenRecipe(false);
   };
 
+  const onCreateItem = () => {
+    const name = itemNameDraft.trim();
+    if (!name) {
+      setItemFormError("品目名を入力してください。");
+      return;
+    }
+    if (items.some((it) => it.name === name)) {
+      setItemFormError("同じ品目名がすでに登録されています。");
+      return;
+    }
+    const stock = Math.max(0, safeNumber(itemStockDraft));
+    const newItem: Item = {
+      id: uid("item"),
+      name,
+      unit: itemUnitDraft,
+      stock,
+      recipe: [],
+    };
+    setItems((prev) => [...prev, newItem]);
+    setItemNameDraft("");
+    setItemUnitDraft("cs");
+    setItemStockDraft("0");
+    setItemFormError(null);
+  };
+
+  const onStartEditItem = (item: Item) => {
+    setEditingItemId(item.id);
+    setEditingItemName(item.name);
+    setEditingItemUnit(item.unit);
+    setEditingItemStock(String(item.stock ?? 0));
+    setItemFormError(null);
+  };
+
+  const onCancelEditItem = () => {
+    setEditingItemId(null);
+    setEditingItemName("");
+    setEditingItemUnit("cs");
+    setEditingItemStock("0");
+    setItemFormError(null);
+  };
+
+  const onSaveEditItem = () => {
+    if (!editingItemId) return;
+    const nextName = editingItemName.trim();
+    if (!nextName) {
+      setItemFormError("品目名を入力してください。");
+      return;
+    }
+    if (items.some((it) => it.name === nextName && it.id !== editingItemId)) {
+      setItemFormError("同じ品目名がすでに登録されています。");
+      return;
+    }
+    const nextStock = Math.max(0, safeNumber(editingItemStock));
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === editingItemId
+          ? {
+              ...it,
+              name: nextName,
+              unit: editingItemUnit,
+              stock: nextStock,
+            }
+          : it
+      )
+    );
+    setItemFormError(null);
+    onCancelEditItem();
+  };
+
+  const onDeleteItem = (itemId: string) => {
+    const target = items.find((it) => it.id === itemId);
+    if (!target) return;
+    const confirmed = window.confirm(`${target.name} を削除しますか？`);
+    if (!confirmed) return;
+    setItems((prev) => prev.filter((it) => it.id !== itemId));
+    setBlocks((prev) => prev.filter((b) => b.itemId !== itemId));
+    if (activeBlockId) {
+      const hasActive = blocks.some((b) => b.id === activeBlockId && b.itemId === itemId);
+      if (hasActive) {
+        setActiveBlockId(null);
+        setOpenPlan(false);
+      }
+    }
+    if (activeRecipeItemId === itemId) {
+      setActiveRecipeItemId(null);
+      setOpenRecipe(false);
+    }
+    if (editingItemId === itemId) {
+      onCancelEditItem();
+    }
+  };
+
   const onCreateMaterial = () => {
     const name = materialNameDraft.trim();
     if (!name) {
@@ -1624,141 +1724,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-
-        {/* レシピ設定モーダル */}
-        <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
-            </DialogHeader>
-
-          <div className="px-6 py-4">
-            <div className="space-y-4">
-              <div className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
-                係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
-              </div>
-              <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
-                原料はマスタから選択します。未登録の場合は「マスタ管理」画面で追加してください。
-              </div>
-
-              <div className="rounded-xl border">
-                <div className="grid grid-cols-12 gap-2 border-b bg-muted/30 p-2 text-xs text-muted-foreground">
-                  <div className="col-span-6">原材料名</div>
-                  <div className="col-span-3 text-right">係数</div>
-                  <div className="col-span-2">単位</div>
-                  <div className="col-span-1 text-right"> </div>
-                </div>
-
-                <div className="divide-y">
-                  {recipeDraft.map((r, idx) => (
-                    <div key={`${r.materialId}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
-                      <div className="col-span-6">
-                        <Select
-                          value={r.materialId}
-                          onValueChange={(value) => {
-                            const selected = materialMap.get(value);
-                            setRecipeDraft((prev) =>
-                              prev.map((x, i) =>
-                                i === idx
-                                  ? {
-                                      ...x,
-                                      materialId: value,
-                                      unit: selected?.unit ?? x.unit,
-                                    }
-                                  : x
-                              )
-                            );
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="原料を選択" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {materialsMaster.length ? (
-                              materialsMaster.map((m) => (
-                                <SelectItem key={m.id} value={m.id}>
-                                  {m.name}
-                                </SelectItem>
-                              ))
-                            ) : (
-                              <SelectItem value="__none__" disabled>
-                                原料が未登録です
-                              </SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="col-span-3">
-                        <Input
-                          inputMode="decimal"
-                          value={String(r.perUnit)}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setRecipeDraft((prev) =>
-                              prev.map((x, i) => (i === idx ? { ...x, perUnit: safeNumber(v) } : x))
-                            );
-                          }}
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <Select
-                          value={r.unit}
-                          onValueChange={(v) => {
-                            const unit = v === "g" ? "g" : "kg";
-                            setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="単位" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="kg">kg</SelectItem>
-                            <SelectItem value="g">g</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="col-span-1 text-right">
-                        <Button
-                          variant="outline"
-                          onClick={() => setRecipeDraft((prev) => prev.filter((_, i) => i !== idx))}
-                        >
-                          -
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-
-                  <div className="p-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        const fallbackMaterial = materialsMaster[0];
-                        setRecipeDraft((prev) => [
-                          ...prev,
-                          {
-                            materialId: fallbackMaterial?.id ?? "",
-                            perUnit: 0,
-                            unit: fallbackMaterial?.unit ?? "kg",
-                          },
-                        ]);
-                      }}
-                    >
-                      追加
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setOpenRecipe(false)}>
-                キャンセル
-              </Button>
-              <Button onClick={onRecipeSave}>保存</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
 
       <div className="w-full shrink-0 lg:w-[360px]">
@@ -1829,8 +1794,162 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     <div className="mx-auto w-full max-w-5xl space-y-4">
       <div className="space-y-1">
         <div className="text-2xl font-semibold tracking-tight">マスタ管理</div>
-        <div className="text-sm text-muted-foreground">原料マスタの登録・編集・削除を行います。</div>
+        <div className="text-sm text-muted-foreground">品目・原料マスタの登録・編集・削除を行います。</div>
       </div>
+
+      <Card className="rounded-2xl">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium">品目を追加</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-12 items-center gap-2">
+            <div className="col-span-5">
+              <Input
+                value={itemNameDraft}
+                onChange={(e) => {
+                  setItemNameDraft(e.target.value);
+                  setItemFormError(null);
+                }}
+                placeholder="品目名"
+              />
+            </div>
+            <div className="col-span-3">
+              <Select
+                value={itemUnitDraft}
+                onValueChange={(value) => {
+                  setItemUnitDraft(value as ItemUnit);
+                  setItemFormError(null);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="単位" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cs">cs</SelectItem>
+                  <SelectItem value="kg">kg</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="col-span-2">
+              <Input
+                inputMode="decimal"
+                value={itemStockDraft}
+                onChange={(e) => {
+                  setItemStockDraft(e.target.value);
+                  setItemFormError(null);
+                }}
+                placeholder="開始在庫"
+              />
+            </div>
+            <div className="col-span-2">
+              <Button onClick={onCreateItem} className="w-full">
+                追加
+              </Button>
+            </div>
+          </div>
+          {itemFormError ? <div className="text-sm text-destructive">{itemFormError}</div> : null}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium">品目一覧</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {items.length ? (
+            <div className="divide-y rounded-lg border">
+              <div className="grid grid-cols-12 gap-2 bg-muted/30 p-2 text-xs text-muted-foreground">
+                <div className="col-span-4">品目名</div>
+                <div className="col-span-2">単位</div>
+                <div className="col-span-2 text-right">開始在庫</div>
+                <div className="col-span-2 text-center">レシピ</div>
+                <div className="col-span-2 text-right">操作</div>
+              </div>
+              {items.map((item) => {
+                const isEditing = editingItemId === item.id;
+                return (
+                  <div key={item.id} className="grid grid-cols-12 items-center gap-2 p-2">
+                    <div className="col-span-4">
+                      {isEditing ? (
+                        <Input
+                          value={editingItemName}
+                          onChange={(e) => {
+                            setEditingItemName(e.target.value);
+                            setItemFormError(null);
+                          }}
+                        />
+                      ) : (
+                        <div className="text-sm font-medium">{item.name}</div>
+                      )}
+                    </div>
+                    <div className="col-span-2">
+                      {isEditing ? (
+                        <Select value={editingItemUnit} onValueChange={(value) => setEditingItemUnit(value as ItemUnit)}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="単位" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="cs">cs</SelectItem>
+                            <SelectItem value="kg">kg</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="text-sm text-muted-foreground">{item.unit}</div>
+                      )}
+                    </div>
+                    <div className="col-span-2 text-right">
+                      {isEditing ? (
+                        <Input
+                          inputMode="decimal"
+                          value={editingItemStock}
+                          onChange={(e) => {
+                            setEditingItemStock(e.target.value);
+                            setItemFormError(null);
+                          }}
+                        />
+                      ) : (
+                        <div className="text-sm text-muted-foreground">{item.stock}</div>
+                      )}
+                    </div>
+                    <div className="col-span-2 flex justify-center">
+                      {isEditing ? (
+                        <div className="text-xs text-muted-foreground">編集後に設定</div>
+                      ) : (
+                        <Button variant="outline" onClick={() => openRecipeEdit(item.id)}>
+                          レシピ {item.recipe.length}件
+                        </Button>
+                      )}
+                    </div>
+                    <div className="col-span-2 flex justify-end gap-2">
+                      {isEditing ? (
+                        <>
+                          <Button variant="outline" onClick={onCancelEditItem}>
+                            キャンセル
+                          </Button>
+                          <Button onClick={onSaveEditItem}>保存</Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button variant="outline" onClick={() => onStartEditItem(item)}>
+                            編集
+                          </Button>
+                          <Button variant="destructive" onClick={() => onDeleteItem(item.id)}>
+                            削除
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+              品目マスタが未登録です。上のフォームから追加してください。
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="rounded-2xl">
         <CardHeader className="pb-2">
@@ -2028,6 +2147,141 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         </header>
 
         <main className="p-4">{activeView === "schedule" ? scheduleView : masterView}</main>
+
+        {/* レシピ設定モーダル */}
+        <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
+            </DialogHeader>
+
+            <div className="px-6 py-4">
+              <div className="space-y-4">
+                <div className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
+                  係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
+                </div>
+                <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+                  原料はマスタから選択します。未登録の場合は「マスタ管理」画面で追加してください。
+                </div>
+
+                <div className="rounded-xl border">
+                  <div className="grid grid-cols-12 gap-2 border-b bg-muted/30 p-2 text-xs text-muted-foreground">
+                    <div className="col-span-6">原材料名</div>
+                    <div className="col-span-3 text-right">係数</div>
+                    <div className="col-span-2">単位</div>
+                    <div className="col-span-1 text-right"> </div>
+                  </div>
+
+                  <div className="divide-y">
+                    {recipeDraft.map((r, idx) => (
+                      <div key={`${r.materialId}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
+                        <div className="col-span-6">
+                          <Select
+                            value={r.materialId}
+                            onValueChange={(value) => {
+                              const selected = materialMap.get(value);
+                              setRecipeDraft((prev) =>
+                                prev.map((x, i) =>
+                                  i === idx
+                                    ? {
+                                        ...x,
+                                        materialId: value,
+                                        unit: selected?.unit ?? x.unit,
+                                      }
+                                    : x
+                                )
+                              );
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="原料を選択" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {materialsMaster.length ? (
+                                materialsMaster.map((m) => (
+                                  <SelectItem key={m.id} value={m.id}>
+                                    {m.name}
+                                  </SelectItem>
+                                ))
+                              ) : (
+                                <SelectItem value="__none__" disabled>
+                                  原料が未登録です
+                                </SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="col-span-3">
+                          <Input
+                            inputMode="decimal"
+                            value={String(r.perUnit)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRecipeDraft((prev) =>
+                                prev.map((x, i) => (i === idx ? { ...x, perUnit: safeNumber(v) } : x))
+                              );
+                            }}
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <Select
+                            value={r.unit}
+                            onValueChange={(v) => {
+                              const unit = v === "g" ? "g" : "kg";
+                              setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="単位" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="kg">kg</SelectItem>
+                              <SelectItem value="g">g</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="col-span-1 text-right">
+                          <Button
+                            variant="outline"
+                            onClick={() => setRecipeDraft((prev) => prev.filter((_, i) => i !== idx))}
+                          >
+                            -
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="p-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          const fallbackMaterial = materialsMaster[0];
+                          setRecipeDraft((prev) => [
+                            ...prev,
+                            {
+                              materialId: fallbackMaterial?.id ?? "",
+                              perUnit: 0,
+                              unit: fallbackMaterial?.unit ?? "kg",
+                            },
+                          ]);
+                        }}
+                      >
+                        追加
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setOpenRecipe(false)}>
+                キャンセル
+              </Button>
+              <Button onClick={onRecipeSave}>保存</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
