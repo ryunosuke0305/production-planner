@@ -12,6 +12,20 @@ if errorlevel 1 (
   exit /b 1
 )
 
+for /f "tokens=1 delims=." %%a in ('node -p "process.versions.node"') do set NODE_MAJOR=%%a
+if not defined NODE_MAJOR (
+  echo [ERROR] Node.js のバージョン取得に失敗しました。
+  pause
+  exit /b 1
+)
+
+if %NODE_MAJOR% LSS 20 (
+  echo [ERROR] Node.js のバージョンが古すぎます。LTS の 20.x または 22.x を使用してください。
+  echo [ERROR] 現在のバージョン: v%NODE_MAJOR%.x
+  pause
+  exit /b 1
+)
+
 echo [INFO] 依存関係をインストールします...
 call npm install
 if errorlevel 1 goto :error
