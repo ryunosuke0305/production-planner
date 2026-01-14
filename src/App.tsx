@@ -530,54 +530,6 @@ function buildExportPayload(p: {
   };
 }
 
-// ---------------------------------------------------------------------
-// 簡易テスト（開発時のみ）
-// - 既存テストは維持し、追加テストを増やす
-// ---------------------------------------------------------------------
-(function devTests() {
-  // eslint-disable-next-line no-console
-  console.assert(durationLabel(1, "hour") === "1時間", "durationLabel hour");
-  // eslint-disable-next-line no-console
-  console.assert(durationLabel(2, "hour") === "2時間", "durationLabel hour x2");
-  // eslint-disable-next-line no-console
-  console.assert(durationLabel(1, "2hour") === "2時間", "durationLabel 2hour");
-  // eslint-disable-next-line no-console
-  console.assert(durationLabel(2, "2hour") === "4時間", "durationLabel 2hour x2");
-  // eslint-disable-next-line no-console
-  console.assert(durationLabel(1, "day") === "1日", "durationLabel day");
-
-  // 追加テスト：クランプ
-  // eslint-disable-next-line no-console
-  console.assert(clamp(5, 0, 3) === 3, "clamp upper");
-  // eslint-disable-next-line no-console
-  console.assert(clamp(-1, 0, 3) === 0, "clamp lower");
-
-  // export payload shape (minimum)
-  const dummy: ExportPayloadV1 = {
-    schemaVersion: "1.0.0",
-    meta: {
-      exportedAtISO: "2026-01-14T00:00:00.000Z",
-      timezone: "Asia/Tokyo",
-      weekStartISO: "2026-01-12",
-      horizonDays: 7,
-      density: "hour",
-      slotsPerDay: 10,
-      slotCount: 70,
-      weekDates: [],
-      hours: [],
-      slotIndexToLabel: [],
-    },
-  items: [],
-  materials: [],
-  blocks: [],
-  constraints: {},
-};
-  // eslint-disable-next-line no-console
-  console.assert(typeof dummy.schemaVersion === "string", "export schemaVersion");
-  // eslint-disable-next-line no-console
-  console.assert(typeof dummy.meta.weekStartISO === "string", "export meta.weekStartISO");
-})();
-
 type DragKind = "move" | "resizeL" | "resizeR";
 
 type DragState = {
@@ -666,6 +618,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return new Map(materialsMaster.map((m) => [m.id, m]));
   }, [materialsMaster]);
 
+  const itemMap = useMemo(() => {
+    return new Map(items.map((item) => [item.id, item]));
+  }, [items]);
+
   const activeBlock = useMemo(() => {
     if (!activeBlockId) return null;
     return blocks.find((b) => b.id === activeBlockId) ?? null;
@@ -673,8 +629,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const activeItem = useMemo(() => {
     if (!activeBlock) return null;
-    return items.find((x) => x.id === activeBlock.itemId) ?? null;
-  }, [activeBlock, items]);
+    return itemMap.get(activeBlock.itemId) ?? null;
+  }, [activeBlock, itemMap]);
 
   const materials = useMemo(() => {
     if (!activeItem) return [];
@@ -684,8 +640,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const activeRecipeItem = useMemo(() => {
     if (!activeRecipeItemId) return null;
-    return items.find((x) => x.id === activeRecipeItemId) ?? null;
-  }, [activeRecipeItemId, items]);
+    return itemMap.get(activeRecipeItemId) ?? null;
+  }, [activeRecipeItemId, itemMap]);
 
   const shiftWeek = (deltaDays: number) => {
     setViewWeekStart((prev) => {
@@ -779,7 +735,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const blockSummaries = blocks.map((b) => ({
       id: b.id,
       itemId: b.itemId,
-      itemName: items.find((x) => x.id === b.itemId)?.name ?? "",
+      itemName: itemMap.get(b.itemId)?.name ?? "",
       startSlot: b.start,
       startLabel: slotLabel({ density: planDensity, weekDates: planWeekDates, hours: planHours, slotIndex: b.start }),
       len: b.len,
