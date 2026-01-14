@@ -1957,13 +1957,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div
-        className={`fixed inset-0 z-40 bg-black/30 transition ${
+        className={`fixed inset-0 z-[70] bg-black/30 transition ${
           navOpen ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
         onClick={() => setNavOpen(false)}
       />
       <aside
-        className={`fixed left-0 top-0 z-50 h-full w-64 border-r bg-background shadow-sm transition-transform ${
+        className={`fixed left-0 top-0 z-[80] h-full w-64 border-r bg-background shadow-sm transition-transform ${
           navOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
