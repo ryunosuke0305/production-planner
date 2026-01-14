@@ -25,7 +25,7 @@ export function DialogContent({ className = "", children }: React.HTMLAttributes
 }
 
 export function DialogHeader({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element {
-  return <div className={`border-b border-slate-100 px-4 py-3 ${className}`} {...props} />;
+  return <div className={`border-b border-slate-100 px-6 py-4 ${className}`} {...props} />;
 }
 
 export function DialogTitle({ className = "", ...props }: React.HTMLAttributes<HTMLHeadingElement>): JSX.Element {
@@ -33,5 +33,5 @@ export function DialogTitle({ className = "", ...props }: React.HTMLAttributes<H
 }
 
 export function DialogFooter({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element {
-  return <div className={`flex justify-end border-t border-slate-100 px-4 py-3 ${className}`} {...props} />;
+  return <div className={`flex justify-end border-t border-slate-100 px-6 py-4 ${className}`} {...props} />;
 }

@@ -1398,7 +1398,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 </DialogTitle>
               </DialogHeader>
 
-            <div className="space-y-5">
+            <div className="px-6 py-4">
+              <div className="space-y-5">
               <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
                 <div className="col-span-4 text-sm text-muted-foreground">生産数量</div>
                 <div className="col-span-6">
@@ -1480,6 +1481,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   </motion.div>
                 ) : null}
               </AnimatePresence>
+              </div>
             </div>
 
               <DialogFooter className="gap-2">
@@ -1501,81 +1503,83 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
               </DialogHeader>
 
-            <div className="space-y-4">
-              <div className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
-                係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
-              </div>
-
-              <div className="rounded-xl border">
-                <div className="grid grid-cols-12 gap-2 border-b bg-muted/30 p-2 text-xs text-muted-foreground">
-                  <div className="col-span-6">原材料名</div>
-                  <div className="col-span-3 text-right">係数</div>
-                  <div className="col-span-2">単位</div>
-                  <div className="col-span-1 text-right"> </div>
+            <div className="px-6 py-4">
+              <div className="space-y-4">
+                <div className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
+                  係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
                 </div>
 
-                <div className="divide-y">
-                  {recipeDraft.map((r, idx) => (
-                    <div key={`${r.material}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
-                      <div className="col-span-6">
-                        <Input
-                          value={r.material}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setRecipeDraft((prev) =>
-                              prev.map((x, i) => (i === idx ? { ...x, material: v } : x))
-                            );
-                          }}
-                          placeholder="例：原料A"
-                        />
-                      </div>
-                      <div className="col-span-3">
-                        <Input
-                          inputMode="decimal"
-                          value={String(r.perUnit)}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setRecipeDraft((prev) =>
-                              prev.map((x, i) => (i === idx ? { ...x, perUnit: safeNumber(v) } : x))
-                            );
-                          }}
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <Select
-                          value={r.unit}
-                          onValueChange={(v) => {
-                            const unit = v === "g" ? "g" : "kg";
-                            setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="単位" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="kg">kg</SelectItem>
-                            <SelectItem value="g">g</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="col-span-1 text-right">
-                        <Button
-                          variant="outline"
-                          onClick={() => setRecipeDraft((prev) => prev.filter((_, i) => i !== idx))}
-                        >
-                          -
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
+                <div className="rounded-xl border">
+                  <div className="grid grid-cols-12 gap-2 border-b bg-muted/30 p-2 text-xs text-muted-foreground">
+                    <div className="col-span-6">原材料名</div>
+                    <div className="col-span-3 text-right">係数</div>
+                    <div className="col-span-2">単位</div>
+                    <div className="col-span-1 text-right"> </div>
+                  </div>
 
-                  <div className="p-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => setRecipeDraft((prev) => [...prev, { material: "", perUnit: 0, unit: "kg" }])}
-                    >
-                      追加
-                    </Button>
+                  <div className="divide-y">
+                    {recipeDraft.map((r, idx) => (
+                      <div key={`${r.material}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
+                        <div className="col-span-6">
+                          <Input
+                            value={r.material}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRecipeDraft((prev) =>
+                                prev.map((x, i) => (i === idx ? { ...x, material: v } : x))
+                              );
+                            }}
+                            placeholder="例：原料A"
+                          />
+                        </div>
+                        <div className="col-span-3">
+                          <Input
+                            inputMode="decimal"
+                            value={String(r.perUnit)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRecipeDraft((prev) =>
+                                prev.map((x, i) => (i === idx ? { ...x, perUnit: safeNumber(v) } : x))
+                              );
+                            }}
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <Select
+                            value={r.unit}
+                            onValueChange={(v) => {
+                              const unit = v === "g" ? "g" : "kg";
+                              setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="単位" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="kg">kg</SelectItem>
+                              <SelectItem value="g">g</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="col-span-1 text-right">
+                          <Button
+                            variant="outline"
+                            onClick={() => setRecipeDraft((prev) => prev.filter((_, i) => i !== idx))}
+                          >
+                            -
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="p-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => setRecipeDraft((prev) => [...prev, { material: "", perUnit: 0, unit: "kg" }])}
+                      >
+                        追加
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
