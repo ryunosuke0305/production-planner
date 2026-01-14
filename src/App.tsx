@@ -119,6 +119,14 @@ type ChatResponsePayload = {
   actions?: ChatAction[];
 };
 
+type PlanPayload = {
+  version: 1;
+  weekStartISO: string;
+  density: Density;
+  items: Item[];
+  blocks: Block[];
+};
+
 const SAMPLE_ITEMS: Item[] = [
   {
     id: "A",
@@ -201,6 +209,115 @@ function clamp(n: number, min: number, max: number): number {
 
 function uid(prefix = "b"): string {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
+}
+
+const DEFAULT_BLOCKS = (): Block[] => [
+  { id: uid("b"), itemId: "A", start: 1, len: 2, amount: 40, memo: "" },
+  { id: uid("b"), itemId: "B", start: 6, len: 2, amount: 30, memo: "段取り注意" },
+];
+
+const getDefaultWeekStart = (): Date => {
+  const now = new Date();
+  const day = now.getDay();
+  const diffToMonday = (day + 6) % 7;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - diffToMonday);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+};
+
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function asItemUnit(value: unknown): ItemUnit {
+  return value === "kg" ? "kg" : "cs";
+}
+
+function asRecipeUnit(value: unknown): RecipeUnit {
+  return value === "g" ? "g" : "kg";
+}
+
+function asDensity(value: unknown): Density {
+  return value === "day" || value === "2hour" || value === "hour" ? value : "hour";
+}
+
+function sanitizeItems(raw: unknown): Item[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const record = entry as Record<string, unknown>;
+      const id = asString(record.id).trim();
+      const name = asString(record.name).trim();
+      if (!id || !name) return null;
+      const unit = asItemUnit(record.unit);
+      const stock = asNumber(record.stock);
+      const recipe = Array.isArray(record.recipe)
+        ? record.recipe
+            .map((r) => {
+              if (!r || typeof r !== "object") return null;
+              const rRecord = r as Record<string, unknown>;
+              const material = asString(rRecord.material).trim();
+              if (!material) return null;
+              return {
+                material,
+                perUnit: asNumber(rRecord.perUnit),
+                unit: asRecipeUnit(rRecord.unit),
+              };
+            })
+            .filter((r): r is RecipeLine => r !== null)
+        : [];
+      return {
+        id,
+        name,
+        unit,
+        stock,
+        recipe,
+      } satisfies Item;
+    })
+    .filter((item): item is Item => item !== null);
+}
+
+function sanitizeBlocks(raw: unknown): Block[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const record = entry as Record<string, unknown>;
+      const id = asString(record.id).trim();
+      const itemId = asString(record.itemId).trim();
+      if (!id || !itemId) return null;
+      return {
+        id,
+        itemId,
+        start: asNumber(record.start),
+        len: Math.max(1, asNumber(record.len, 1)),
+        amount: asNumber(record.amount),
+        memo: asString(record.memo),
+      } satisfies Block;
+    })
+    .filter((block): block is Block => block !== null);
+}
+
+function parsePlanPayload(raw: unknown): PlanPayload | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  if (record.version !== 1) return null;
+  const weekStartISO = asString(record.weekStartISO).trim();
+  if (!weekStartISO) return null;
+  return {
+    version: 1,
+    weekStartISO,
+    density: asDensity(record.density),
+    items: sanitizeItems(record.items),
+    blocks: sanitizeBlocks(record.blocks),
+  };
 }
 
 function buildSlots(density: Density): number[] {
@@ -369,15 +486,7 @@ type DragState = {
 };
 
 export default function ManufacturingPlanGanttApp(): JSX.Element {
-  const [weekStart, setWeekStart] = useState<Date>(() => {
-    const now = new Date();
-    const day = now.getDay();
-    const diffToMonday = (day + 6) % 7;
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - diffToMonday);
-    monday.setHours(0, 0, 0, 0);
-    return monday;
-  });
+  const [weekStart, setWeekStart] = useState<Date>(() => getDefaultWeekStart());
 
   const [density, setDensity] = useState<Density>("hour");
 
@@ -398,10 +507,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
   const geminiModel = (import.meta.env.VITE_GEMINI_MODEL as string | undefined) ?? "gemini-1.5-flash";
 
-  const [blocks, setBlocks] = useState<Block[]>(() => [
-    { id: uid("b"), itemId: "A", start: 1, len: 2, amount: 40, memo: "" },
-    { id: uid("b"), itemId: "B", start: 6, len: 2, amount: 30, memo: "段取り注意" },
-  ]);
+  const [blocks, setBlocks] = useState<Block[]>(() => DEFAULT_BLOCKS());
+
+  const [isPlanLoaded, setIsPlanLoaded] = useState(false);
 
   const [openPlan, setOpenPlan] = useState(false);
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
@@ -468,6 +576,63 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         .filter((b) => b.len >= 1)
     );
   }, [density, slotCount]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPlan = async () => {
+      try {
+        const response = await fetch("/api/plan");
+        if (!response.ok || response.status === 204) return;
+        const raw = (await response.json()) as unknown;
+        const payload = parsePlanPayload(raw);
+        if (!payload || cancelled) return;
+
+        const parsedWeekStart = new Date(payload.weekStartISO);
+        if (!Number.isNaN(parsedWeekStart.getTime())) {
+          parsedWeekStart.setHours(0, 0, 0, 0);
+          setWeekStart(parsedWeekStart);
+        }
+        setDensity(payload.density);
+        setItems(payload.items.length ? payload.items : SAMPLE_ITEMS);
+        setBlocks(payload.blocks.length ? payload.blocks : DEFAULT_BLOCKS());
+      } catch {
+        // 読み込み失敗時は既定値を維持
+      } finally {
+        if (!cancelled) setIsPlanLoaded(true);
+      }
+    };
+    void loadPlan();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isPlanLoaded) return;
+    const controller = new AbortController();
+    const savePlan = async () => {
+      try {
+        await fetch("/api/plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            version: 1,
+            weekStartISO: toISODate(weekStart),
+            density,
+            items,
+            blocks,
+          } satisfies PlanPayload),
+          signal: controller.signal,
+        });
+      } catch {
+        // 保存失敗時は再度の変更で再送される
+      }
+    };
+    void savePlan();
+    return () => {
+      controller.abort();
+    };
+  }, [blocks, density, isPlanLoaded, items, weekStart]);
 
   useEffect(() => {
     if (!chatScrollRef.current) return;
