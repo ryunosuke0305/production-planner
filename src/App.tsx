@@ -584,8 +584,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const isPlanWeekView = toISODate(viewWeekStart) === toISODate(planWeekStart);
 
-  const geminiApiKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined)?.trim() ?? "";
-  const hasGeminiApiKey = geminiApiKey.length > 0 && geminiApiKey !== "undefined" && geminiApiKey !== "null";
   const geminiModel =
     (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || "gemini-1.5-flash";
 
@@ -870,15 +868,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setChatBusy(true);
     setChatError(null);
 
-    if (!hasGeminiApiKey) {
-      setChatMessages((prev) => [
-        ...prev,
-        { id: uid("chat"), role: "assistant", content: "APIキーが未設定です。.envに設定してください。" },
-      ]);
-      setChatBusy(false);
-      return;
-    }
-
     const systemInstruction = [
       "あなたは製造計画のアシスタントです。",
       "返答は必ずJSONのみで、説明文やコードブロックは含めません。",
@@ -908,25 +897,28 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const messageWithContext = `${trimmed}\n\n現在の計画データ(JSON):\n${planContext}`;
 
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-          geminiModel
-        )}:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
-            contents: [
-              ...chatMessages.map((msg) => ({
-                role: msg.role === "assistant" ? "model" : "user",
-                parts: [{ text: msg.content }],
-              })),
-              { role: "user", parts: [{ text: messageWithContext }] },
-            ],
-          }),
-        }
-      );
+      const response = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: geminiModel,
+          systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
+          contents: [
+            ...chatMessages.map((msg) => ({
+              role: msg.role === "assistant" ? "model" : "user",
+              parts: [{ text: msg.content }],
+            })),
+            { role: "user", parts: [{ text: messageWithContext }] },
+          ],
+        }),
+      });
+
+      if (response.status === 401) {
+        const message = "サーバー側にGemini APIキーが設定されていません。data/.envにGEMINI_API_KEYを設定してください。";
+        setChatError(message);
+        setChatMessages((prev) => [...prev, { id: uid("chat"), role: "assistant", content: message }]);
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(`Gemini APIエラー: ${response.status}`);
@@ -1734,11 +1726,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
           </CardHeader>
           <CardContent className="flex h-[640px] flex-col gap-3">
-            {!hasGeminiApiKey ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
-                APIキーが未設定です。
-              </div>
-            ) : null}
+            <div className="rounded-md border border-muted/50 bg-muted/20 p-2 text-xs text-muted-foreground">
+              Gemini APIキーはサーバー側の <span className="font-semibold">GEMINI_API_KEY</span> に設定してください。
+            </div>
             {chatError ? (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
                 {chatError}
