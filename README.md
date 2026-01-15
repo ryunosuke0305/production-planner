@@ -53,6 +53,28 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 - `.env` は `data/` ディレクトリにまとめて配置してください（例: `data/.env`）。
 - `GEMINI_API_KEY` を設定するとチャット機能が利用できます。モデルを変えたい場合は `GEMINI_MODEL` または `VITE_GEMINI_MODEL` を設定してください。
 
+## Gemini 接続設定（Quickstart準拠）
+
+Gemini API のキー作成手順は Google の Quickstart に準拠しています。詳細は以下を参照してください。
+
+- https://ai.google.dev/gemini-api/docs/quickstart?hl=ja#javascript
+
+`data/.env` に API キーを保存すると、サーバー側の `/api/gemini` が Gemini API と通信します。
+
+```bash
+cp data/.env.example data/.env
+```
+
+```env
+GEMINI_API_KEY=your_api_key_here
+# GEMINI_MODEL=gemini-2.5-flash
+# VITE_GEMINI_MODEL=gemini-2.5-flash
+```
+
+- `GEMINI_API_KEY` はサーバー側でのみ使用され、クライアントには公開されません。
+- `GEMINI_MODEL` はサーバー側のデフォルトモデルを上書きします。
+- `VITE_GEMINI_MODEL` はクライアント側が送信するモデル指定を上書きします。
+
 ## API とデータフロー
 
 ### `/api/plan`（Vite ミドルウェア）

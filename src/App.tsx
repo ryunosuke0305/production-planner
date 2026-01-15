@@ -585,7 +585,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const isPlanWeekView = toISODate(viewWeekStart) === toISODate(planWeekStart);
 
   const geminiModel =
-    (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || "gemini-1.5-flash";
+    (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || "gemini-2.5-flash";
 
   const [blocks, setBlocks] = useState<Block[]>(() => DEFAULT_BLOCKS());
 
