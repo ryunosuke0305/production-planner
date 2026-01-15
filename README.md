@@ -51,7 +51,7 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 - 画面上の計画データは開発サーバー経由で `data/plan.sqlite` に保存され、再読み込みしても保持されます。
 - 既存の `data/plan.json` を SQLite に移行する場合は `npm run migrate:plan` を実行してください（再実行しても最新の内容で上書きされます）。
 - `.env` は `data/` ディレクトリにまとめて配置してください（例: `data/.env`）。
-- `VITE_GEMINI_API_KEY` と `VITE_GEMINI_MODEL` を設定するとチャット機能が利用できます（未設定時はUI上で案内メッセージを表示します）。
+- `GEMINI_API_KEY` を設定するとチャット機能が利用できます。モデルを変えたい場合は `GEMINI_MODEL` または `VITE_GEMINI_MODEL` を設定してください。
 
 ## API とデータフロー
 
@@ -71,9 +71,19 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 - `itemId`: 品目 ID でブロックを絞り込み
 - `itemName`: 品目名（部分一致・小文字化）でブロックを絞り込み
 
+### `/api/gemini`（Vite ミドルウェア）
+
+Gemini API との通信をサーバー側で中継し、クライアントに API キーを渡さないためのエンドポイントです。
+
+| メソッド | 説明 |
+| --- | --- |
+| POST | チャット更新のリクエストを中継 |
+
+`data/.env` に `GEMINI_API_KEY` を設定しておく必要があります。
+
 ### Gemini API
 
-チャット更新は Google Generative Language API に `POST` し、返却された JSON から更新アクションを抽出します。API とのやり取りはクライアントから直接行われるため、公開環境では API キー管理に注意してください。
+チャット更新はサーバー側の `/api/gemini` ミドルウェアを経由して Google Generative Language API に `POST` し、返却された JSON から更新アクションを抽出します。API キーはサーバー環境変数（`GEMINI_API_KEY`）で管理し、クライアントには公開しません。
 
 ## ディレクトリ構成
 
