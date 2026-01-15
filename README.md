@@ -105,7 +105,7 @@ Gemini API との通信をサーバー側で中継し、クライアントに AP
 
 ### Gemini API
 
-チャット更新はサーバー側の `/api/gemini` ミドルウェアを経由して Google Generative Language API に `POST` し、返却された JSON から更新アクションを抽出します。API キーはサーバー環境変数（`GEMINI_API_KEY`）で管理し、クライアントには公開しません。
+チャット更新はサーバー側の `/api/gemini` ミドルウェアを経由して `@google/genai` SDK で Gemini API を呼び出し、返却された JSON から更新アクションを抽出します。API キーはサーバー環境変数（`GEMINI_API_KEY`）で管理し、クライアントには公開しません。
 
 ## ディレクトリ構成
 
