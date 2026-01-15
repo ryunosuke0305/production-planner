@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from "vite";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
+import { GoogleGenAI } from "@google/genai";
 import { loadPlanPayload, openPlanDatabase, savePlanPayload } from "./scripts/plan-db.js";
 
 type MiddlewareRequest = {
@@ -94,45 +95,49 @@ const createGeminiProxyMiddleware = (env: { GEMINI_API_KEY?: string; GEMINI_MODE
       return;
     }
 
+    const ai = new GoogleGenAI({ apiKey });
+
     let body = "";
     req.on("data", (chunk: any) => {
       body += chunk.toString("utf-8");
     });
     req.on("end", async () => {
+      let parsed: GeminiRequestPayload;
       try {
-        const parsed = JSON.parse(body || "{}") as GeminiRequestPayload;
-        const model = (parsed.model ?? env.GEMINI_MODEL ?? "gemini-2.5-flash").trim();
-
-        const upstream = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(
-            apiKey
-          )}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              systemInstruction: parsed.systemInstruction,
-              contents: parsed.contents,
-            }),
-          }
-        );
-
-        const responseText = await upstream.text();
-        if (!upstream.ok) {
-          console.error("Gemini upstream error:", {
-            status: upstream.status,
-            statusText: upstream.statusText,
-            url: upstream.url,
-            responseLength: responseText.length,
-          });
-        }
-        res.statusCode = upstream.status;
-        res.setHeader("Content-Type", upstream.headers.get("Content-Type") ?? "application/json");
-        res.end(responseText);
+        parsed = JSON.parse(body || "{}") as GeminiRequestPayload;
       } catch {
         res.statusCode = 400;
         res.end("Invalid JSON payload.");
+        return;
       }
+
+      try {
+        const model = (parsed.model ?? env.GEMINI_MODEL ?? "gemini-2.5-flash").trim();
+        const systemInstructionText =
+          parsed.systemInstruction?.parts
+            ?.map((part) => part.text)
+            .filter((text) => text && text.trim())
+            .join("\n")
+            .trim() || undefined;
+
+        const response = await ai.models.generateContent({
+          model,
+          contents: parsed.contents ?? [],
+          config: systemInstructionText ? { systemInstruction: systemInstructionText } : undefined,
+        });
+
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify(response));
+      } catch (error) {
+        console.error("Gemini SDK error:", error);
+        res.statusCode = 502;
+        res.end("Gemini upstream error.");
+      }
+    });
+    req.on("error", () => {
+      res.statusCode = 400;
+      res.end("Invalid JSON payload.");
     });
   };
 };

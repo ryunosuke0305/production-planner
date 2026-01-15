@@ -13,10 +13,11 @@
     "migrate:plan": "node scripts/migrate-plan.js"
   },
   "dependencies": {
+    "@google/genai": "^1.36.0",
+    "better-sqlite3": "^11.7.2",
     "framer-motion": "^11.0.17",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "better-sqlite3": "^11.7.2"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.5",
