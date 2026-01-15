@@ -1731,9 +1731,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-            <div className="rounded-md border border-muted/50 bg-muted/20 p-2 text-xs text-muted-foreground">
-              Gemini APIキーはサーバー側の <span className="font-semibold">GEMINI_API_KEY</span> に設定してください。
-            </div>
             {chatError ? (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
                 {chatError}
