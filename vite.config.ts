@@ -147,15 +147,20 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, envDir, "");
   return {
     envDir,
-    plugins: [react()],
-    configureServer(server) {
-      server.middlewares.use("/api/plan", createPlanApiMiddleware());
-      server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
-    },
-    configurePreviewServer(server) {
-      server.middlewares.use("/api/plan", createPlanApiMiddleware());
-      server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
-    },
+    plugins: [
+      react(),
+      {
+        name: "plan-and-gemini-api",
+        configureServer(server) {
+          server.middlewares.use("/api/plan", createPlanApiMiddleware());
+          server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
+        },
+        configurePreviewServer(server) {
+          server.middlewares.use("/api/plan", createPlanApiMiddleware());
+          server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
+        },
+      },
+    ],
     resolve: {
       alias: {
         "@": fileURLToPath(new URL("./src", import.meta.url)),
