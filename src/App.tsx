@@ -606,13 +606,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [editingMaterialName, setEditingMaterialName] = useState("");
   const [editingMaterialUnit, setEditingMaterialUnit] = useState<RecipeUnit>("kg");
 
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      id: uid("chat"),
-      role: "assistant",
-      content: "右のチャットから計画の変更指示を送ると、Geminiが計画を更新します。",
-    },
-  ]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
@@ -1732,14 +1726,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       </div>
 
       <div className="w-full shrink-0 lg:w-[360px]">
-        <Card className="rounded-2xl shadow-sm">
+        <Card className="flex h-[calc(100vh-8rem)] flex-col rounded-2xl shadow-sm">
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
           </CardHeader>
-          <CardContent className="flex h-[640px] flex-col gap-3">
-            <div className="rounded-md border border-muted/50 bg-muted/20 p-2 text-xs text-muted-foreground">
-              Gemini APIキーはサーバー側の <span className="font-semibold">GEMINI_API_KEY</span> に設定してください。
-            </div>
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
             {chatError ? (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
                 {chatError}
