@@ -118,6 +118,14 @@ const createGeminiProxyMiddleware = (env: { GEMINI_API_KEY?: string; GEMINI_MODE
         );
 
         const responseText = await upstream.text();
+        if (!upstream.ok) {
+          console.error("Gemini upstream error:", {
+            status: upstream.status,
+            statusText: upstream.statusText,
+            url: upstream.url,
+            responseLength: responseText.length,
+          });
+        }
         res.statusCode = upstream.status;
         res.setHeader("Content-Type", upstream.headers.get("Content-Type") ?? "application/json");
         res.end(responseText);
