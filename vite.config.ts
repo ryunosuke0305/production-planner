@@ -101,7 +101,7 @@ const createGeminiProxyMiddleware = (env: { GEMINI_API_KEY?: string; GEMINI_MODE
     req.on("end", async () => {
       try {
         const parsed = JSON.parse(body || "{}") as GeminiRequestPayload;
-        const model = (parsed.model ?? env.GEMINI_MODEL ?? "gemini-1.5-flash").trim();
+        const model = (parsed.model ?? env.GEMINI_MODEL ?? "gemini-2.5-flash").trim();
 
         const upstream = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(

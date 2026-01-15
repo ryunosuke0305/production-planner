@@ -585,7 +585,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const isPlanWeekView = toISODate(viewWeekStart) === toISODate(planWeekStart);
 
   const geminiModel =
-    (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || "gemini-1.5-flash";
+    (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || "gemini-2.5-flash";
 
   const [blocks, setBlocks] = useState<Block[]>(() => DEFAULT_BLOCKS());
 
@@ -914,6 +914,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       });
 
       if (response.status === 401) {
+        const errorBody = await response.text();
+        console.error("Gemini API認証エラー:", {
+          status: response.status,
+          body: errorBody,
+        });
         const message = "サーバー側にGemini APIキーが設定されていません。data/.envにGEMINI_API_KEYを設定してください。";
         setChatError(message);
         setChatMessages((prev) => [...prev, { id: uid("chat"), role: "assistant", content: message }]);
@@ -921,6 +926,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       }
 
       if (!response.ok) {
+        const errorBody = await response.text();
+        console.error("Gemini APIエラー:", {
+          status: response.status,
+          body: errorBody,
+        });
         throw new Error(`Gemini APIエラー: ${response.status}`);
       }
       const data = await response.json();
@@ -946,6 +956,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         { id: uid("chat"), role: "assistant", content: assistantContent.trim() || "更新しました。" },
       ]);
     } catch (error) {
+      console.error("Gemini API呼び出しエラー:", error);
       const message = error instanceof Error ? error.message : "Gemini API呼び出しに失敗しました。";
       setChatError(message);
       setChatMessages((prev) => [
