@@ -1,5 +1,7 @@
 import { defineConfig, loadEnv } from "vite";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs/promises";
+import path from "node:path";
 import react from "@vitejs/plugin-react";
 import { GoogleGenAI } from "@google/genai";
 import { loadPlanPayload, openPlanDatabase, savePlanPayload } from "./scripts/plan-db.js";
@@ -20,6 +22,80 @@ type GeminiRequestPayload = {
   systemInstruction?: { role: "system"; parts: Array<{ text: string }> };
   contents?: Array<{ role: string; parts: Array<{ text: string }> }>;
   model?: string;
+};
+
+const CONSTRAINTS_PATH = fileURLToPath(new URL("./data/gemini-constraints.json", import.meta.url));
+
+const readConstraintsText = async () => {
+  try {
+    const raw = await fs.readFile(CONSTRAINTS_PATH, "utf-8");
+    const parsed = JSON.parse(raw) as { text?: string };
+    return typeof parsed.text === "string" ? parsed.text : "";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return "";
+    }
+    throw error;
+  }
+};
+
+const writeConstraintsText = async (text: string) => {
+  await fs.mkdir(path.dirname(CONSTRAINTS_PATH), { recursive: true });
+  const payload = JSON.stringify({ text }, null, 2);
+  await fs.writeFile(CONSTRAINTS_PATH, payload, "utf-8");
+};
+
+const createConstraintsApiMiddleware = () => {
+  return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    if (req.method === "GET") {
+      try {
+        const text = await readConstraintsText();
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ text }));
+      } catch (error) {
+        console.error("Failed to read constraints:", error);
+        res.statusCode = 500;
+        res.end("Failed to read constraints.");
+      }
+      return;
+    }
+
+    if (req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk: any) => {
+        body += chunk.toString("utf-8");
+      });
+      req.on("end", async () => {
+        let parsed: { text?: string };
+        try {
+          parsed = JSON.parse(body || "{}") as { text?: string };
+        } catch {
+          res.statusCode = 400;
+          res.end("Invalid JSON payload.");
+          return;
+        }
+        if (typeof parsed.text !== "string") {
+          res.statusCode = 400;
+          res.end("Invalid constraints payload.");
+          return;
+        }
+        try {
+          await writeConstraintsText(parsed.text);
+          res.statusCode = 204;
+          res.end();
+        } catch (error) {
+          console.error("Failed to save constraints:", error);
+          res.statusCode = 500;
+          res.end("Failed to save constraints.");
+        }
+      });
+      return;
+    }
+
+    res.statusCode = 405;
+    res.end("Method Not Allowed");
+  };
 };
 
 const createPlanApiMiddleware = () => {
@@ -153,10 +229,12 @@ export default defineConfig(({ mode }) => {
         name: "plan-and-gemini-api",
         configureServer(server) {
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
+          server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
         },
         configurePreviewServer(server) {
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
+          server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
         },
       },
