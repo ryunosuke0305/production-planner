@@ -610,6 +610,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [chatInput, setChatInput] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [constraintsOpen, setConstraintsOpen] = useState(false);
+  const [constraintsText, setConstraintsText] = useState("");
+  const [constraintsDraft, setConstraintsDraft] = useState("");
+  const [constraintsBusy, setConstraintsBusy] = useState(false);
+  const [constraintsError, setConstraintsError] = useState<string | null>(null);
+
+  const modalBodyClassName = "px-6 py-4";
+  const modalWideClassName = "max-w-2xl";
 
   const dragStateRef = useRef<DragState | null>(null);
   const suppressClickRef = useRef(false);
@@ -732,6 +740,26 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (!chatScrollRef.current) return;
     chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
   }, [chatMessages, chatBusy]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadConstraints = async () => {
+      try {
+        const response = await fetch("/api/constraints");
+        if (!response.ok || response.status === 204) return;
+        const data = (await response.json()) as { text?: string };
+        if (!cancelled && typeof data?.text === "string") {
+          setConstraintsText(data.text);
+        }
+      } catch {
+        // 読み込み失敗時は未設定のままにする
+      }
+    };
+    void loadConstraints();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const buildPlanContext = () => {
     const blockSummaries = blocks.map((b) => ({
@@ -888,7 +916,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     ].join("\n");
 
     const planContext = buildPlanContext();
-    const messageWithContext = `${trimmed}\n\n現在の計画データ(JSON):\n${planContext}`;
+    const constraintsNote = constraintsText.trim() ? `\n\nユーザー制約条件:\n${constraintsText.trim()}` : "";
+    const messageWithContext = `${trimmed}${constraintsNote}\n\n現在の計画データ(JSON):\n${planContext}`;
 
     try {
       const response = await fetch("/api/gemini", {
@@ -959,6 +988,29 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       ]);
     } finally {
       setChatBusy(false);
+    }
+  };
+
+  const saveConstraints = async () => {
+    if (constraintsBusy) return;
+    setConstraintsBusy(true);
+    setConstraintsError(null);
+    try {
+      const response = await fetch("/api/constraints", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: constraintsDraft }),
+      });
+      if (!response.ok) {
+        throw new Error("保存に失敗しました。");
+      }
+      setConstraintsText(constraintsDraft);
+      setConstraintsOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "保存に失敗しました。";
+      setConstraintsError(message);
+    } finally {
+      setConstraintsBusy(false);
     }
   };
 
@@ -1626,7 +1678,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               </DialogTitle>
             </DialogHeader>
 
-          <div className="px-6 py-4">
+          <div className={modalBodyClassName}>
             <div className="space-y-5">
             <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
               <div className="col-span-4 text-sm text-muted-foreground">生産数量</div>
@@ -1728,7 +1780,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       <div className="w-full shrink-0 lg:w-[360px]">
         <Card className="flex h-[calc(100vh-8rem)] flex-col rounded-2xl shadow-sm">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setConstraintsDraft(constraintsText);
+                  setConstraintsError(null);
+                  setConstraintsOpen(true);
+                }}
+              >
+                条件設定
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
             {chatError ? (
@@ -1777,6 +1842,39 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             </div>
           </CardContent>
         </Card>
+        <Dialog open={constraintsOpen} onOpenChange={setConstraintsOpen}>
+          <DialogContent className={modalWideClassName}>
+            <DialogHeader>
+              <DialogTitle>条件設定</DialogTitle>
+            </DialogHeader>
+            <div className={modalBodyClassName}>
+              <div className="space-y-3">
+                <div className="text-sm text-muted-foreground">
+                  Geminiへ送る追加の制約条件を入力してください。
+                </div>
+                <Textarea
+                  value={constraintsDraft}
+                  onChange={(e) => setConstraintsDraft(e.target.value)}
+                  className="min-h-[220px]"
+                  placeholder="例：設備Xは午前のみ稼働、残業は不可、最小ロットは50cs など"
+                />
+                {constraintsError ? (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+                    {constraintsError}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setConstraintsOpen(false)} disabled={constraintsBusy}>
+                キャンセル
+              </Button>
+              <Button onClick={() => void saveConstraints()} disabled={constraintsBusy}>
+                保存
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
@@ -2141,12 +2239,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
         {/* レシピ設定モーダル */}
         <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className={modalWideClassName}>
             <DialogHeader>
               <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
             </DialogHeader>
 
-            <div className="px-6 py-4">
+            <div className={modalBodyClassName}>
               <div className="space-y-4">
                 <div className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
                   係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
