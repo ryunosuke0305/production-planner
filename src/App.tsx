@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -84,7 +85,7 @@ type Block = {
 };
 
 type ExportPayloadV1 = {
-  schemaVersion: "1.0.0";
+  schemaVersion: "1.1.0";
   meta: {
     exportedAtISO: string;
     timezone: string;
@@ -126,6 +127,22 @@ type ExportPayloadV1 = {
     memo: string;
     approved: boolean;
   }>;
+  dailyStocks: Array<{
+    date: string;
+    itemCode: string;
+    stock: number;
+  }>;
+  orders: Array<{
+    deliveryDate: string;
+    shipDate: string;
+    itemCode: string;
+    quantity: number;
+  }>;
+  eodStocks: Array<{
+    itemCode: string;
+    dates: string[];
+    stocks: number[];
+  }>;
   constraints: Record<string, unknown>;
 };
 
@@ -161,6 +178,21 @@ type PlanPayload = {
   materials: Material[];
   items: Item[];
   blocks: Block[];
+};
+
+type DailyStockEntry = {
+  date: string;
+  itemId: string;
+  itemCode: string;
+  stock: number;
+};
+
+type OrderEntry = {
+  deliveryDate: string;
+  shipDate: string;
+  itemId: string;
+  itemCode: string;
+  quantity: number;
 };
 
 const SAMPLE_MATERIALS: Material[] = [
@@ -226,6 +258,13 @@ function toISODate(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function formatISODateParts(y: number, m: number, d: number): string {
+  const yyyy = String(y).padStart(4, "0");
+  const mm = String(m).padStart(2, "0");
+  const dd = String(d).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function toMD(isoDate: string): string {
@@ -336,6 +375,76 @@ function asRecipeUnit(value: unknown): RecipeUnit {
 
 function asDensity(value: unknown): Density {
   return value === "day" || value === "2hour" || value === "hour" ? value : "hour";
+}
+
+function normalizeHeader(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value).trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function findHeaderIndex(headers: unknown[], candidates: string[]): number {
+  const normalized = headers.map(normalizeHeader);
+  for (const name of candidates) {
+    const idx = normalized.indexOf(normalizeHeader(name));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function normalizeDateInput(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return toISODate(value);
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const asInt = Math.trunc(value);
+    const asString = String(asInt);
+    if (/^\d{8}$/.test(asString)) {
+      return `${asString.slice(0, 4)}-${asString.slice(4, 6)}-${asString.slice(6, 8)}`;
+    }
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (parsed?.y && parsed?.m && parsed?.d) {
+      return formatISODateParts(parsed.y, parsed.m, parsed.d);
+    }
+  }
+  const asText = String(value).trim();
+  if (/^\d{8}$/.test(asText)) {
+    return `${asText.slice(0, 4)}-${asText.slice(4, 6)}-${asText.slice(6, 8)}`;
+  }
+  const parsed = new Date(asText);
+  if (!Number.isNaN(parsed.getTime())) {
+    return toISODate(parsed);
+  }
+  return null;
+}
+
+function normalizeNumberInput(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const cleaned = value.replace(/,/g, "").trim();
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const fallback = Number(value);
+  return Number.isFinite(fallback) ? fallback : null;
+}
+
+const DAILY_STOCK_HEADERS = {
+  date: ["日付", "年月日", "date", "stockdate", "inventorydate"],
+  itemCode: ["品目コード", "品目", "itemcode", "item_code", "itemid", "item_id"],
+  stock: ["在庫数", "在庫", "stock", "inventory", "qty"],
+};
+
+const ORDER_HEADERS = {
+  deliveryDate: ["納品日", "納品予定日", "deliverydate", "delivery_date"],
+  shipDate: ["出荷日", "出荷予定日", "shipdate", "ship_date", "shipmentdate"],
+  itemCode: ["品目コード", "品目", "itemcode", "item_code", "itemid", "item_id"],
+  quantity: ["受注数", "受注数量", "数量", "orderqty", "order_qty", "qty"],
+};
+
+function isEmptyRow(row: unknown[]): boolean {
+  return row.every((cell) => cell === null || cell === undefined || String(cell).trim() === "");
 }
 
 function sanitizeItems(raw: unknown): Item[] {
@@ -669,6 +778,9 @@ function buildExportPayload(p: {
   materials: Material[];
   items: Item[];
   blocks: Block[];
+  dailyStocks: DailyStockEntry[];
+  orders: OrderEntry[];
+  eodStocks: Array<{ itemId: string; itemCode: string; dates: string[]; stocks: number[] }>;
 }): ExportPayloadV1 {
   const slotIndexToLabel = new Array(p.slotCount).fill("").map((_, i) =>
     slotLabelFromCalendar({
@@ -682,7 +794,7 @@ function buildExportPayload(p: {
   const exportHours = p.hoursByDay[0]?.filter((hour): hour is number => hour !== null) ?? [];
 
   return {
-    schemaVersion: "1.0.0",
+    schemaVersion: "1.1.0",
     meta: {
       exportedAtISO: new Date().toISOString(),
       timezone: p.timezone,
@@ -734,6 +846,22 @@ function buildExportPayload(p: {
       memo: b.memo,
       approved: b.approved,
     })),
+    dailyStocks: p.dailyStocks.map((entry) => ({
+      date: entry.date,
+      itemCode: entry.itemCode,
+      stock: entry.stock,
+    })),
+    orders: p.orders.map((entry) => ({
+      deliveryDate: entry.deliveryDate,
+      shipDate: entry.shipDate,
+      itemCode: entry.itemCode,
+      quantity: entry.quantity,
+    })),
+    eodStocks: p.eodStocks.map((entry) => ({
+      itemCode: entry.itemCode,
+      dates: entry.dates,
+      stocks: entry.stocks,
+    })),
     constraints: {},
   };
 }
@@ -752,7 +880,7 @@ type DragState = {
 
 export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [navOpen, setNavOpen] = useState(false);
-  const [activeView, setActiveView] = useState<"schedule" | "master">("schedule");
+  const [activeView, setActiveView] = useState<"schedule" | "master" | "import">("schedule");
   const [planWeekStart, setPlanWeekStart] = useState<Date>(() => getDefaultWeekStart());
   const [viewWeekStart, setViewWeekStart] = useState<Date>(() => getDefaultWeekStart());
 
@@ -767,6 +895,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const [materialsMaster, setMaterialsMaster] = useState<Material[]>(SAMPLE_MATERIALS);
   const [items, setItems] = useState<Item[]>(SAMPLE_ITEMS);
+  const [dailyStocks, setDailyStocks] = useState<DailyStockEntry[]>([]);
+  const [orders, setOrders] = useState<OrderEntry[]>([]);
+  const [dailyStockImportNote, setDailyStockImportNote] = useState<string | null>(null);
+  const [orderImportNote, setOrderImportNote] = useState<string | null>(null);
+  const [dailyStockImportError, setDailyStockImportError] = useState<string | null>(null);
+  const [orderImportError, setOrderImportError] = useState<string | null>(null);
+  const [dailyStockInputKey, setDailyStockInputKey] = useState(0);
+  const [orderInputKey, setOrderInputKey] = useState(0);
   const [itemNameDraft, setItemNameDraft] = useState("");
   const [itemPublicIdDraft, setItemPublicIdDraft] = useState("");
   const [itemUnitDraft, setItemUnitDraft] = useState<ItemUnit>("cs");
@@ -891,6 +1027,32 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return map;
   }, [items]);
 
+  const dailyStockMap = useMemo(() => {
+    const map = new Map<string, Map<string, number>>();
+    dailyStocks.forEach((entry) => {
+      if (!entry.itemId || !entry.date) return;
+      if (!map.has(entry.itemId)) {
+        map.set(entry.itemId, new Map());
+      }
+      map.get(entry.itemId)?.set(entry.date, entry.stock);
+    });
+    return map;
+  }, [dailyStocks]);
+
+  const ordersByShipDate = useMemo(() => {
+    const map = new Map<string, Map<string, number>>();
+    orders.forEach((entry) => {
+      if (!entry.itemId || !entry.shipDate) return;
+      if (!map.has(entry.itemId)) {
+        map.set(entry.itemId, new Map());
+      }
+      const itemMapEntry = map.get(entry.itemId);
+      const current = itemMapEntry?.get(entry.shipDate) ?? 0;
+      itemMapEntry?.set(entry.shipDate, current + entry.quantity);
+    });
+    return map;
+  }, [orders]);
+
   const activeBlock = useMemo(() => {
     if (!activeBlockId) return null;
     return blocks.find((b) => b.id === activeBlockId) ?? null;
@@ -923,6 +1085,118 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       d.setDate(prev.getDate() + deltaDays);
       return d;
     });
+  };
+
+  const readFirstSheetRows = async (file: File): Promise<unknown[][]> => {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) return [];
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true }) as unknown[][];
+    return rows ?? [];
+  };
+
+  const parseDailyStockRows = (rows: unknown[][]) => {
+    if (!rows.length) {
+      throw new Error("シートが空です。");
+    }
+    const headers = rows[0] ?? [];
+    const dateIndex = findHeaderIndex(headers, DAILY_STOCK_HEADERS.date);
+    const itemIndex = findHeaderIndex(headers, DAILY_STOCK_HEADERS.itemCode);
+    const stockIndex = findHeaderIndex(headers, DAILY_STOCK_HEADERS.stock);
+    if (dateIndex < 0 || itemIndex < 0 || stockIndex < 0) {
+      throw new Error("日別在庫の必須列（日付/品目コード/在庫数）が見つかりません。");
+    }
+
+    const next: DailyStockEntry[] = [];
+    let missingItem = 0;
+    let invalidRows = 0;
+
+    rows.slice(1).forEach((row) => {
+      if (!row || isEmptyRow(row)) return;
+      const date = normalizeDateInput(row[dateIndex]);
+      const itemCode = String(row[itemIndex] ?? "").trim();
+      const stock = normalizeNumberInput(row[stockIndex]);
+      if (!date || !itemCode || stock === null) {
+        invalidRows += 1;
+        return;
+      }
+      const itemId = itemKeyMap.get(itemCode);
+      if (!itemId) {
+        missingItem += 1;
+        return;
+      }
+      next.push({ date, itemId, itemCode, stock });
+    });
+
+    return { entries: next, missingItem, invalidRows };
+  };
+
+  const parseOrderRows = (rows: unknown[][]) => {
+    if (!rows.length) {
+      throw new Error("シートが空です。");
+    }
+    const headers = rows[0] ?? [];
+    const deliveryIndex = findHeaderIndex(headers, ORDER_HEADERS.deliveryDate);
+    const shipIndex = findHeaderIndex(headers, ORDER_HEADERS.shipDate);
+    const itemIndex = findHeaderIndex(headers, ORDER_HEADERS.itemCode);
+    const qtyIndex = findHeaderIndex(headers, ORDER_HEADERS.quantity);
+    if (deliveryIndex < 0 || shipIndex < 0 || itemIndex < 0 || qtyIndex < 0) {
+      throw new Error("受注一覧の必須列（納品日/出荷日/品目コード/受注数）が見つかりません。");
+    }
+
+    const next: OrderEntry[] = [];
+    let missingItem = 0;
+    let invalidRows = 0;
+
+    rows.slice(1).forEach((row) => {
+      if (!row || isEmptyRow(row)) return;
+      const deliveryDate = normalizeDateInput(row[deliveryIndex]);
+      const shipDate = normalizeDateInput(row[shipIndex]);
+      const itemCode = String(row[itemIndex] ?? "").trim();
+      const quantity = normalizeNumberInput(row[qtyIndex]);
+      if (!deliveryDate || !shipDate || !itemCode || quantity === null) {
+        invalidRows += 1;
+        return;
+      }
+      const itemId = itemKeyMap.get(itemCode);
+      if (!itemId) {
+        missingItem += 1;
+        return;
+      }
+      next.push({ deliveryDate, shipDate, itemId, itemCode, quantity });
+    });
+
+    return { entries: next, missingItem, invalidRows };
+  };
+
+  const handleDailyStockImport = async (file: File) => {
+    setDailyStockImportError(null);
+    setDailyStockImportNote(null);
+    const rows = await readFirstSheetRows(file);
+    const result = parseDailyStockRows(rows);
+    setDailyStocks(result.entries);
+    setDailyStockImportNote(
+      `日別在庫を${result.entries.length}件取り込みました。` +
+        (result.missingItem ? ` (品目未登録:${result.missingItem}件)` : "") +
+        (result.invalidRows ? ` (無効行:${result.invalidRows}件)` : "")
+    );
+    setDailyStockInputKey((prev) => prev + 1);
+  };
+
+  const handleOrderImport = async (file: File) => {
+    setOrderImportError(null);
+    setOrderImportNote(null);
+    const rows = await readFirstSheetRows(file);
+    const result = parseOrderRows(rows);
+    setOrders(result.entries);
+    setOrderImportNote(
+      `受注一覧を${result.entries.length}件取り込みました。` +
+        (result.missingItem ? ` (品目未登録:${result.missingItem}件)` : "") +
+        (result.invalidRows ? ` (無効行:${result.invalidRows}件)` : "")
+    );
+    setOrderInputKey((prev) => prev + 1);
   };
 
   useEffect(() => {
@@ -1152,6 +1426,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         planCalendar.slotsPerDay
       )?.toISOString(),
     }));
+    const eodStocks = items.map((item) => ({
+      itemId: (item.publicId ?? "").trim() || item.id,
+      dates: planWeekDates,
+      stocks: eodStockByItem[item.id] ?? [],
+    }));
 
     return JSON.stringify(
       {
@@ -1175,6 +1454,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             materialName: materialMap.get(line.materialId)?.name ?? "未登録原料",
           })),
         })),
+        dailyStocks: dailyStocks.map((entry) => ({
+          date: entry.date,
+          itemCode: entry.itemCode,
+          stock: entry.stock,
+        })),
+        orders: orders.map((entry) => ({
+          deliveryDate: entry.deliveryDate,
+          shipDate: entry.shipDate,
+          itemCode: entry.itemCode,
+          quantity: entry.quantity,
+        })),
+        eodStocks,
         blocks: blockSummaries,
       },
       null,
@@ -1908,6 +2199,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const eodStockByItem = useMemo(() => {
     const blocksForEod = isPlanWeekView ? blocks : [];
     const out: Record<string, number[]> = {};
+    const weekDatesForEod = planCalendarDays.map((day) => day.date).slice(0, 7);
 
     for (const it of items) {
       const addByDay = new Array(7).fill(0);
@@ -1919,14 +2211,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       const eod = new Array(7).fill(0);
       let cur = it.stock;
       for (let d = 0; d < 7; d += 1) {
-        cur += addByDay[d];
+        const date = weekDatesForEod[d];
+        const override = dailyStockMap.get(it.id)?.get(date ?? "");
+        if (override !== undefined) {
+          cur = override;
+        }
+        const shipped = ordersByShipDate.get(it.id)?.get(date ?? "") ?? 0;
+        cur += addByDay[d] - shipped;
         eod[d] = cur;
       }
       out[it.id] = eod;
     }
 
     return out;
-  }, [blocks, isPlanWeekView, items, planSlotsPerDay]);
+  }, [blocks, dailyStockMap, isPlanWeekView, items, ordersByShipDate, planCalendarDays, planSlotsPerDay]);
 
   const eodSummaryByDay = useMemo(() => {
     const blocksForEod = isPlanWeekView ? blocks : [];
@@ -1965,6 +2263,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       materials: materialsMaster,
       items,
       blocks,
+      dailyStocks,
+      orders,
+      eodStocks: items.map((item) => ({
+        itemId: item.id,
+        itemCode: (item.publicId ?? "").trim() || item.id,
+        dates: planWeekDates,
+        stocks: eodStockByItem[item.id] ?? [],
+      })),
     });
 
     const json = JSON.stringify(payload, null, 2);
@@ -2219,7 +2525,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[auto_1fr] lg:items-start lg:gap-4">
       <div className="min-w-0 lg:col-start-1 lg:row-start-1">{scheduleHeader}</div>
       <div className="min-w-0 lg:col-start-1 lg:row-start-2">{scheduleCard}</div>
-
 
       <div className="w-full shrink-0 lg:col-start-2 lg:row-start-2">
         <Card className="flex flex-col rounded-2xl shadow-sm lg:h-[calc(100vh-12rem)]">
@@ -2585,6 +2890,84 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     </div>
   );
 
+  const importView = (
+    <div className="mx-auto w-full max-w-3xl space-y-4">
+      <div className="space-y-1">
+        <div className="text-2xl font-semibold tracking-tight">Excel取り込み</div>
+        <div className="text-sm text-muted-foreground">
+          日別在庫と受注一覧をExcelから取り込みます。
+        </div>
+      </div>
+      <Card className="rounded-2xl shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium">取込対象</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <div className="space-y-2">
+            <div className="font-medium text-slate-700">日別在庫（yyyyMMdd / 品目コード / 在庫数）</div>
+            <Input
+              key={`daily-stock-${dailyStockInputKey}`}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                try {
+                  await handleDailyStockImport(file);
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : "日別在庫の取り込みに失敗しました。";
+                  setDailyStockImportError(message);
+                }
+              }}
+            />
+            <div className="text-xs text-muted-foreground">見出し例: 日付 / 品目コード / 在庫数</div>
+            {dailyStockImportNote ? (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                {dailyStockImportNote}
+              </div>
+            ) : null}
+            {dailyStockImportError ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+                {dailyStockImportError}
+              </div>
+            ) : null}
+          </div>
+          <div className="space-y-2">
+            <div className="font-medium text-slate-700">受注一覧（納品日 / 出荷日 / 品目コード / 受注数）</div>
+            <Input
+              key={`orders-${orderInputKey}`}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                try {
+                  await handleOrderImport(file);
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : "受注一覧の取り込みに失敗しました。";
+                  setOrderImportError(message);
+                }
+              }}
+            />
+            <div className="text-xs text-muted-foreground">見出し例: 納品日 / 出荷日 / 品目コード / 受注数</div>
+            {orderImportNote ? (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                {orderImportNote}
+              </div>
+            ) : null}
+            {orderImportError ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+                {orderImportError}
+              </div>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+
+  const viewLabel = activeView === "schedule" ? "スケジュール" : activeView === "master" ? "マスタ管理" : "Excel取り込み";
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div
@@ -2625,6 +3008,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             <button
               type="button"
               className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
+                activeView === "import" ? "bg-muted font-semibold" : "hover:bg-muted/50"
+              }`}
+              onClick={() => {
+                setActiveView("import");
+                setNavOpen(false);
+              }}
+            >
+              Excel取り込み
+            </button>
+            <button
+              type="button"
+              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
                 activeView === "master" ? "bg-muted font-semibold" : "hover:bg-muted/50"
               }`}
               onClick={() => {
@@ -2652,13 +3047,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           </button>
           <div>
             <div className="text-sm text-muted-foreground">画面</div>
-            <div className="text-base font-semibold">
-              {activeView === "schedule" ? "スケジュール" : "マスタ管理"}
-            </div>
+            <div className="text-base font-semibold">{viewLabel}</div>
           </div>
         </header>
 
-        <main className="p-4">{activeView === "schedule" ? scheduleView : masterView}</main>
+        <main className="p-4">
+          {activeView === "schedule" ? scheduleView : activeView === "master" ? masterView : importView}
+        </main>
 
         {/* 品目マスタモーダル */}
         <Dialog open={isItemModalOpen} onOpenChange={handleItemModalOpenChange}>
