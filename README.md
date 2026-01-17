@@ -53,6 +53,25 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 - `.env` は `data/` ディレクトリにまとめて配置してください（例: `data/.env`）。
 - `GEMINI_API_KEY` を設定するとチャット機能が利用できます。モデルを変えたい場合は `GEMINI_MODEL` または `VITE_GEMINI_MODEL` を設定してください。
 
+## Excel取り込み
+
+Excel取り込みタブから `.xlsx` / `.xls` / `.csv` をアップロードすると、日別在庫または受注一覧を更新できます。読み込み対象は **先頭シート** のみで、1行目をヘッダーとして判定します。
+
+### 日別在庫（必要列）
+
+- 日付（例: `日付`, `年月日`, `date`, `stockdate`, `inventorydate`）
+- 品目コード（例: `品目コード`, `品目`, `itemcode`, `item_code`, `itemid`, `item_id`）
+- 在庫数（例: `在庫数`, `在庫`, `stock`, `inventory`, `qty`）
+
+### 受注一覧（必要列）
+
+- 納品日（例: `納品日`, `納品予定日`, `deliverydate`, `delivery_date`）
+- 出荷日（例: `出荷日`, `出荷予定日`, `shipdate`, `ship_date`, `shipmentdate`）
+- 品目コード（例: `品目コード`, `品目`, `itemcode`, `item_code`, `itemid`, `item_id`）
+- 受注数（例: `受注数`, `受注数量`, `数量`, `orderqty`, `order_qty`, `qty`）
+
+取り込み時に品目マスタに存在しない品目コードはスキップされます。無効な行がある場合は件数が表示されます。
+
 ## Gemini 接続設定（Quickstart準拠）
 
 Gemini API のキー作成手順は Google の Quickstart に準拠しています。詳細は以下を参照してください。
@@ -120,6 +139,11 @@ Gemini API との通信をサーバー側で中継し、クライアントに AP
 ├─ run.bat                # Windows用起動スクリプト
 └─ README.md
 ```
+
+## 品質チェックメモ
+
+- フォーム系 UI（Input / Textarea / Select）の見た目は `src/components/ui/form-control.ts` に集約し、重複したクラス定義を避けています。
+- フォーム系のスタイル変更は `formControlBase` を起点に行うことで、UI の統一感を保てます。
 
 ## データスキーマ
 

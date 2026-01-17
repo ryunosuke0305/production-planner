@@ -443,6 +443,14 @@ const ORDER_HEADERS = {
   quantity: ["受注数", "受注数量", "数量", "orderqty", "order_qty", "qty"],
 };
 
+function mergeHeaderCandidates(defaults: string[], override: string): string[] {
+  const extras = override
+    .split(/[,、\n]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return [...extras, ...defaults];
+}
+
 function isEmptyRow(row: unknown[]): boolean {
   return row.every((cell) => cell === null || cell === undefined || String(cell).trim() === "");
 }
@@ -903,6 +911,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [orderImportError, setOrderImportError] = useState<string | null>(null);
   const [dailyStockInputKey, setDailyStockInputKey] = useState(0);
   const [orderInputKey, setOrderInputKey] = useState(0);
+  const [dailyStockHeaderOverrides, setDailyStockHeaderOverrides] = useState({
+    date: "",
+    itemCode: "",
+    stock: "",
+  });
+  const [orderHeaderOverrides, setOrderHeaderOverrides] = useState({
+    deliveryDate: "",
+    shipDate: "",
+    itemCode: "",
+    quantity: "",
+  });
   const [itemNameDraft, setItemNameDraft] = useState("");
   const [itemPublicIdDraft, setItemPublicIdDraft] = useState("");
   const [itemUnitDraft, setItemUnitDraft] = useState<ItemUnit>("cs");
@@ -1102,9 +1121,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       throw new Error("シートが空です。");
     }
     const headers = rows[0] ?? [];
-    const dateIndex = findHeaderIndex(headers, DAILY_STOCK_HEADERS.date);
-    const itemIndex = findHeaderIndex(headers, DAILY_STOCK_HEADERS.itemCode);
-    const stockIndex = findHeaderIndex(headers, DAILY_STOCK_HEADERS.stock);
+    const dateIndex = findHeaderIndex(
+      headers,
+      mergeHeaderCandidates(DAILY_STOCK_HEADERS.date, dailyStockHeaderOverrides.date)
+    );
+    const itemIndex = findHeaderIndex(
+      headers,
+      mergeHeaderCandidates(DAILY_STOCK_HEADERS.itemCode, dailyStockHeaderOverrides.itemCode)
+    );
+    const stockIndex = findHeaderIndex(
+      headers,
+      mergeHeaderCandidates(DAILY_STOCK_HEADERS.stock, dailyStockHeaderOverrides.stock)
+    );
     if (dateIndex < 0 || itemIndex < 0 || stockIndex < 0) {
       throw new Error("日別在庫の必須列（日付/品目コード/在庫数）が見つかりません。");
     }
@@ -1138,10 +1166,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       throw new Error("シートが空です。");
     }
     const headers = rows[0] ?? [];
-    const deliveryIndex = findHeaderIndex(headers, ORDER_HEADERS.deliveryDate);
-    const shipIndex = findHeaderIndex(headers, ORDER_HEADERS.shipDate);
-    const itemIndex = findHeaderIndex(headers, ORDER_HEADERS.itemCode);
-    const qtyIndex = findHeaderIndex(headers, ORDER_HEADERS.quantity);
+    const deliveryIndex = findHeaderIndex(
+      headers,
+      mergeHeaderCandidates(ORDER_HEADERS.deliveryDate, orderHeaderOverrides.deliveryDate)
+    );
+    const shipIndex = findHeaderIndex(headers, mergeHeaderCandidates(ORDER_HEADERS.shipDate, orderHeaderOverrides.shipDate));
+    const itemIndex = findHeaderIndex(headers, mergeHeaderCandidates(ORDER_HEADERS.itemCode, orderHeaderOverrides.itemCode));
+    const qtyIndex = findHeaderIndex(headers, mergeHeaderCandidates(ORDER_HEADERS.quantity, orderHeaderOverrides.quantity));
     if (deliveryIndex < 0 || shipIndex < 0 || itemIndex < 0 || qtyIndex < 0) {
       throw new Error("受注一覧の必須列（納品日/出荷日/品目コード/受注数）が見つかりません。");
     }
@@ -2920,7 +2951,56 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 }
               }}
             />
-            <div className="text-xs text-muted-foreground">見出し例: 日付 / 品目コード / 在庫数</div>
+            <div className="rounded-lg border bg-muted/10 p-3 text-xs">
+              <div className="font-semibold text-slate-700">ヘッダー指定（任意）</div>
+              <div className="text-muted-foreground">
+                カンマ区切りで列名候補を追加できます。入力した候補を優先的に検索します。
+              </div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium text-slate-600">日付</div>
+                  <Input
+                    value={dailyStockHeaderOverrides.date}
+                    placeholder="例: 取込日, 入荷日"
+                    onChange={(e) =>
+                      setDailyStockHeaderOverrides((prev) => ({
+                        ...prev,
+                        date: e.target.value,
+                      }))
+                    }
+                  />
+                  <div className="text-[11px] text-muted-foreground">在庫を計上する対象日。</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium text-slate-600">品目コード</div>
+                  <Input
+                    value={dailyStockHeaderOverrides.itemCode}
+                    placeholder="例: 商品コード, SKU"
+                    onChange={(e) =>
+                      setDailyStockHeaderOverrides((prev) => ({
+                        ...prev,
+                        itemCode: e.target.value,
+                      }))
+                    }
+                  />
+                  <div className="text-[11px] text-muted-foreground">在庫を紐づける品目。</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium text-slate-600">在庫数</div>
+                  <Input
+                    value={dailyStockHeaderOverrides.stock}
+                    placeholder="例: 在庫数量, 残数"
+                    onChange={(e) =>
+                      setDailyStockHeaderOverrides((prev) => ({
+                        ...prev,
+                        stock: e.target.value,
+                      }))
+                    }
+                  />
+                  <div className="text-[11px] text-muted-foreground">対象日の在庫数量。</div>
+                </div>
+              </div>
+            </div>
             {dailyStockImportNote ? (
               <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
                 {dailyStockImportNote}
@@ -2949,7 +3029,70 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 }
               }}
             />
-            <div className="text-xs text-muted-foreground">見出し例: 納品日 / 出荷日 / 品目コード / 受注数</div>
+            <div className="rounded-lg border bg-muted/10 p-3 text-xs">
+              <div className="font-semibold text-slate-700">ヘッダー指定（任意）</div>
+              <div className="text-muted-foreground">
+                カンマ区切りで列名候補を追加できます。入力した候補を優先的に検索します。
+              </div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium text-slate-600">納品日</div>
+                  <Input
+                    value={orderHeaderOverrides.deliveryDate}
+                    placeholder="例: 納品予定, 納期"
+                    onChange={(e) =>
+                      setOrderHeaderOverrides((prev) => ({
+                        ...prev,
+                        deliveryDate: e.target.value,
+                      }))
+                    }
+                  />
+                  <div className="text-[11px] text-muted-foreground">受注の納品予定日。</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium text-slate-600">出荷日</div>
+                  <Input
+                    value={orderHeaderOverrides.shipDate}
+                    placeholder="例: 出荷予定, 発送日"
+                    onChange={(e) =>
+                      setOrderHeaderOverrides((prev) => ({
+                        ...prev,
+                        shipDate: e.target.value,
+                      }))
+                    }
+                  />
+                  <div className="text-[11px] text-muted-foreground">受注の出荷予定日。</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium text-slate-600">品目コード</div>
+                  <Input
+                    value={orderHeaderOverrides.itemCode}
+                    placeholder="例: 商品コード, SKU"
+                    onChange={(e) =>
+                      setOrderHeaderOverrides((prev) => ({
+                        ...prev,
+                        itemCode: e.target.value,
+                      }))
+                    }
+                  />
+                  <div className="text-[11px] text-muted-foreground">受注対象の品目。</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-medium text-slate-600">受注数</div>
+                  <Input
+                    value={orderHeaderOverrides.quantity}
+                    placeholder="例: 注文数, 数量"
+                    onChange={(e) =>
+                      setOrderHeaderOverrides((prev) => ({
+                        ...prev,
+                        quantity: e.target.value,
+                      }))
+                    }
+                  />
+                  <div className="text-[11px] text-muted-foreground">受注の数量。</div>
+                </div>
+              </div>
+            </div>
             {orderImportNote ? (
               <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
                 {orderImportNote}

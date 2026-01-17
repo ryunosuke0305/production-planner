@@ -1,4 +1,5 @@
 import * as React from "react";
+import { formControlBase } from "@/components/ui/form-control";
 
 type SelectProps = {
   value?: string;
@@ -61,7 +62,7 @@ export function Select({ value, onValueChange, children, className = "" }: Selec
   return (
     <div className={className}>
       <select
-        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none"
+        className={formControlBase}
         value={value ?? ""}
         onChange={(e) => onValueChange?.(e.target.value)}
       >
