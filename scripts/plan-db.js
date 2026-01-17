@@ -43,7 +43,11 @@ function ensureSchema(db) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       unit TEXT NOT NULL,
-      stock REAL NOT NULL
+      stock REAL NOT NULL,
+      planning_policy TEXT NOT NULL DEFAULT 'make_to_stock',
+      safety_stock REAL NOT NULL DEFAULT 0,
+      reorder_point REAL NOT NULL DEFAULT 0,
+      lot_size REAL NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS item_recipes (
       item_id TEXT NOT NULL,
@@ -98,6 +102,26 @@ function ensureBlocksDateColumns(db) {
   }
 }
 
+function ensureItemsPlanningColumns(db) {
+  const columns = db.prepare("PRAGMA table_info(items)").all();
+  const hasPlanningPolicy = columns.some((column) => column.name === "planning_policy");
+  const hasSafetyStock = columns.some((column) => column.name === "safety_stock");
+  const hasReorderPoint = columns.some((column) => column.name === "reorder_point");
+  const hasLotSize = columns.some((column) => column.name === "lot_size");
+  if (!hasPlanningPolicy) {
+    db.exec("ALTER TABLE items ADD COLUMN planning_policy TEXT NOT NULL DEFAULT 'make_to_stock'");
+  }
+  if (!hasSafetyStock) {
+    db.exec("ALTER TABLE items ADD COLUMN safety_stock REAL NOT NULL DEFAULT 0");
+  }
+  if (!hasReorderPoint) {
+    db.exec("ALTER TABLE items ADD COLUMN reorder_point REAL NOT NULL DEFAULT 0");
+  }
+  if (!hasLotSize) {
+    db.exec("ALTER TABLE items ADD COLUMN lot_size REAL NOT NULL DEFAULT 0");
+  }
+}
+
 export async function openPlanDatabase() {
   await fs.mkdir(dataDir, { recursive: true });
   const db = new Database(PLAN_DB_PATH);
@@ -106,6 +130,7 @@ export async function openPlanDatabase() {
   ensureSchema(db);
   ensureBlocksApprovedColumn(db);
   ensureBlocksDateColumns(db);
+  ensureItemsPlanningColumns(db);
   return db;
 }
 
@@ -135,9 +160,20 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     .map((row) => ({ id: row.id, name: row.name, unit: row.unit }));
 
   const items = db
-    .prepare("SELECT id, name, unit, stock FROM items ORDER BY id")
+    .prepare(
+      "SELECT id, name, unit, stock, planning_policy, safety_stock, reorder_point, lot_size FROM items ORDER BY id"
+    )
     .all()
-    .map((row) => ({ id: row.id, name: row.name, unit: row.unit, stock: row.stock }));
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      unit: row.unit,
+      stock: row.stock,
+      planningPolicy: row.planning_policy ?? "make_to_stock",
+      safetyStock: row.safety_stock ?? 0,
+      reorderPoint: row.reorder_point ?? 0,
+      lotSize: row.lot_size ?? 0,
+    }));
 
   const recipeRows = db
     .prepare("SELECT item_id, material_id, per_unit, unit FROM item_recipes ORDER BY item_id")
@@ -236,7 +272,9 @@ export function savePlanPayload(db, payload) {
     "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
   );
   const insertMaterial = db.prepare("INSERT INTO materials (id, name, unit) VALUES (?, ?, ?)");
-  const insertItem = db.prepare("INSERT INTO items (id, name, unit, stock) VALUES (?, ?, ?, ?)");
+  const insertItem = db.prepare(
+    "INSERT INTO items (id, name, unit, stock, planning_policy, safety_stock, reorder_point, lot_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  );
   const insertRecipe = db.prepare(
     "INSERT INTO item_recipes (item_id, material_id, per_unit, unit) VALUES (?, ?, ?, ?)"
   );
@@ -273,7 +311,16 @@ export function savePlanPayload(db, payload) {
     });
 
     payload.items?.forEach((item) => {
-      insertItem.run(item.id, item.name, item.unit, item.stock ?? 0);
+      insertItem.run(
+        item.id,
+        item.name,
+        item.unit,
+        item.stock ?? 0,
+        item.planningPolicy ?? "make_to_stock",
+        item.safetyStock ?? 0,
+        item.reorderPoint ?? 0,
+        item.lotSize ?? 0
+      );
       item.recipe?.forEach((line) => {
         insertRecipe.run(item.id, line.materialId, line.perUnit ?? 0, line.unit);
       });
