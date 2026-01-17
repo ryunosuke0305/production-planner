@@ -785,6 +785,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [editingItemSafetyStock, setEditingItemSafetyStock] = useState("0");
   const [editingItemReorderPoint, setEditingItemReorderPoint] = useState("0");
   const [editingItemLotSize, setEditingItemLotSize] = useState("0");
+  const [isItemModalOpen, setIsItemModalOpen] = useState(false);
+  const [itemModalMode, setItemModalMode] = useState<"create" | "edit">("create");
 
   const viewCalendarDays = useMemo(() => {
     const planStart = planCalendarDays[0]?.date;
@@ -849,6 +851,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null);
   const [editingMaterialName, setEditingMaterialName] = useState("");
   const [editingMaterialUnit, setEditingMaterialUnit] = useState<RecipeUnit>("kg");
+  const [isMaterialModalOpen, setIsMaterialModalOpen] = useState(false);
+  const [materialModalMode, setMaterialModalMode] = useState<"create" | "edit">("create");
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -1282,8 +1286,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       '  "actions": [',
       "    {",
       '      "type": "create_block | update_block | delete_block",',
-      '      "blockId": "既存ブロックID（更新/削除時に推奨）",',
-      '      "itemId": "品目ID（マスタで設定したID）",',
+      '      "blockId": "既存ブロックコード（更新/削除時に推奨）",',
+      '      "itemId": "品目コード（マスタで設定したコード）",',
       '      "startSlot": "開始スロット番号（0始まり）",',
       '      "startLabel": "開始ラベル（startSlotが不明な場合）",',
       '      "len": "スロット長",',
@@ -1620,20 +1624,38 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setOpenRecipe(false);
   };
 
+  const resetItemDrafts = () => {
+    setItemNameDraft("");
+    setItemPublicIdDraft("");
+    setItemUnitDraft("cs");
+    setItemStockDraft("0");
+    setItemPlanningPolicyDraft("make_to_stock");
+    setItemSafetyStockDraft("0");
+    setItemReorderPointDraft("0");
+    setItemLotSizeDraft("0");
+  };
+
+  const openCreateItemModal = () => {
+    setItemModalMode("create");
+    resetItemDrafts();
+    setItemFormError(null);
+    setIsItemModalOpen(true);
+  };
+
   const onCreateItem = () => {
     const name = itemNameDraft.trim();
     const publicId = itemPublicIdDraft.trim();
     if (!name) {
       setItemFormError("品目名を入力してください。");
-      return;
+      return false;
     }
     if (items.some((it) => it.name === name)) {
       setItemFormError("同じ品目名がすでに登録されています。");
-      return;
+      return false;
     }
     if (publicId && items.some((it) => it.id === publicId || (it.publicId ?? "").trim() === publicId)) {
-      setItemFormError("同じ品目IDがすでに登録されています。");
-      return;
+      setItemFormError("同じ品目コードがすでに登録されています。");
+      return false;
     }
     const stock = Math.max(0, safeNumber(itemStockDraft));
     const safetyStock = Math.max(0, safeNumber(itemSafetyStockDraft));
@@ -1652,15 +1674,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       recipe: [],
     };
     setItems((prev) => [...prev, newItem]);
-    setItemNameDraft("");
-    setItemPublicIdDraft("");
-    setItemUnitDraft("cs");
-    setItemStockDraft("0");
-    setItemPlanningPolicyDraft("make_to_stock");
-    setItemSafetyStockDraft("0");
-    setItemReorderPointDraft("0");
-    setItemLotSizeDraft("0");
+    resetItemDrafts();
     setItemFormError(null);
+    return true;
   };
 
   const onStartEditItem = (item: Item) => {
@@ -1695,11 +1711,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const nextPublicId = editingItemPublicId.trim();
     if (!nextName) {
       setItemFormError("品目名を入力してください。");
-      return;
+      return false;
     }
     if (items.some((it) => it.name === nextName && it.id !== editingItemId)) {
       setItemFormError("同じ品目名がすでに登録されています。");
-      return;
+      return false;
     }
     if (
       nextPublicId &&
@@ -1707,8 +1723,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         (it) => it.id !== editingItemId && (it.id === nextPublicId || (it.publicId ?? "").trim() === nextPublicId)
       )
     ) {
-      setItemFormError("同じ品目IDがすでに登録されています。");
-      return;
+      setItemFormError("同じ品目コードがすでに登録されています。");
+      return false;
     }
     const nextStock = Math.max(0, safeNumber(editingItemStock));
     const nextSafetyStock = Math.max(0, safeNumber(editingItemSafetyStock));
@@ -1733,13 +1749,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     );
     setItemFormError(null);
     onCancelEditItem();
+    return true;
   };
 
   const onDeleteItem = (itemId: string) => {
     const target = items.find((it) => it.id === itemId);
-    if (!target) return;
+    if (!target) return false;
     const confirmed = window.confirm(`${target.name} を削除しますか？`);
-    if (!confirmed) return;
+    if (!confirmed) return false;
     setItems((prev) => prev.filter((it) => it.id !== itemId));
     setBlocks((prev) => prev.filter((b) => b.itemId !== itemId));
     if (activeBlockId) {
@@ -1756,17 +1773,30 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (editingItemId === itemId) {
       onCancelEditItem();
     }
+    return true;
+  };
+
+  const resetMaterialDrafts = () => {
+    setMaterialNameDraft("");
+    setMaterialUnitDraft("kg");
+  };
+
+  const openCreateMaterialModal = () => {
+    setMaterialModalMode("create");
+    resetMaterialDrafts();
+    setMaterialFormError(null);
+    setIsMaterialModalOpen(true);
   };
 
   const onCreateMaterial = () => {
     const name = materialNameDraft.trim();
     if (!name) {
       setMaterialFormError("原料名を入力してください。");
-      return;
+      return false;
     }
     if (materialsMaster.some((m) => m.name === name)) {
       setMaterialFormError("同じ原料名がすでに登録されています。");
-      return;
+      return false;
     }
     const newMaterial: Material = {
       id: uid("mat"),
@@ -1774,9 +1804,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       unit: materialUnitDraft,
     };
     setMaterialsMaster((prev) => [...prev, newMaterial]);
-    setMaterialNameDraft("");
-    setMaterialUnitDraft("kg");
+    resetMaterialDrafts();
     setMaterialFormError(null);
+    return true;
   };
 
   const onStartEditMaterial = (material: Material) => {
@@ -1798,11 +1828,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const nextName = editingMaterialName.trim();
     if (!nextName) {
       setMaterialFormError("原料名を入力してください。");
-      return;
+      return false;
     }
     if (materialsMaster.some((m) => m.name === nextName && m.id !== editingMaterialId)) {
       setMaterialFormError("同じ原料名がすでに登録されています。");
-      return;
+      return false;
     }
     setMaterialsMaster((prev) =>
       prev.map((m) =>
@@ -1817,13 +1847,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     );
     setMaterialFormError(null);
     onCancelEditMaterial();
+    return true;
   };
 
   const onDeleteMaterial = (materialId: string) => {
     const target = materialsMaster.find((m) => m.id === materialId);
-    if (!target) return;
+    if (!target) return false;
     const confirmed = window.confirm(`${target.name} を削除しますか？`);
-    if (!confirmed) return;
+    if (!confirmed) return false;
     setMaterialsMaster((prev) => prev.filter((m) => m.id !== materialId));
     setItems((prev) =>
       prev.map((item) => ({
@@ -1834,6 +1865,43 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setRecipeDraft((prev) => prev.filter((line) => line.materialId !== materialId));
     if (editingMaterialId === materialId) {
       onCancelEditMaterial();
+    }
+    return true;
+  };
+
+  const openEditItemModal = (item: Item) => {
+    setItemModalMode("edit");
+    onStartEditItem(item);
+    setIsItemModalOpen(true);
+  };
+
+  const handleItemModalOpenChange = (open: boolean) => {
+    setIsItemModalOpen(open);
+    if (!open) {
+      setItemFormError(null);
+      if (itemModalMode === "edit") {
+        onCancelEditItem();
+      } else {
+        resetItemDrafts();
+      }
+    }
+  };
+
+  const openEditMaterialModal = (material: Material) => {
+    setMaterialModalMode("edit");
+    onStartEditMaterial(material);
+    setIsMaterialModalOpen(true);
+  };
+
+  const handleMaterialModalOpenChange = (open: boolean) => {
+    setIsMaterialModalOpen(open);
+    if (!open) {
+      setMaterialFormError(null);
+      if (materialModalMode === "edit") {
+        onCancelEditMaterial();
+      } else {
+        resetMaterialDrafts();
+      }
     }
   };
 
@@ -1911,6 +1979,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const slotGridBg = `repeating-linear-gradient(to right, transparent 0, transparent ${
     colW - 1
   }px, rgba(148, 163, 184, 0.4) ${colW - 1}px, rgba(148, 163, 184, 0.4) ${colW}px)`;
+
+  const isItemEditMode = itemModalMode === "edit";
+  const isMaterialEditMode = materialModalMode === "edit";
+
+  const handleItemModalSave = () => {
+    const didSave = isItemEditMode ? onSaveEditItem() : onCreateItem();
+    if (didSave) {
+      setIsItemModalOpen(false);
+    }
+  };
+
+  const handleMaterialModalSave = () => {
+    const didSave = isMaterialEditMode ? onSaveEditMaterial() : onCreateMaterial();
+    if (didSave) {
+      setIsMaterialModalOpen(false);
+    }
+  };
 
   const scheduleHeader = (
     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -2189,7 +2274,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     void sendChatMessage();
                   }
                 }}
-                placeholder="例：品目ID A を 9/12 10:00から2時間、40cs 追加して"
+                placeholder="例：品目コード A を 9/12 10:00から2時間、40cs 追加して"
                 rows={3}
               />
               <div className="flex items-center justify-between">
@@ -2396,131 +2481,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       </div>
 
       <Card className="rounded-2xl">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">品目を追加</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-14 items-center gap-2">
-            <div className="col-span-4">
-              <Input
-                value={itemNameDraft}
-                onChange={(e) => {
-                  setItemNameDraft(e.target.value);
-                  setItemFormError(null);
-                }}
-                placeholder="品目名"
-              />
-            </div>
-            <div className="col-span-2">
-              <Input
-                value={itemPublicIdDraft}
-                onChange={(e) => {
-                  setItemPublicIdDraft(e.target.value);
-                  setItemFormError(null);
-                }}
-                placeholder="品目ID"
-              />
-            </div>
-            <div className="col-span-2">
-              <Select
-                value={itemUnitDraft}
-                onValueChange={(value) => {
-                  setItemUnitDraft(value as ItemUnit);
-                  setItemFormError(null);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="単位" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cs">cs</SelectItem>
-                  <SelectItem value="kg">kg</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="col-span-3">
-              <Select
-                value={itemPlanningPolicyDraft}
-                onValueChange={(value) => {
-                  setItemPlanningPolicyDraft(value as PlanningPolicy);
-                  setItemFormError(null);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="計画方針" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="make_to_stock">見込生産</SelectItem>
-                  <SelectItem value="make_to_order">受注生産</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="col-span-3">
-              <Input
-                inputMode="decimal"
-                value={itemStockDraft}
-                onChange={(e) => {
-                  setItemStockDraft(e.target.value);
-                  setItemFormError(null);
-                }}
-                placeholder="開始在庫"
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-12 items-center gap-2">
-            <div className="col-span-3">
-              <Input
-                inputMode="decimal"
-                value={itemSafetyStockDraft}
-                onChange={(e) => {
-                  setItemSafetyStockDraft(e.target.value);
-                  setItemFormError(null);
-                }}
-                placeholder="安全在庫"
-              />
-            </div>
-            <div className="col-span-3">
-              <Input
-                inputMode="decimal"
-                value={itemReorderPointDraft}
-                onChange={(e) => {
-                  setItemReorderPointDraft(e.target.value);
-                  setItemFormError(null);
-                }}
-                placeholder="発注点"
-              />
-            </div>
-            <div className="col-span-3">
-              <Input
-                inputMode="decimal"
-                value={itemLotSizeDraft}
-                onChange={(e) => {
-                  setItemLotSizeDraft(e.target.value);
-                  setItemFormError(null);
-                }}
-                placeholder="ロットサイズ"
-              />
-            </div>
-            <div className="col-span-3">
-              <Button onClick={onCreateItem} className="w-full">
-                追加
-              </Button>
-            </div>
-          </div>
-          {itemFormError ? <div className="text-sm text-destructive">{itemFormError}</div> : null}
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl">
-        <CardHeader className="pb-2">
+        <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
           <CardTitle className="text-base font-medium">品目一覧</CardTitle>
+          <Button onClick={openCreateItemModal}>品目を追加</Button>
         </CardHeader>
         <CardContent className="space-y-2">
           {items.length ? (
             <div className="divide-y rounded-lg border">
               <div className="grid grid-cols-14 gap-2 bg-muted/30 p-2 text-xs text-muted-foreground">
                 <div className="col-span-3">品目名</div>
-                <div className="col-span-2">品目ID</div>
+                <div className="col-span-2">品目コード</div>
                 <div className="col-span-1 text-center">単位</div>
                 <div className="col-span-2">計画方針</div>
                 <div className="col-span-1 text-right">在庫</div>
@@ -2529,209 +2499,57 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 <div className="col-span-1 text-right">ロット</div>
                 <div className="col-span-2 text-right">操作</div>
               </div>
-              {items.map((item) => {
-                const isEditing = editingItemId === item.id;
-                return (
-                  <div key={item.id} className="grid grid-cols-14 items-center gap-2 p-2">
-                    <div className="col-span-3">
-                      {isEditing ? (
-                        <Input
-                          value={editingItemName}
-                          onChange={(e) => {
-                            setEditingItemName(e.target.value);
-                            setItemFormError(null);
-                          }}
-                        />
-                      ) : (
-                        <div className="text-sm font-medium">{item.name}</div>
-                      )}
-                    </div>
-                    <div className="col-span-2">
-                      {isEditing ? (
-                        <Input
-                          value={editingItemPublicId}
-                          onChange={(e) => {
-                            setEditingItemPublicId(e.target.value);
-                            setItemFormError(null);
-                          }}
-                        />
-                      ) : (
-                        <div className="text-sm text-muted-foreground">{item.publicId || "未設定"}</div>
-                      )}
-                    </div>
-                    <div className="col-span-1">
-                      {isEditing ? (
-                        <Select value={editingItemUnit} onValueChange={(value) => setEditingItemUnit(value as ItemUnit)}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="単位" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="cs">cs</SelectItem>
-                            <SelectItem value="kg">kg</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <div className="text-center text-sm text-muted-foreground">{item.unit}</div>
-                      )}
-                    </div>
-                    <div className="col-span-2">
-                      {isEditing ? (
-                        <Select
-                          value={editingItemPlanningPolicy}
-                          onValueChange={(value) => setEditingItemPlanningPolicy(value as PlanningPolicy)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="計画方針" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="make_to_stock">見込生産</SelectItem>
-                            <SelectItem value="make_to_order">受注生産</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <div className="text-sm text-muted-foreground">
-                          {PLANNING_POLICY_LABELS[item.planningPolicy] ?? item.planningPolicy}
-                        </div>
-                      )}
-                    </div>
-                    <div className="col-span-1 text-right">
-                      {isEditing ? (
-                        <Input
-                          inputMode="decimal"
-                          value={editingItemStock}
-                          onChange={(e) => {
-                            setEditingItemStock(e.target.value);
-                            setItemFormError(null);
-                          }}
-                        />
-                      ) : (
-                        <div className="text-sm text-muted-foreground">{item.stock}</div>
-                      )}
-                    </div>
-                    <div className="col-span-1 text-right">
-                      {isEditing ? (
-                        <Input
-                          inputMode="decimal"
-                          value={editingItemSafetyStock}
-                          onChange={(e) => {
-                            setEditingItemSafetyStock(e.target.value);
-                            setItemFormError(null);
-                          }}
-                        />
-                      ) : (
-                        <div className="text-sm text-muted-foreground">{item.safetyStock}</div>
-                      )}
-                    </div>
-                    <div className="col-span-1 text-right">
-                      {isEditing ? (
-                        <Input
-                          inputMode="decimal"
-                          value={editingItemReorderPoint}
-                          onChange={(e) => {
-                            setEditingItemReorderPoint(e.target.value);
-                            setItemFormError(null);
-                          }}
-                        />
-                      ) : (
-                        <div className="text-sm text-muted-foreground">{item.reorderPoint}</div>
-                      )}
-                    </div>
-                    <div className="col-span-1 text-right">
-                      {isEditing ? (
-                        <Input
-                          inputMode="decimal"
-                          value={editingItemLotSize}
-                          onChange={(e) => {
-                            setEditingItemLotSize(e.target.value);
-                            setItemFormError(null);
-                          }}
-                        />
-                      ) : (
-                        <div className="text-sm text-muted-foreground">{item.lotSize}</div>
-                      )}
-                    </div>
-                    <div className="col-span-2 flex justify-end gap-2">
-                      {isEditing ? (
-                        <>
-                          <Button variant="outline" onClick={onCancelEditItem}>
-                            キャンセル
-                          </Button>
-                          <Button onClick={onSaveEditItem}>保存</Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button variant="outline" onClick={() => openRecipeEdit(item.id)}>
-                            レシピ {item.recipe.length}件
-                          </Button>
-                          <Button variant="outline" onClick={() => onStartEditItem(item)}>
-                            編集
-                          </Button>
-                          <Button variant="destructive" onClick={() => onDeleteItem(item.id)}>
-                            削除
-                          </Button>
-                        </>
-                      )}
+              {items.map((item) => (
+                <div key={item.id} className="grid grid-cols-14 items-center gap-2 p-2">
+                  <div className="col-span-3">
+                    <div className="text-sm font-medium">{item.name}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-sm text-muted-foreground">{item.publicId || "未設定"}</div>
+                  </div>
+                  <div className="col-span-1">
+                    <div className="text-center text-sm text-muted-foreground">{item.unit}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-sm text-muted-foreground">
+                      {PLANNING_POLICY_LABELS[item.planningPolicy] ?? item.planningPolicy}
                     </div>
                   </div>
-                );
-              })}
+                  <div className="col-span-1 text-right">
+                    <div className="text-sm text-muted-foreground">{item.stock}</div>
+                  </div>
+                  <div className="col-span-1 text-right">
+                    <div className="text-sm text-muted-foreground">{item.safetyStock}</div>
+                  </div>
+                  <div className="col-span-1 text-right">
+                    <div className="text-sm text-muted-foreground">{item.reorderPoint}</div>
+                  </div>
+                  <div className="col-span-1 text-right">
+                    <div className="text-sm text-muted-foreground">{item.lotSize}</div>
+                  </div>
+                  <div className="col-span-2 flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => openRecipeEdit(item.id)}>
+                      レシピ {item.recipe.length}件
+                    </Button>
+                    <Button variant="outline" onClick={() => openEditItemModal(item)}>
+                      編集
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              品目マスタが未登録です。上のフォームから追加してください。
+              品目マスタが未登録です。右上の「品目を追加」ボタンから追加してください。
             </div>
           )}
         </CardContent>
       </Card>
 
       <Card className="rounded-2xl">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">原料を追加</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-12 items-center gap-2">
-            <div className="col-span-6">
-              <Input
-                value={materialNameDraft}
-                onChange={(e) => {
-                  setMaterialNameDraft(e.target.value);
-                  setMaterialFormError(null);
-                }}
-                placeholder="原料名"
-              />
-            </div>
-            <div className="col-span-4">
-              <Select
-                value={materialUnitDraft}
-                onValueChange={(value) => {
-                  setMaterialUnitDraft(value as RecipeUnit);
-                  setMaterialFormError(null);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="単位" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="kg">kg</SelectItem>
-                  <SelectItem value="g">g</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="col-span-2">
-              <Button onClick={onCreateMaterial} className="w-full">
-                追加
-              </Button>
-            </div>
-          </div>
-          {materialFormError ? (
-            <div className="text-sm text-destructive">{materialFormError}</div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl">
-        <CardHeader className="pb-2">
+        <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
           <CardTitle className="text-base font-medium">原料一覧</CardTitle>
+          <Button onClick={openCreateMaterialModal}>原料を追加</Button>
         </CardHeader>
         <CardContent className="space-y-2">
           {materialsMaster.length ? (
@@ -2741,64 +2559,25 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 <div className="col-span-2">単位</div>
                 <div className="col-span-4 text-right">操作</div>
               </div>
-              {materialsMaster.map((material) => {
-                const isEditing = editingMaterialId === material.id;
-                return (
-                  <div key={material.id} className="grid grid-cols-12 items-center gap-2 p-2">
-                    <div className="col-span-6">
-                      {isEditing ? (
-                        <Input
-                          value={editingMaterialName}
-                          onChange={(e) => {
-                            setEditingMaterialName(e.target.value);
-                            setMaterialFormError(null);
-                          }}
-                        />
-                      ) : (
-                        <div className="text-sm font-medium">{material.name}</div>
-                      )}
-                    </div>
-                    <div className="col-span-2">
-                      {isEditing ? (
-                        <Select value={editingMaterialUnit} onValueChange={(value) => setEditingMaterialUnit(value as RecipeUnit)}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="単位" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="kg">kg</SelectItem>
-                            <SelectItem value="g">g</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <div className="text-sm text-muted-foreground">{material.unit}</div>
-                      )}
-                    </div>
-                    <div className="col-span-4 flex justify-end gap-2">
-                      {isEditing ? (
-                        <>
-                          <Button variant="outline" onClick={onCancelEditMaterial}>
-                            キャンセル
-                          </Button>
-                          <Button onClick={onSaveEditMaterial}>保存</Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button variant="outline" onClick={() => onStartEditMaterial(material)}>
-                            編集
-                          </Button>
-                          <Button variant="destructive" onClick={() => onDeleteMaterial(material.id)}>
-                            削除
-                          </Button>
-                        </>
-                      )}
-                    </div>
+              {materialsMaster.map((material) => (
+                <div key={material.id} className="grid grid-cols-12 items-center gap-2 p-2">
+                  <div className="col-span-6">
+                    <div className="text-sm font-medium">{material.name}</div>
                   </div>
-                );
-              })}
+                  <div className="col-span-2">
+                    <div className="text-sm text-muted-foreground">{material.unit}</div>
+                  </div>
+                  <div className="col-span-4 flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => openEditMaterialModal(material)}>
+                      編集
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              原料マスタが未登録です。上のフォームから追加してください。
+              原料マスタが未登録です。右上の「原料を追加」ボタンから追加してください。
             </div>
           )}
         </CardContent>
@@ -2880,6 +2659,248 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         </header>
 
         <main className="p-4">{activeView === "schedule" ? scheduleView : masterView}</main>
+
+        {/* 品目マスタモーダル */}
+        <Dialog open={isItemModalOpen} onOpenChange={handleItemModalOpenChange}>
+          <DialogContent className={modalWideClassName}>
+            <DialogHeader>
+              <DialogTitle>{isItemEditMode ? "品目を編集" : "品目を追加"}</DialogTitle>
+            </DialogHeader>
+
+            <div className={modalBodyClassName}>
+              <div className="rounded-xl border bg-white p-4 shadow-sm">
+                <div className="grid gap-3 md:grid-cols-[180px_1fr] md:items-center">
+                  <div className="text-sm font-medium text-muted-foreground">品目名</div>
+                  <Input
+                    value={isItemEditMode ? editingItemName : itemNameDraft}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (isItemEditMode) {
+                        setEditingItemName(next);
+                      } else {
+                        setItemNameDraft(next);
+                      }
+                      setItemFormError(null);
+                    }}
+                    placeholder="品目名"
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">品目コード</div>
+                  <Input
+                    value={isItemEditMode ? editingItemPublicId : itemPublicIdDraft}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (isItemEditMode) {
+                        setEditingItemPublicId(next);
+                      } else {
+                        setItemPublicIdDraft(next);
+                      }
+                      setItemFormError(null);
+                    }}
+                    placeholder="品目コード"
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">単位</div>
+                  <Select
+                    value={isItemEditMode ? editingItemUnit : itemUnitDraft}
+                    onValueChange={(value) => {
+                      if (isItemEditMode) {
+                        setEditingItemUnit(value as ItemUnit);
+                      } else {
+                        setItemUnitDraft(value as ItemUnit);
+                      }
+                      setItemFormError(null);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="単位" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cs">cs</SelectItem>
+                      <SelectItem value="kg">kg</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <div className="text-sm font-medium text-muted-foreground">計画方針</div>
+                  <Select
+                    value={isItemEditMode ? editingItemPlanningPolicy : itemPlanningPolicyDraft}
+                    onValueChange={(value) => {
+                      if (isItemEditMode) {
+                        setEditingItemPlanningPolicy(value as PlanningPolicy);
+                      } else {
+                        setItemPlanningPolicyDraft(value as PlanningPolicy);
+                      }
+                      setItemFormError(null);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="計画方針" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="make_to_stock">見込生産</SelectItem>
+                      <SelectItem value="make_to_order">受注生産</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <div className="text-sm font-medium text-muted-foreground">開始在庫</div>
+                  <Input
+                    inputMode="decimal"
+                    value={isItemEditMode ? editingItemStock : itemStockDraft}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (isItemEditMode) {
+                        setEditingItemStock(next);
+                      } else {
+                        setItemStockDraft(next);
+                      }
+                      setItemFormError(null);
+                    }}
+                    placeholder="開始在庫"
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">安全在庫</div>
+                  <Input
+                    inputMode="decimal"
+                    value={isItemEditMode ? editingItemSafetyStock : itemSafetyStockDraft}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (isItemEditMode) {
+                        setEditingItemSafetyStock(next);
+                      } else {
+                        setItemSafetyStockDraft(next);
+                      }
+                      setItemFormError(null);
+                    }}
+                    placeholder="安全在庫"
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">発注点</div>
+                  <Input
+                    inputMode="decimal"
+                    value={isItemEditMode ? editingItemReorderPoint : itemReorderPointDraft}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (isItemEditMode) {
+                        setEditingItemReorderPoint(next);
+                      } else {
+                        setItemReorderPointDraft(next);
+                      }
+                      setItemFormError(null);
+                    }}
+                    placeholder="発注点"
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">ロットサイズ</div>
+                  <Input
+                    inputMode="decimal"
+                    value={isItemEditMode ? editingItemLotSize : itemLotSizeDraft}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (isItemEditMode) {
+                        setEditingItemLotSize(next);
+                      } else {
+                        setItemLotSizeDraft(next);
+                      }
+                      setItemFormError(null);
+                    }}
+                    placeholder="ロットサイズ"
+                  />
+                </div>
+                {itemFormError ? <div className="mt-4 text-sm text-destructive">{itemFormError}</div> : null}
+              </div>
+            </div>
+
+            <DialogFooter className="flex flex-wrap items-center justify-between gap-2">
+              <Button variant="outline" onClick={() => handleItemModalOpenChange(false)}>
+                キャンセル
+              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {isItemEditMode ? (
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      if (!editingItemId) return;
+                      const didDelete = onDeleteItem(editingItemId);
+                      if (didDelete) {
+                        setIsItemModalOpen(false);
+                      }
+                    }}
+                  >
+                    削除
+                  </Button>
+                ) : null}
+                <Button onClick={handleItemModalSave}>{isItemEditMode ? "保存" : "追加"}</Button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* 原料マスタモーダル */}
+        <Dialog open={isMaterialModalOpen} onOpenChange={handleMaterialModalOpenChange}>
+          <DialogContent className={modalWideClassName}>
+            <DialogHeader>
+              <DialogTitle>{isMaterialEditMode ? "原料を編集" : "原料を追加"}</DialogTitle>
+            </DialogHeader>
+
+            <div className={modalBodyClassName}>
+              <div className="rounded-xl border bg-white p-4 shadow-sm">
+                <div className="grid gap-3 md:grid-cols-[180px_1fr] md:items-center">
+                  <div className="text-sm font-medium text-muted-foreground">原料名</div>
+                  <Input
+                    value={isMaterialEditMode ? editingMaterialName : materialNameDraft}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (isMaterialEditMode) {
+                        setEditingMaterialName(next);
+                      } else {
+                        setMaterialNameDraft(next);
+                      }
+                      setMaterialFormError(null);
+                    }}
+                    placeholder="原料名"
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">単位</div>
+                  <Select
+                    value={isMaterialEditMode ? editingMaterialUnit : materialUnitDraft}
+                    onValueChange={(value) => {
+                      if (isMaterialEditMode) {
+                        setEditingMaterialUnit(value as RecipeUnit);
+                      } else {
+                        setMaterialUnitDraft(value as RecipeUnit);
+                      }
+                      setMaterialFormError(null);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="単位" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="kg">kg</SelectItem>
+                      <SelectItem value="g">g</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {materialFormError ? <div className="mt-4 text-sm text-destructive">{materialFormError}</div> : null}
+              </div>
+            </div>
+
+            <DialogFooter className="flex flex-wrap items-center justify-between gap-2">
+              <Button variant="outline" onClick={() => handleMaterialModalOpenChange(false)}>
+                キャンセル
+              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {isMaterialEditMode ? (
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      if (!editingMaterialId) return;
+                      const didDelete = onDeleteMaterial(editingMaterialId);
+                      if (didDelete) {
+                        setIsMaterialModalOpen(false);
+                      }
+                    }}
+                  >
+                    削除
+                  </Button>
+                ) : null}
+                <Button onClick={handleMaterialModalSave}>{isMaterialEditMode ? "保存" : "追加"}</Button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* レシピ設定モーダル */}
         <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
