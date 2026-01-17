@@ -24,7 +24,14 @@ type GeminiRequestPayload = {
   model?: string;
 };
 
+type ChatHistoryMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+};
+
 const CONSTRAINTS_PATH = fileURLToPath(new URL("./data/gemini-constraints.json", import.meta.url));
+const CHAT_HISTORY_PATH = fileURLToPath(new URL("./data/gemini-chat.json", import.meta.url));
 
 const readConstraintsText = async () => {
   try {
@@ -43,6 +50,25 @@ const writeConstraintsText = async (text: string) => {
   await fs.mkdir(path.dirname(CONSTRAINTS_PATH), { recursive: true });
   const payload = JSON.stringify({ text }, null, 2);
   await fs.writeFile(CONSTRAINTS_PATH, payload, "utf-8");
+};
+
+const readChatHistory = async (): Promise<ChatHistoryMessage[]> => {
+  try {
+    const raw = await fs.readFile(CHAT_HISTORY_PATH, "utf-8");
+    const parsed = JSON.parse(raw) as { messages?: ChatHistoryMessage[] };
+    return Array.isArray(parsed.messages) ? parsed.messages : [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+};
+
+const writeChatHistory = async (messages: ChatHistoryMessage[]) => {
+  await fs.mkdir(path.dirname(CHAT_HISTORY_PATH), { recursive: true });
+  const payload = JSON.stringify({ messages }, null, 2);
+  await fs.writeFile(CHAT_HISTORY_PATH, payload, "utf-8");
 };
 
 const createConstraintsApiMiddleware = () => {
@@ -88,6 +114,75 @@ const createConstraintsApiMiddleware = () => {
           console.error("Failed to save constraints:", error);
           res.statusCode = 500;
           res.end("Failed to save constraints.");
+        }
+      });
+      return;
+    }
+
+    res.statusCode = 405;
+    res.end("Method Not Allowed");
+  };
+};
+
+const createChatHistoryApiMiddleware = () => {
+  const isChatMessage = (value: any): value is ChatHistoryMessage => {
+    if (!value || typeof value !== "object") return false;
+    if (typeof value.id !== "string") return false;
+    if (value.role !== "user" && value.role !== "assistant") return false;
+    if (typeof value.content !== "string") return false;
+    return true;
+  };
+
+  return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    if (req.method === "GET") {
+      try {
+        const messages = await readChatHistory();
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ messages }));
+      } catch (error) {
+        console.error("Failed to read chat history:", error);
+        res.statusCode = 500;
+        res.end("Failed to read chat history.");
+      }
+      return;
+    }
+
+    if (req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk: any) => {
+        body += chunk.toString("utf-8");
+      });
+      req.on("end", async () => {
+        let parsed: { messages?: ChatHistoryMessage[] };
+        try {
+          parsed = JSON.parse(body || "{}") as { messages?: ChatHistoryMessage[] };
+        } catch {
+          res.statusCode = 400;
+          res.end("Invalid JSON payload.");
+          return;
+        }
+        if (!Array.isArray(parsed.messages) || !parsed.messages.every(isChatMessage)) {
+          res.statusCode = 400;
+          res.end("Invalid chat history payload.");
+          return;
+        }
+        try {
+          const current = await readChatHistory();
+          const knownIds = new Set(current.map((message) => message.id));
+          const merged = [...current];
+          parsed.messages.forEach((message) => {
+            if (knownIds.has(message.id)) return;
+            knownIds.add(message.id);
+            merged.push(message);
+          });
+          await writeChatHistory(merged);
+          res.statusCode = 204;
+          res.end();
+        } catch (error) {
+          console.error("Failed to save chat history:", error);
+          res.statusCode = 500;
+          res.end("Failed to save chat history.");
         }
       });
       return;
@@ -157,10 +252,22 @@ const createPlanApiMiddleware = () => {
 };
 
 const createGeminiProxyMiddleware = (env: { GEMINI_API_KEY?: string; GEMINI_MODEL?: string }) => {
+  let isBusy = false;
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
     if (req.method !== "POST") {
       res.statusCode = 405;
       res.end("Method Not Allowed");
+      return;
+    }
+
+    if (isBusy) {
+      res.statusCode = 409;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          message: "現在別の指示を処理しています。処理結果を確認後に再度実行してください。",
+        })
+      );
       return;
     }
 
@@ -172,46 +279,52 @@ const createGeminiProxyMiddleware = (env: { GEMINI_API_KEY?: string; GEMINI_MODE
     }
 
     const ai = new GoogleGenAI({ apiKey });
+    isBusy = true;
 
     let body = "";
     req.on("data", (chunk: any) => {
       body += chunk.toString("utf-8");
     });
     req.on("end", async () => {
-      let parsed: GeminiRequestPayload;
       try {
-        parsed = JSON.parse(body || "{}") as GeminiRequestPayload;
-      } catch {
-        res.statusCode = 400;
-        res.end("Invalid JSON payload.");
-        return;
-      }
+        let parsed: GeminiRequestPayload;
+        try {
+          parsed = JSON.parse(body || "{}") as GeminiRequestPayload;
+        } catch {
+          res.statusCode = 400;
+          res.end("Invalid JSON payload.");
+          return;
+        }
 
-      try {
-        const model = (parsed.model ?? env.GEMINI_MODEL ?? "gemini-2.5-flash").trim();
-        const systemInstructionText =
-          parsed.systemInstruction?.parts
-            ?.map((part) => part.text)
-            .filter((text) => text && text.trim())
-            .join("\n")
-            .trim() || undefined;
+        try {
+          const model = (parsed.model ?? env.GEMINI_MODEL ?? "gemini-2.5-flash").trim();
+          const systemInstructionText =
+            parsed.systemInstruction?.parts
+              ?.map((part) => part.text)
+              .filter((text) => text && text.trim())
+              .join("\n")
+              .trim() || undefined;
 
-        const response = await ai.models.generateContent({
-          model,
-          contents: parsed.contents ?? [],
-          config: systemInstructionText ? { systemInstruction: systemInstructionText } : undefined,
-        });
+          const response = await ai.models.generateContent({
+            model,
+            contents: parsed.contents ?? [],
+            config: systemInstructionText ? { systemInstruction: systemInstructionText } : undefined,
+          });
 
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify(response));
-      } catch (error) {
-        console.error("Gemini SDK error:", error);
-        res.statusCode = 502;
-        res.end("Gemini upstream error.");
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify(response));
+        } catch (error) {
+          console.error("Gemini SDK error:", error);
+          res.statusCode = 502;
+          res.end("Gemini upstream error.");
+        }
+      } finally {
+        isBusy = false;
       }
     });
     req.on("error", () => {
+      isBusy = false;
       res.statusCode = 400;
       res.end("Invalid JSON payload.");
     });
@@ -230,11 +343,13 @@ export default defineConfig(({ mode }) => {
         configureServer(server) {
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
+          server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
         },
         configurePreviewServer(server) {
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
+          server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
         },
       },

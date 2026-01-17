@@ -756,6 +756,26 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
+    const loadChatHistory = async () => {
+      try {
+        const response = await fetch("/api/chat");
+        if (!response.ok) return;
+        const data = (await response.json()) as { messages?: ChatMessage[] };
+        if (!cancelled && Array.isArray(data.messages)) {
+          setChatMessages(data.messages);
+        }
+      } catch {
+        // 読み込み失敗時は未読み込みのままにする
+      }
+    };
+    void loadChatHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     const loadConstraints = async () => {
       try {
         const response = await fetch("/api/constraints");
@@ -773,6 +793,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       cancelled = true;
     };
   }, []);
+
+  const appendChatHistory = async (messages: ChatMessage[]) => {
+    if (!messages.length) return;
+    try {
+      await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages }),
+      });
+    } catch {
+      // 保存失敗時は次回の更新で再試行
+    }
+  };
 
   const buildPlanContext = () => {
     const blockSummaries = blocks.map((b) => ({
@@ -957,6 +990,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         }),
       });
 
+      if (response.status === 409) {
+        const errorPayload = (await response.json().catch(() => null)) as { message?: string } | null;
+        const message =
+          errorPayload?.message ??
+          "現在別の指示を処理しています。処理結果を確認後に再度実行してください。";
+        setChatError(message);
+        const assistantMessage: ChatMessage = { id: uid("chat"), role: "assistant", content: message };
+        setChatMessages((prev) => [...prev, assistantMessage]);
+        void appendChatHistory([userMessage, assistantMessage]);
+        return;
+      }
+
       if (response.status === 401) {
         const errorBody = await response.text();
         console.error("Gemini API認証エラー:", {
@@ -965,7 +1010,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         });
         const message = "サーバー側にGemini APIキーが設定されていません。data/.envにGEMINI_API_KEYを設定してください。";
         setChatError(message);
-        setChatMessages((prev) => [...prev, { id: uid("chat"), role: "assistant", content: message }]);
+        const assistantMessage: ChatMessage = { id: uid("chat"), role: "assistant", content: message };
+        setChatMessages((prev) => [...prev, assistantMessage]);
+        void appendChatHistory([userMessage, assistantMessage]);
         return;
       }
 
@@ -995,18 +1042,24 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         parsed?.summary ??
         (parsed?.actions?.length ? `更新アクションを${parsed.actions.length}件適用しました。` : rawText);
 
-      setChatMessages((prev) => [
-        ...prev,
-        { id: uid("chat"), role: "assistant", content: assistantContent.trim() || "更新しました。" },
-      ]);
+      const assistantMessage: ChatMessage = {
+        id: uid("chat"),
+        role: "assistant",
+        content: assistantContent.trim() || "更新しました。",
+      };
+      setChatMessages((prev) => [...prev, assistantMessage]);
+      void appendChatHistory([userMessage, assistantMessage]);
     } catch (error) {
       console.error("Gemini API呼び出しエラー:", error);
       const message = error instanceof Error ? error.message : "Gemini API呼び出しに失敗しました。";
       setChatError(message);
-      setChatMessages((prev) => [
-        ...prev,
-        { id: uid("chat"), role: "assistant", content: "API呼び出しでエラーが発生しました。" },
-      ]);
+      const assistantMessage: ChatMessage = {
+        id: uid("chat"),
+        role: "assistant",
+        content: "API呼び出しでエラーが発生しました。",
+      };
+      setChatMessages((prev) => [...prev, assistantMessage]);
+      void appendChatHistory([userMessage, assistantMessage]);
     } finally {
       setChatBusy(false);
     }
