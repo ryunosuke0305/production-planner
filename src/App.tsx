@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import * as XLSX from "xlsx";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +22,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import manualAdmin from "../data/manual-admin.md?raw";
+import manualUser from "../data/manual-user.md?raw";
 
 /**
  * 製造計画ガントチャート（D&D + リサイズ + レシピ編集 + 日区切り強調 + 日次在庫 + JSONエクスポート）
@@ -888,7 +892,8 @@ type DragState = {
 
 export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [navOpen, setNavOpen] = useState(false);
-  const [activeView, setActiveView] = useState<"schedule" | "master" | "import">("schedule");
+  const [activeView, setActiveView] = useState<"schedule" | "master" | "import" | "manual">("schedule");
+  const [manualAudience, setManualAudience] = useState<"user" | "admin">("user");
   const [planWeekStart, setPlanWeekStart] = useState<Date>(() => getDefaultWeekStart());
   const [viewWeekStart, setViewWeekStart] = useState<Date>(() => getDefaultWeekStart());
 
@@ -3109,7 +3114,70 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     </div>
   );
 
-  const viewLabel = activeView === "schedule" ? "スケジュール" : activeView === "master" ? "マスタ管理" : "Excel取り込み";
+  const manualMarkdown = manualAudience === "user" ? manualUser : manualAdmin;
+
+  const manualView = (
+    <div className="mx-auto w-full max-w-4xl space-y-4">
+      <div className="space-y-1">
+        <div className="text-2xl font-semibold tracking-tight">操作マニュアル</div>
+        <div className="text-sm text-muted-foreground">
+          目的別に必要な操作を確認できます。利用対象を切り替えて参照してください。
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant={manualAudience === "user" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setManualAudience("user")}
+        >
+          一般利用者向け
+        </Button>
+        <Button
+          variant={manualAudience === "admin" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setManualAudience("admin")}
+        >
+          システム管理者向け
+        </Button>
+      </div>
+      <Card className="rounded-2xl shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium">
+            {manualAudience === "user" ? "一般利用者向けマニュアル" : "システム管理者向けマニュアル"}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm leading-relaxed">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              h1: ({ children }) => <h2 className="text-lg font-semibold text-slate-800">{children}</h2>,
+              h2: ({ children }) => <h3 className="text-base font-semibold text-slate-800">{children}</h3>,
+              h3: ({ children }) => <h4 className="text-sm font-semibold text-slate-700">{children}</h4>,
+              p: ({ children }) => <p className="text-slate-700">{children}</p>,
+              ul: ({ children }) => <ul className="list-disc space-y-1 pl-5 text-slate-700">{children}</ul>,
+              ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5 text-slate-700">{children}</ol>,
+              li: ({ children }) => <li>{children}</li>,
+              strong: ({ children }) => <strong className="font-semibold text-slate-800">{children}</strong>,
+              code: ({ children }) => (
+                <code className="rounded bg-muted px-1 py-0.5 text-[0.85em] text-slate-800">{children}</code>
+              ),
+            }}
+          >
+            {manualMarkdown}
+          </ReactMarkdown>
+        </CardContent>
+      </Card>
+    </div>
+  );
+
+  const viewLabelMap: Record<"schedule" | "master" | "import" | "manual", string> = {
+    schedule: "スケジュール",
+    master: "マスタ管理",
+    import: "Excel取り込み",
+    manual: "マニュアル",
+  };
+
+  const viewLabel = viewLabelMap[activeView];
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -3172,6 +3240,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             >
               マスタ管理
             </button>
+            <button
+              type="button"
+              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
+                activeView === "manual" ? "bg-muted font-semibold" : "hover:bg-muted/50"
+              }`}
+              onClick={() => {
+                setActiveView("manual");
+                setNavOpen(false);
+              }}
+            >
+              マニュアル
+            </button>
           </nav>
         </div>
       </aside>
@@ -3195,7 +3275,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         </header>
 
         <main className="p-4">
-          {activeView === "schedule" ? scheduleView : activeView === "master" ? masterView : importView}
+          {activeView === "schedule"
+            ? scheduleView
+            : activeView === "master"
+              ? masterView
+              : activeView === "import"
+                ? importView
+                : manualView}
         </main>
 
         {/* 品目マスタモーダル */}
