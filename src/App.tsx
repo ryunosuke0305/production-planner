@@ -64,6 +64,7 @@ type Block = {
   len: number;
   amount: number;
   memo: string;
+  approved: boolean;
 };
 
 type ExportPayloadV1 = {
@@ -102,6 +103,7 @@ type ExportPayloadV1 = {
     endLabel: string;
     amount: number;
     memo: string;
+    approved: boolean;
   }>;
   constraints: Record<string, unknown>;
 };
@@ -245,8 +247,8 @@ function uid(prefix = "b"): string {
 }
 
 const DEFAULT_BLOCKS = (): Block[] => [
-  { id: uid("b"), itemId: "A", start: 1, len: 2, amount: 40, memo: "" },
-  { id: uid("b"), itemId: "B", start: 6, len: 2, amount: 30, memo: "段取り注意" },
+  { id: uid("b"), itemId: "A", start: 1, len: 2, amount: 40, memo: "", approved: false },
+  { id: uid("b"), itemId: "B", start: 6, len: 2, amount: 30, memo: "段取り注意", approved: false },
 ];
 
 const getDefaultWeekStart = (): Date => {
@@ -266,6 +268,10 @@ function asString(value: unknown, fallback = ""): string {
 function asNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function asBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function asItemUnit(value: unknown): ItemUnit {
@@ -351,6 +357,7 @@ function sanitizeBlocks(raw: unknown): Block[] {
         len: Math.max(1, asNumber(record.len, 1)),
         amount: asNumber(record.amount),
         memo: asString(record.memo),
+        approved: asBoolean(record.approved, false),
       } satisfies Block;
     })
     .filter((block): block is Block => block !== null);
@@ -525,6 +532,7 @@ function buildExportPayload(p: {
       }),
       amount: b.amount,
       memo: b.memo,
+      approved: b.approved,
     })),
     constraints: {},
   };
@@ -776,6 +784,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       len: b.len,
       amount: b.amount,
       memo: b.memo,
+      approved: b.approved,
     }));
 
     return JSON.stringify(
@@ -849,6 +858,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             len,
             amount: Math.max(0, action.amount ?? 0),
             memo: action.memo ?? "",
+            approved: false,
           };
           next = [...next, resolveOverlap(candidate, next)];
         }
@@ -856,6 +866,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         if (action.type === "update_block") {
           const targetId = resolveBlockId(action, next);
           if (!targetId) return;
+          const target = next.find((b) => b.id === targetId);
+          if (!target || target.approved) return;
           next = next.map((b) => {
             if (b.id !== targetId) return b;
             const itemId = resolveItemId(action) ?? b.itemId;
@@ -863,12 +875,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             const len = clamp(action.len ?? b.len, 1, planSlotCount - start);
             return resolveOverlap(
               {
-              ...b,
-              itemId,
-              start,
-              len,
-              amount: action.amount ?? b.amount,
-              memo: action.memo ?? b.memo,
+                ...b,
+                itemId,
+                start,
+                len,
+                amount: action.amount ?? b.amount,
+                memo: action.memo ?? b.memo,
+                approved: false,
               },
               next
             );
@@ -878,6 +891,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         if (action.type === "delete_block") {
           const targetId = resolveBlockId(action, next);
           if (!targetId) return;
+          const target = next.find((b) => b.id === targetId);
+          if (!target || target.approved) return;
           next = next.filter((b) => b.id !== targetId);
         }
       });
@@ -917,6 +932,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       "}",
       "startSlotかstartLabelのどちらかは必ず指定してください。",
       "既存ブロックの更新/削除ではblockIdを優先してください。",
+      "承認済みのブロックは編集・削除できません。",
       "ユーザーが「空いてるところ」「空き枠」「この日までに」などの曖昧な指示を出した場合は、blocksの重複を避けつつ、条件に合う最も早いスロットを選んでstartSlotを必ず指定してください。",
     ].join("\n");
 
@@ -1051,6 +1067,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setOpenPlan(false);
   };
 
+  const toggleBlockApproval = () => {
+    if (!activeBlockId) return;
+    setBlocks((prev) =>
+      prev.map((b) =>
+        b.id === activeBlockId
+          ? {
+              ...b,
+              approved: !b.approved,
+            }
+          : b
+      )
+    );
+  };
+
   const createBlockAt = (dayIndex: number, slot: number) => {
     if (!isPlanWeekView) return;
     const absoluteSlot = dayIndex * slotsPerDay + slot;
@@ -1063,6 +1093,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       len: 1,
       amount: 0,
       memo: "",
+      approved: false,
     };
     setBlocks((prev) => [...prev, b]);
     openPlanEdit(b);
@@ -1564,15 +1595,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         const width = viewLen * colW;
                         const isActive = block.id === activeBlockId;
                         const item = itemMap.get(block.itemId);
+                        const toneClass = block.approved
+                          ? isActive
+                            ? " border-emerald-500 bg-emerald-200"
+                            : " border-emerald-200 bg-emerald-100 hover:bg-emerald-200"
+                          : isActive
+                            ? " border-sky-400 bg-sky-200"
+                            : " border-sky-200 bg-sky-100 hover:bg-sky-200";
 
                         return (
                           <motion.div
                             key={block.id}
                             className={
-                              "absolute top-[8px] h-[52px] rounded-xl border shadow-sm touch-none " +
-                              (isActive
-                                ? " border-sky-400 bg-sky-200"
-                                : " border-sky-200 bg-sky-100 hover:bg-sky-200")
+                              "absolute top-[8px] h-[52px] rounded-xl border shadow-sm touch-none" + toneClass
                             }
                             style={{ left, width }}
                             whileTap={{ scale: 0.99 }}
@@ -1759,7 +1794,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 >
                   <div className="flex items-center justify-between">
                     <div className="text-muted-foreground">現在のブロック</div>
-                    <Badge variant="secondary">編集</Badge>
+                    <Badge
+                      variant="secondary"
+                      className={activeBlock.approved ? "bg-emerald-100 text-emerald-700" : "bg-sky-100 text-sky-700"}
+                    >
+                      {activeBlock.approved ? "承認済み" : "未承認"}
+                    </Badge>
                   </div>
                   <div className="mt-2 flex items-center justify-between">
                     <div>期間</div>
@@ -1788,6 +1828,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             <DialogFooter className="gap-2">
               <Button variant="outline" onClick={() => setOpenPlan(false)}>
                 キャンセル
+              </Button>
+              <Button variant="outline" onClick={toggleBlockApproval} disabled={!activeBlock}>
+                {activeBlock?.approved ? "未承認に戻す" : "承認する"}
               </Button>
               <Button variant="destructive" onClick={onPlanDelete}>
                 削除
