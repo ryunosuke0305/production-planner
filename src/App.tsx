@@ -624,6 +624,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [constraintsDraft, setConstraintsDraft] = useState("");
   const [constraintsBusy, setConstraintsBusy] = useState(false);
   const [constraintsError, setConstraintsError] = useState<string | null>(null);
+  const [pendingBlockId, setPendingBlockId] = useState<string | null>(null);
 
   const modalBodyClassName = "px-6 py-4";
   const modalWideClassName = "max-w-2xl";
@@ -1089,12 +1090,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
   };
 
-  const openPlanEdit = (block: Block) => {
+  const openPlanEdit = (block: Block, options?: { isNew?: boolean }) => {
     setActiveBlockId(block.id);
     setFormAmount(String(block.amount ?? 0));
     setFormMemo(block.memo ?? "");
     setFormItemId(block.itemId);
     setFormApproved(block.approved);
+    setPendingBlockId(options?.isNew ? block.id : null);
     setOpenPlan(true);
   };
 
@@ -1114,18 +1116,34 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           : b
       )
     );
+    setPendingBlockId(null);
     setOpenPlan(false);
   };
 
   const onPlanDelete = () => {
     if (!activeBlockId) return;
     setBlocks((prev) => prev.filter((b) => b.id !== activeBlockId));
+    setPendingBlockId(null);
+    setActiveBlockId(null);
     setOpenPlan(false);
   };
 
   const toggleBlockApproval = () => {
     if (!activeBlockId) return;
     setFormApproved((prev) => !prev);
+  };
+
+  const handlePlanOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) {
+      setOpenPlan(true);
+      return;
+    }
+    if (pendingBlockId) {
+      setBlocks((prev) => prev.filter((b) => b.id !== pendingBlockId));
+      setPendingBlockId(null);
+      setActiveBlockId(null);
+    }
+    setOpenPlan(false);
   };
 
   const createBlockAt = (dayIndex: number, slot: number) => {
@@ -1143,7 +1161,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       approved: false,
     };
     setBlocks((prev) => [...prev, b]);
-    openPlanEdit(b);
+    openPlanEdit(b, { isNew: true });
   };
 
   const resolveOverlap = (candidate: Block, allBlocks: Block[]): Block => {
@@ -1521,379 +1539,231 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     colW - 1
   }px, rgba(148, 163, 184, 0.4) ${colW - 1}px, rgba(148, 163, 184, 0.4) ${colW}px)`;
 
-  const scheduleView = (
-    <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:flex-row">
-      <div className="min-w-0 flex-1 space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-1">
-            <div className="text-2xl font-semibold tracking-tight">製造計画（ガントチャート）</div>
-            <div className="text-sm text-muted-foreground">
-              バーをドラッグで移動、左右ハンドルで幅調整できます。空白クリックで新規作成します。
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={exportPlanAsJson}>
-              JSONエクスポート
-            </Button>
-            <Button variant="outline" onClick={() => shiftWeek(-7)}>
-              前の週
-            </Button>
-            <Button variant="outline" onClick={() => shiftWeek(7)}>
-              次の週
-            </Button>
-
-            <div className="w-44">
-              <Select value={viewDensity} onValueChange={(v) => setViewDensity(v as Density)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="表示密度" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="hour">1時間</SelectItem>
-                  <SelectItem value="2hour">2時間</SelectItem>
-                  <SelectItem value="day">日単位</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+  const scheduleHeader = (
+    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div className="space-y-1">
+        <div className="text-2xl font-semibold tracking-tight">製造計画（ガントチャート）</div>
+        <div className="text-sm text-muted-foreground">
+          バーをドラッグで移動、左右ハンドルで幅調整できます。空白クリックで新規作成します。
         </div>
-
-        <Card className="rounded-2xl shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-medium">
-              週表示：{toMD(weekDates[0])} 〜 {toMD(weekDates[6])}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-auto rounded-xl border border-slate-200 bg-white">
-              <div
-                className="min-w-[1100px] text-slate-900"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: `220px repeat(${slotsPerDay}, ${colW}px) 220px`,
-                }}
-              >
-              {/* ヘッダ（時間） */}
-              <div className="sticky left-0 top-0 z-50 bg-white border-b border-r p-3 font-medium">日付</div>
-              {hours.map((h, idx) => (
-                <div
-                  key={`hour-${h}-${idx}`}
-                  className="sticky top-0 z-20 bg-white border-b border-r p-2 text-center text-xs text-muted-foreground"
-                >
-                  {viewDensity === "day" ? "日" : `${h}:00`}
-                </div>
-              ))}
-              <div className="sticky top-0 z-30 bg-white border-b p-3 text-center font-medium">在庫（EOD）</div>
-
-              {/* 行（日付） */}
-              {weekDates.map((date, dayIdx) => {
-                const eodList = eodSummaryByDay[dayIdx] ?? [];
-                const laneBlocks = (isPlanWeekView ? blocks : [])
-                  .map((b) => {
-                    const viewStart = clamp(
-                      convertSlotIndex(b.start, planDensity, viewDensity, "floor"),
-                      0,
-                      slotCount - 1
-                    );
-                    const viewLen = clamp(
-                      convertSlotLength(b.len, planDensity, viewDensity, "ceil"),
-                      1,
-                      slotCount - viewStart
-                    );
-                    const viewDayIdx = Math.floor(viewStart / slotsPerDay);
-                    const viewStartInDay = viewStart - viewDayIdx * slotsPerDay;
-                    const maxLen = Math.max(1, slotsPerDay - viewStartInDay);
-                    return {
-                      block: b,
-                      viewDayIdx,
-                      viewStartInDay,
-                      viewLen: clamp(viewLen, 1, maxLen),
-                    };
-                  })
-                  .filter((entry) => entry.viewDayIdx === dayIdx)
-                  .sort((a, b) => a.viewStartInDay - b.viewStartInDay);
-
-                return (
-                  <React.Fragment key={date}>
-                    <div className="sticky left-0 z-40 bg-white border-b border-r p-3">
-                      <div className="text-sm font-semibold">{toMD(date)}</div>
-                      <div className="text-xs text-muted-foreground">({toWeekday(date)})</div>
-                    </div>
-
-                    <div
-                      className="relative border-b overflow-hidden"
-                      style={{ gridColumn: `span ${slotsPerDay}`, height: 72 }}
-                      ref={(el) => {
-                        laneRefs.current[String(dayIdx)] = el;
-                      }}
-                      onClick={(e) => {
-                        if (suppressClickRef.current) return;
-                        if (e.defaultPrevented) return;
-
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const slot = xToSlot(e.clientX, { left: rect.left, width: rect.width }, slotsPerDay);
-                        createBlockAt(dayIdx, slot);
-                      }}
-                    >
-                      <div className="absolute inset-0" style={{ backgroundImage: slotGridBg, opacity: 0.8 }} />
-
-                      {laneBlocks.map(({ block, viewStartInDay, viewLen }) => {
-                        const left = viewStartInDay * colW;
-                        const width = viewLen * colW;
-                        const isActive = block.id === activeBlockId;
-                        const item = itemMap.get(block.itemId);
-                        const toneClass = block.approved
-                          ? isActive
-                            ? " border-emerald-500 bg-emerald-200"
-                            : " border-emerald-200 bg-emerald-100 hover:bg-emerald-200"
-                          : isActive
-                            ? " border-sky-400 bg-sky-200"
-                            : " border-sky-200 bg-sky-100 hover:bg-sky-200";
-
-                        return (
-                          <motion.div
-                            key={block.id}
-                            className={
-                              "absolute top-[8px] h-[52px] rounded-xl border shadow-sm touch-none" + toneClass
-                            }
-                            style={{ left, width }}
-                            whileTap={{ scale: 0.99 }}
-                            onClick={(ev) => {
-                              if (suppressClickRef.current) return;
-                              ev.preventDefault();
-                              ev.stopPropagation();
-                              openPlanEdit(block);
-                            }}
-                          >
-                            <div
-                              className="absolute left-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-l-xl touch-none"
-                              onPointerDown={(ev) => {
-                                ev.preventDefault();
-                                ev.stopPropagation();
-                                beginPointer({ kind: "resizeL", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
-                              }}
-                              title="幅調整（左）"
-                            />
-
-                            <div
-                              className="absolute right-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-r-xl touch-none"
-                              onPointerDown={(ev) => {
-                                ev.preventDefault();
-                                ev.stopPropagation();
-                                beginPointer({ kind: "resizeR", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
-                              }}
-                              title="幅調整（右）"
-                            />
-
-                            <div
-                              className="absolute inset-0 z-10 cursor-grab select-none rounded-xl p-2 touch-none"
-                              onPointerDown={(ev) => {
-                                const r = ev.currentTarget.getBoundingClientRect();
-                                const x = ev.clientX - r.left;
-                                if (x <= 8 || x >= r.width - 8) return;
-                                ev.preventDefault();
-                                ev.stopPropagation();
-                                beginPointer({ kind: "move", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
-                              }}
-                            >
-                              <div className="flex h-full flex-col justify-between">
-                                <div className="flex items-center justify-between text-[11px] text-slate-700">
-                                  <span>{item?.name ?? "未設定"}</span>
-                                  <span>{durationLabel(block.len, planDensity)}</span>
-                                </div>
-                                <div className="text-sm font-semibold">
-                                  +{block.amount}
-                                  <span className="ml-1 text-xs text-slate-600">{item?.unit ?? ""}</span>
-                                </div>
-                                <div className="truncate text-[11px] text-slate-600">{block.memo || " "}</div>
-                              </div>
-                            </div>
-                          </motion.div>
-                        );
-                      })}
-                    </div>
-
-                    <div className="border-b p-3 text-xs">
-                      {eodList.length ? (
-                        <div className="space-y-1">
-                          {eodList.map((entry) => (
-                            <div key={`${entry.itemId}-${dayIdx}`} className="flex items-center justify-between">
-                              <div className="font-medium text-slate-700">{entry.name}</div>
-                              <div className="text-slate-600">
-                                {entry.stock}
-                                {entry.unit}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-xs text-muted-foreground">生産なし</div>
-                      )}
-                    </div>
-                  </React.Fragment>
-                );
-              })}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* 計画編集モーダル */}
-        <Dialog open={openPlan} onOpenChange={setOpenPlan}>
-          <DialogContent className="max-w-xl">
-            <DialogHeader>
-              <DialogTitle>
-                {activeItem ? activeItem.name : ""}
-                {activeBlock ? (
-                  <span className="ml-2 text-sm font-normal text-muted-foreground">
-                    {slotLabel({
-                      density: planDensity,
-                      weekDates: planWeekDates,
-                      hours: planHours,
-                      slotIndex: activeBlock.start,
-                    })}
-                    {activeBlock.len ? `（${durationLabel(activeBlock.len, planDensity)}）` : ""}
-                  </span>
-                ) : null}
-              </DialogTitle>
-            </DialogHeader>
-
-          <div className={modalBodyClassName}>
-            <div className="space-y-5">
-            <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
-              <div className="col-span-4 text-sm text-muted-foreground">品目</div>
-              <div className="col-span-8">
-                <Select value={formItemId} onValueChange={(value) => setFormItemId(value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="品目を選択" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {items.length ? (
-                      items.map((item) => (
-                        <SelectItem key={item.id} value={item.id}>
-                          {item.name}
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <SelectItem value="__none__" disabled>
-                        品目が未登録です
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
-              <div className="col-span-4 text-sm text-muted-foreground">生産数量</div>
-              <div className="col-span-6">
-                <Input
-                  inputMode="decimal"
-                  value={formAmount}
-                  onChange={(e) => setFormAmount(e.target.value)}
-                  placeholder="0"
-                />
-              </div>
-              <div className="col-span-2 text-sm text-muted-foreground">{activeItem?.unit ?? ""}</div>
-            </div>
-
-            <Card className="rounded-2xl">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">原材料（数量から自動計算）</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {activeItem ? (
-                  materials.map((m) => (
-                    <div key={m.materialId} className="flex items-center justify-between">
-                      <div className="text-sm">{m.materialName}</div>
-                      <div className="font-medium">
-                        {Number.isFinite(m.qty)
-                          ? m.qty
-                              .toFixed(3)
-                              .replace(/\.0+$/, "")
-                              .replace(/(\.[0-9]*?)0+$/, "$1")
-                          : "0"}
-                        <span className="ml-1 text-sm text-muted-foreground">{m.unit}</span>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-sm text-muted-foreground"> </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <div className="space-y-2">
-              <div className="text-sm text-muted-foreground">メモ</div>
-              <Textarea
-                value={formMemo}
-                onChange={(e) => setFormMemo(e.target.value)}
-                placeholder="段取り・注意点・引当メモなど"
-              />
-            </div>
-
-            <AnimatePresence>
-              {activeBlock ? (
-                <motion.div
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 6 }}
-                  className="rounded-xl border p-3 text-sm"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-muted-foreground">現在のブロック</div>
-                    <div className="flex items-center gap-2">
-                      <Badge
-                        variant="secondary"
-                        className={formApproved ? "bg-emerald-100 text-emerald-700" : "bg-sky-100 text-sky-700"}
-                      >
-                        {formApproved ? "承認済み" : "未承認"}
-                      </Badge>
-                      <Button variant="outline" size="sm" onClick={toggleBlockApproval}>
-                        {formApproved ? "未承認に戻す" : "承認する"}
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between">
-                    <div>期間</div>
-                    <div className="font-medium">
-                      {slotLabel({
-                        density: planDensity,
-                        weekDates: planWeekDates,
-                        hours: planHours,
-                        slotIndex: activeBlock.start,
-                      })}
-                      <span className="mx-1 text-muted-foreground">→</span>
-                      {slotLabel({
-                        density: planDensity,
-                        weekDates: planWeekDates,
-                        hours: planHours,
-                        slotIndex: Math.min(planSlotCount - 1, activeBlock.start + activeBlock.len - 1),
-                      })}
-                    </div>
-                  </div>
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
-            </div>
-          </div>
-
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setOpenPlan(false)}>
-                キャンセル
-              </Button>
-              <Button variant="destructive" onClick={onPlanDelete}>
-                削除
-              </Button>
-              <Button onClick={onPlanSave}>保存</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
 
-      <div className="w-full shrink-0 lg:w-[360px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" onClick={exportPlanAsJson}>
+          JSONエクスポート
+        </Button>
+        <Button variant="outline" onClick={() => shiftWeek(-7)}>
+          前の週
+        </Button>
+        <Button variant="outline" onClick={() => shiftWeek(7)}>
+          次の週
+        </Button>
+
+        <div className="w-44">
+          <Select value={viewDensity} onValueChange={(v) => setViewDensity(v as Density)}>
+            <SelectTrigger>
+              <SelectValue placeholder="表示密度" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="hour">1時間</SelectItem>
+              <SelectItem value="2hour">2時間</SelectItem>
+              <SelectItem value="day">日単位</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </div>
+  );
+
+  const scheduleCard = (
+    <Card className="rounded-2xl shadow-sm">
+      <CardHeader className="flex min-h-[56px] items-center pb-2">
+        <CardTitle className="text-base font-medium">
+          週表示：{toMD(weekDates[0])} 〜 {toMD(weekDates[6])}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-auto rounded-xl border border-slate-200 bg-white">
+          <div
+            className="min-w-[1100px] text-slate-900"
+            style={{
+              display: "grid",
+              gridTemplateColumns: `220px repeat(${slotsPerDay}, ${colW}px) 220px`,
+            }}
+          >
+            {/* ヘッダ（時間） */}
+            <div className="sticky left-0 top-0 z-50 bg-white border-b border-r p-3 font-medium">日付</div>
+            {hours.map((h, idx) => (
+              <div
+                key={`hour-${h}-${idx}`}
+                className="sticky top-0 z-20 bg-white border-b border-r p-2 text-center text-xs text-muted-foreground"
+              >
+                {viewDensity === "day" ? "日" : `${h}:00`}
+              </div>
+            ))}
+            <div className="sticky top-0 z-30 bg-white border-b p-3 text-center font-medium">在庫（EOD）</div>
+
+            {/* 行（日付） */}
+            {weekDates.map((date, dayIdx) => {
+              const eodList = eodSummaryByDay[dayIdx] ?? [];
+              const laneBlocks = (isPlanWeekView ? blocks : [])
+                .map((b) => {
+                  const viewStart = clamp(
+                    convertSlotIndex(b.start, planDensity, viewDensity, "floor"),
+                    0,
+                    slotCount - 1
+                  );
+                  const viewLen = clamp(
+                    convertSlotLength(b.len, planDensity, viewDensity, "ceil"),
+                    1,
+                    slotCount - viewStart
+                  );
+                  const viewDayIdx = Math.floor(viewStart / slotsPerDay);
+                  const viewStartInDay = viewStart - viewDayIdx * slotsPerDay;
+                  const maxLen = Math.max(1, slotsPerDay - viewStartInDay);
+                  return {
+                    block: b,
+                    viewDayIdx,
+                    viewStartInDay,
+                    viewLen: clamp(viewLen, 1, maxLen),
+                  };
+                })
+                .filter((entry) => entry.viewDayIdx === dayIdx)
+                .sort((a, b) => a.viewStartInDay - b.viewStartInDay);
+
+              return (
+                <React.Fragment key={date}>
+                  <div className="sticky left-0 z-40 bg-white border-b border-r p-3">
+                    <div className="text-sm font-semibold">{toMD(date)}</div>
+                    <div className="text-xs text-muted-foreground">({toWeekday(date)})</div>
+                  </div>
+
+                  <div
+                    className="relative border-b overflow-hidden"
+                    style={{ gridColumn: `span ${slotsPerDay}`, height: 72 }}
+                    ref={(el) => {
+                      laneRefs.current[String(dayIdx)] = el;
+                    }}
+                    onClick={(e) => {
+                      if (suppressClickRef.current) return;
+                      if (e.defaultPrevented) return;
+
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const slot = xToSlot(e.clientX, { left: rect.left, width: rect.width }, slotsPerDay);
+                      createBlockAt(dayIdx, slot);
+                    }}
+                  >
+                    <div className="absolute inset-0" style={{ backgroundImage: slotGridBg, opacity: 0.8 }} />
+
+                    {laneBlocks.map(({ block, viewStartInDay, viewLen }) => {
+                      const left = viewStartInDay * colW;
+                      const width = viewLen * colW;
+                      const isActive = block.id === activeBlockId;
+                      const item = itemMap.get(block.itemId);
+                      const toneClass = block.approved
+                        ? isActive
+                          ? " border-emerald-500 bg-emerald-200"
+                          : " border-emerald-200 bg-emerald-100 hover:bg-emerald-200"
+                        : isActive
+                          ? " border-sky-400 bg-sky-200"
+                          : " border-sky-200 bg-sky-100 hover:bg-sky-200";
+
+                      return (
+                        <motion.div
+                          key={block.id}
+                          className={"absolute top-[8px] h-[52px] rounded-xl border shadow-sm touch-none" + toneClass}
+                          style={{ left, width }}
+                          whileTap={{ scale: 0.99 }}
+                          onClick={(ev) => {
+                            if (suppressClickRef.current) return;
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                            openPlanEdit(block);
+                          }}
+                        >
+                          <div
+                            className="absolute left-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-l-xl touch-none"
+                            onPointerDown={(ev) => {
+                              ev.preventDefault();
+                              ev.stopPropagation();
+                              beginPointer({ kind: "resizeL", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
+                            }}
+                            title="幅調整（左）"
+                          />
+
+                          <div
+                            className="absolute right-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-r-xl touch-none"
+                            onPointerDown={(ev) => {
+                              ev.preventDefault();
+                              ev.stopPropagation();
+                              beginPointer({ kind: "resizeR", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
+                            }}
+                            title="幅調整（右）"
+                          />
+
+                          <div
+                            className="absolute inset-0 z-10 cursor-grab select-none rounded-xl p-2 touch-none"
+                            onPointerDown={(ev) => {
+                              const r = ev.currentTarget.getBoundingClientRect();
+                              const x = ev.clientX - r.left;
+                              if (x <= 8 || x >= r.width - 8) return;
+                              ev.preventDefault();
+                              ev.stopPropagation();
+                              beginPointer({ kind: "move", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
+                            }}
+                          >
+                            <div className="flex h-full flex-col justify-between">
+                              <div className="flex items-center justify-between text-[11px] text-slate-700">
+                                <span>{item?.name ?? "未設定"}</span>
+                                <span>{durationLabel(block.len, planDensity)}</span>
+                              </div>
+                              <div className="text-sm font-semibold">
+                                +{block.amount}
+                                <span className="ml-1 text-xs text-slate-600">{item?.unit ?? ""}</span>
+                              </div>
+                              <div className="truncate text-[11px] text-slate-600">{block.memo || " "}</div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="border-b p-3 text-xs">
+                    {eodList.length ? (
+                      <div className="space-y-1">
+                        {eodList.map((entry) => (
+                          <div key={`${entry.itemId}-${dayIdx}`} className="flex items-center justify-between">
+                            <div className="font-medium text-slate-700">{entry.name}</div>
+                            <div className="text-slate-600">
+                              {entry.stock}
+                              {entry.unit}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">生産なし</div>
+                    )}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  const scheduleView = (
+    <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[auto_1fr] lg:gap-4">
+      <div className="min-w-0 lg:col-start-1 lg:row-start-1">{scheduleHeader}</div>
+      <div className="min-w-0 lg:col-start-1 lg:row-start-2">{scheduleCard}</div>
+
+      <div className="w-full shrink-0 lg:col-start-2 lg:row-start-2">
         <Card className="flex h-[calc(100vh-8rem)] flex-col rounded-2xl shadow-sm">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-2">
+          <CardHeader className="flex min-h-[56px] items-center pb-2">
+            <div className="flex w-full items-center justify-between gap-2">
               <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
               <Button
                 variant="outline"
@@ -1989,6 +1859,156 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           </DialogContent>
         </Dialog>
       </div>
+      {/* 計画編集モーダル */}
+      <Dialog open={openPlan} onOpenChange={handlePlanOpenChange}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>
+              {activeItem ? activeItem.name : ""}
+              {activeBlock ? (
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  {slotLabel({
+                    density: planDensity,
+                    weekDates: planWeekDates,
+                    hours: planHours,
+                    slotIndex: activeBlock.start,
+                  })}
+                  {activeBlock.len ? `（${durationLabel(activeBlock.len, planDensity)}）` : ""}
+                </span>
+              ) : null}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className={modalBodyClassName}>
+            <div className="space-y-5">
+              <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
+                <div className="col-span-4 text-sm text-muted-foreground">品目</div>
+                <div className="col-span-8">
+                  <Select value={formItemId} onValueChange={(value) => setFormItemId(value)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="品目を選択" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {items.length ? (
+                        items.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.name}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="__none__" disabled>
+                          品目が未登録です
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
+                <div className="col-span-4 text-sm text-muted-foreground">生産数量</div>
+                <div className="col-span-6">
+                  <Input
+                    inputMode="decimal"
+                    value={formAmount}
+                    onChange={(e) => setFormAmount(e.target.value)}
+                    placeholder="0"
+                  />
+                </div>
+                <div className="col-span-2 text-sm text-muted-foreground">{activeItem?.unit ?? ""}</div>
+              </div>
+
+              <Card className="rounded-2xl">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">原材料（数量から自動計算）</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {activeItem ? (
+                    materials.map((m) => (
+                      <div key={m.materialId} className="flex items-center justify-between">
+                        <div className="text-sm">{m.materialName}</div>
+                        <div className="font-medium">
+                          {Number.isFinite(m.qty)
+                            ? m.qty
+                                .toFixed(3)
+                                .replace(/\.0+$/, "")
+                                .replace(/(\.[0-9]*?)0+$/, "$1")
+                            : "0"}
+                          <span className="ml-1 text-sm text-muted-foreground">{m.unit}</span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm text-muted-foreground"> </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="space-y-2">
+                <div className="text-sm text-muted-foreground">メモ</div>
+                <Textarea
+                  value={formMemo}
+                  onChange={(e) => setFormMemo(e.target.value)}
+                  placeholder="段取り・注意点・引当メモなど"
+                />
+              </div>
+
+              <AnimatePresence>
+                {activeBlock ? (
+                  <motion.div
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 6 }}
+                    className="rounded-xl border p-3 text-sm"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-muted-foreground">現在のブロック</div>
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant="secondary"
+                          className={formApproved ? "bg-emerald-100 text-emerald-700" : "bg-sky-100 text-sky-700"}
+                        >
+                          {formApproved ? "承認済み" : "未承認"}
+                        </Badge>
+                        <Button variant="outline" size="sm" onClick={toggleBlockApproval}>
+                          {formApproved ? "未承認に戻す" : "承認する"}
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between">
+                      <div>期間</div>
+                      <div className="font-medium">
+                        {slotLabel({
+                          density: planDensity,
+                          weekDates: planWeekDates,
+                          hours: planHours,
+                          slotIndex: activeBlock.start,
+                        })}
+                        <span className="mx-1 text-muted-foreground">→</span>
+                        {slotLabel({
+                          density: planDensity,
+                          weekDates: planWeekDates,
+                          hours: planHours,
+                          slotIndex: Math.min(planSlotCount - 1, activeBlock.start + activeBlock.len - 1),
+                        })}
+                      </div>
+                    </div>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => handlePlanOpenChange(false)}>
+              キャンセル
+            </Button>
+            <Button variant="destructive" onClick={onPlanDelete}>
+              削除
+            </Button>
+            <Button onClick={onPlanSave}>保存</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 
