@@ -26,6 +26,31 @@ function normalizeDensity(value) {
   return "hour";
 }
 
+function toISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function buildDefaultCalendarDays(weekStartISO) {
+  const base = new Date(weekStartISO);
+  if (Number.isNaN(base.getTime())) return [];
+  const out = [];
+  for (let i = 0; i < 7; i += 1) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + i);
+    const weekday = d.getDay();
+    out.push({
+      date: toISODate(d),
+      isHoliday: weekday === 0 || weekday === 6,
+      workStartHour: 8,
+      workEndHour: 18,
+    });
+  }
+  return out;
+}
+
 function parsePlanPayload(raw) {
   if (!raw || typeof raw !== "object") return null;
   const record = raw;
@@ -98,6 +123,7 @@ function parsePlanPayload(raw) {
     version: Number(record.version) === 1 ? 1 : 1,
     weekStartISO,
     density: normalizeDensity(record.density),
+    calendarDays: buildDefaultCalendarDays(weekStartISO),
     materials,
     items,
     blocks,
