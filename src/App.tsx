@@ -57,6 +57,13 @@ type Item = {
   recipe: RecipeLine[];
 };
 
+type CalendarDay = {
+  date: string;
+  isHoliday: boolean;
+  workStartHour: number;
+  workEndHour: number;
+};
+
 type Block = {
   id: string;
   itemId: string;
@@ -65,6 +72,8 @@ type Block = {
   amount: number;
   memo: string;
   approved: boolean;
+  startAt?: string;
+  endAt?: string;
 };
 
 type ExportPayloadV1 = {
@@ -137,6 +146,7 @@ type PlanPayload = {
   version: 1;
   weekStartISO: string;
   density: Density;
+  calendarDays: CalendarDay[];
   materials: Material[];
   items: Item[];
   blocks: Block[];
@@ -204,12 +214,22 @@ function toWeekday(isoDate: string): string {
   return WEEKDAY_LABELS[date.getDay()] ?? "";
 }
 
-function buildWeekDates(start: Date): string[] {
-  const out: string[] = [];
+const DEFAULT_WORK_START_HOUR = 8;
+const DEFAULT_WORK_END_HOUR = 18;
+
+function buildDefaultCalendarDays(start: Date): CalendarDay[] {
+  const out: CalendarDay[] = [];
   for (let i = 0; i < 7; i += 1) {
     const d = new Date(start);
     d.setDate(start.getDate() + i);
-    out.push(toISODate(d));
+    const isoDate = toISODate(d);
+    const weekday = d.getDay();
+    out.push({
+      date: isoDate,
+      isHoliday: weekday === 0 || weekday === 6,
+      workStartHour: DEFAULT_WORK_START_HOUR,
+      workEndHour: DEFAULT_WORK_END_HOUR,
+    });
   }
   return out;
 }
@@ -341,6 +361,24 @@ function sanitizeMaterials(raw: unknown): Material[] {
     .filter((material): material is Material => material !== null);
 }
 
+function sanitizeCalendarDays(raw: unknown): CalendarDay[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const record = entry as Record<string, unknown>;
+      const date = asString(record.date).trim();
+      if (!date) return null;
+      return {
+        date,
+        isHoliday: asBoolean(record.isHoliday, false),
+        workStartHour: asNumber(record.workStartHour, DEFAULT_WORK_START_HOUR),
+        workEndHour: asNumber(record.workEndHour, DEFAULT_WORK_END_HOUR),
+      } satisfies CalendarDay;
+    })
+    .filter((day): day is CalendarDay => day !== null);
+}
+
 function sanitizeBlocks(raw: unknown): Block[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -358,6 +396,8 @@ function sanitizeBlocks(raw: unknown): Block[] {
         amount: asNumber(record.amount),
         memo: asString(record.memo),
         approved: asBoolean(record.approved, false),
+        startAt: asString(record.startAt || record.start_at),
+        endAt: asString(record.endAt || record.end_at),
       } satisfies Block;
     })
     .filter((block): block is Block => block !== null);
@@ -367,12 +407,14 @@ function parsePlanPayload(raw: unknown): PlanPayload | null {
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
   if (record.version !== 1) return null;
-  const weekStartISO = asString(record.weekStartISO).trim();
+  const calendarDays = sanitizeCalendarDays(record.calendarDays);
+  const weekStartISO = asString(record.weekStartISO).trim() || calendarDays[0]?.date || "";
   if (!weekStartISO) return null;
   return {
     version: 1,
     weekStartISO,
     density: asDensity(record.density),
+    calendarDays,
     materials: sanitizeMaterials(record.materials),
     items: sanitizeItems(record.items),
     blocks: sanitizeBlocks(record.blocks),
@@ -397,16 +439,39 @@ function mergeMaterialsFromItems(items: Item[], materials: Material[]): Material
   return next;
 }
 
-function buildSlots(density: Density): number[] {
-  if (density === "day") return [8];
-  if (density === "2hour") return [8, 10, 12, 14, 16];
-  return [8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+function buildCalendarHours(day: CalendarDay, density: Density): number[] {
+  if (day.isHoliday) return [];
+  if (density === "day") return [day.workStartHour];
+  const step = density === "2hour" ? 2 : 1;
+  const out: number[] = [];
+  for (let h = day.workStartHour; h < day.workEndHour; h += step) {
+    out.push(h);
+  }
+  return out;
 }
 
-const BASE_SLOTS_PER_DAY = buildSlots("hour").length;
+function buildCalendarSlots(calendarDays: CalendarDay[], density: Density) {
+  const rawHoursByDay = calendarDays.map((day) => buildCalendarHours(day, density));
+  const slotsPerDay = Math.max(1, ...rawHoursByDay.map((hours) => hours.length));
+  const hoursByDay = rawHoursByDay.map((hours) => {
+    const padded = [...hours];
+    while (padded.length < slotsPerDay) padded.push(null);
+    return padded;
+  });
+  return {
+    rawHoursByDay,
+    hoursByDay,
+    slotsPerDay,
+    slotCount: calendarDays.length * slotsPerDay,
+  };
+}
+
+const BASE_SLOTS_PER_DAY = DEFAULT_WORK_END_HOUR - DEFAULT_WORK_START_HOUR;
 
 function slotsPerDayForDensity(density: Density): number {
-  return buildSlots(density).length;
+  if (density === "day") return 1;
+  if (density === "2hour") return Math.max(1, Math.ceil(BASE_SLOTS_PER_DAY / 2));
+  return BASE_SLOTS_PER_DAY;
 }
 
 function slotUnitsPerSlot(density: Density): number {
@@ -429,14 +494,85 @@ function convertSlotLength(value: number, from: Density, to: Density, mode: "cei
   return Math.max(1, fromAbsoluteSlots(abs, to, mode));
 }
 
-function slotLabel(p: { density: Density; weekDates: string[]; hours: number[]; slotIndex: number }): string {
-  const perDay = p.hours.length;
+function slotLabelFromCalendar(p: {
+  density: Density;
+  calendarDays: CalendarDay[];
+  hoursByDay: Array<Array<number | null>>;
+  slotIndex: number;
+}): string {
+  const perDay = p.hoursByDay[0]?.length ?? 0;
+  if (!perDay) return "";
   const dayIdx = Math.floor(p.slotIndex / perDay);
   const hourIdx = p.slotIndex % perDay;
-  const date = p.weekDates[dayIdx];
-  const h = p.hours[hourIdx];
-  if (!date) return "";
-  return p.density === "day" ? `${toMD(date)}` : `${toMD(date)} ${h}:00`;
+  const day = p.calendarDays[dayIdx];
+  const hour = p.hoursByDay[dayIdx]?.[hourIdx];
+  if (!day || hour === null || hour === undefined) return "";
+  return p.density === "day" ? `${toMD(day.date)}` : `${toMD(day.date)} ${hour}:00`;
+}
+
+function buildSlotHeaderLabels(hoursByDay: Array<Array<number | null>>, density: Density): string[] {
+  const slotsPerDay = hoursByDay[0]?.length ?? 0;
+  return Array.from({ length: slotsPerDay }, (_, slotIdx) => {
+    if (density === "day") return "日";
+    const hour = hoursByDay.map((day) => day[slotIdx]).find((value) => value !== null && value !== undefined);
+    return hour === null || hour === undefined ? "" : `${hour}:00`;
+  });
+}
+
+function slotToDateTime(
+  slotIndex: number,
+  calendarDays: CalendarDay[],
+  rawHoursByDay: Array<number[]>,
+  slotsPerDay: number
+): Date | null {
+  const dayIdx = Math.floor(slotIndex / slotsPerDay);
+  const slotIdx = slotIndex % slotsPerDay;
+  const day = calendarDays[dayIdx];
+  const hour = rawHoursByDay[dayIdx]?.[slotIdx];
+  if (!day || hour === undefined) return null;
+  const date = new Date(`${day.date}T${String(hour).padStart(2, "0")}:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function slotBoundaryToDateTime(
+  boundaryIndex: number,
+  calendarDays: CalendarDay[],
+  rawHoursByDay: Array<number[]>,
+  slotsPerDay: number
+): Date | null {
+  const dayIdx = Math.floor(boundaryIndex / slotsPerDay);
+  const slotIdx = boundaryIndex % slotsPerDay;
+  const day = calendarDays[dayIdx];
+  if (!day) return null;
+  const dayHours = rawHoursByDay[dayIdx] ?? [];
+  if (slotIdx > dayHours.length) return null;
+  const hour = slotIdx === dayHours.length ? day.workEndHour : dayHours[slotIdx];
+  if (hour === undefined) return null;
+  const date = new Date(`${day.date}T${String(hour).padStart(2, "0")}:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function slotIndexFromDateTime(
+  value: string,
+  calendarDays: CalendarDay[],
+  rawHoursByDay: Array<number[]>,
+  slotsPerDay: number,
+  allowEndBoundary = false
+): number | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const date = toISODate(parsed);
+  const hour = parsed.getHours();
+  const dayIdx = calendarDays.findIndex((day) => day.date === date);
+  if (dayIdx < 0) return null;
+  const dayHours = rawHoursByDay[dayIdx] ?? [];
+  const slotIdx = dayHours.findIndex((h) => h === hour);
+  if (slotIdx >= 0) return dayIdx * slotsPerDay + slotIdx;
+  if (allowEndBoundary && hour === calendarDays[dayIdx].workEndHour) {
+    return dayIdx * slotsPerDay + dayHours.length;
+  }
+  return null;
 }
 
 function extractJsonPayload(text: string): string | null {
@@ -455,6 +591,12 @@ function xToSlot(clientX: number, rect: { left: number; width: number }, slotCou
   const ratio = x / w;
   const raw = Math.floor(ratio * slotCount);
   return clamp(raw, 0, slotCount - 1);
+}
+
+function clampToWorkingSlot(dayIndex: number, slot: number, rawHoursByDay: Array<number[]>): number | null {
+  const dayHours = rawHoursByDay[dayIndex] ?? [];
+  if (!dayHours.length) return null;
+  return clamp(slot, 0, dayHours.length - 1);
 }
 
 function endDayIndex(b: Block, slotsPerDay: number): number {
@@ -478,8 +620,8 @@ function buildExportPayload(p: {
   weekStart: Date;
   timezone: string;
   density: Density;
-  weekDates: string[];
-  hours: number[];
+  calendarDays: CalendarDay[];
+  hoursByDay: Array<Array<number | null>>;
   slotsPerDay: number;
   slotCount: number;
   materials: Material[];
@@ -487,9 +629,15 @@ function buildExportPayload(p: {
   blocks: Block[];
 }): ExportPayloadV1 {
   const slotIndexToLabel = new Array(p.slotCount).fill("").map((_, i) =>
-    slotLabel({ density: p.density, weekDates: p.weekDates, hours: p.hours, slotIndex: i })
+    slotLabelFromCalendar({
+      density: p.density,
+      calendarDays: p.calendarDays,
+      hoursByDay: p.hoursByDay,
+      slotIndex: i,
+    })
   );
   const materialMap = new Map(p.materials.map((m) => [m.id, m]));
+  const exportHours = p.hoursByDay[0]?.filter((hour): hour is number => hour !== null) ?? [];
 
   return {
     schemaVersion: "1.0.0",
@@ -501,8 +649,8 @@ function buildExportPayload(p: {
       density: p.density,
       slotsPerDay: p.slotsPerDay,
       slotCount: p.slotCount,
-      weekDates: p.weekDates,
-      hours: p.hours,
+      weekDates: p.calendarDays.map((day) => day.date),
+      hours: exportHours,
       slotIndexToLabel,
     },
     items: p.items.map((it) => ({
@@ -523,11 +671,16 @@ function buildExportPayload(p: {
       itemId: b.itemId,
       start: b.start,
       len: b.len,
-      startLabel: slotLabel({ density: p.density, weekDates: p.weekDates, hours: p.hours, slotIndex: b.start }),
-      endLabel: slotLabel({
+      startLabel: slotLabelFromCalendar({
         density: p.density,
-        weekDates: p.weekDates,
-        hours: p.hours,
+        calendarDays: p.calendarDays,
+        hoursByDay: p.hoursByDay,
+        slotIndex: b.start,
+      }),
+      endLabel: slotLabelFromCalendar({
+        density: p.density,
+        calendarDays: p.calendarDays,
+        hoursByDay: p.hoursByDay,
         slotIndex: Math.min(p.slotCount - 1, b.start + b.len - 1),
       }),
       amount: b.amount,
@@ -558,6 +711,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const [planDensity, setPlanDensity] = useState<Density>("hour");
   const [viewDensity, setViewDensity] = useState<Density>("hour");
+  const [planCalendarDays, setPlanCalendarDays] = useState<CalendarDay[]>(() =>
+    buildDefaultCalendarDays(getDefaultWeekStart())
+  );
 
   // 実運用ではユーザー設定から取得する想定
   const timezone = "Asia/Tokyo";
@@ -573,24 +729,46 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [editingItemUnit, setEditingItemUnit] = useState<ItemUnit>("cs");
   const [editingItemStock, setEditingItemStock] = useState("0");
 
-  const weekDates = useMemo(() => buildWeekDates(viewWeekStart), [viewWeekStart]);
-  const hours = useMemo(() => buildSlots(viewDensity), [viewDensity]);
-  const slotsPerDay = hours.length;
-  const slotCount = weekDates.length * slotsPerDay;
+  const viewCalendarDays = useMemo(() => {
+    const planStart = planCalendarDays[0]?.date;
+    if (planStart && toISODate(viewWeekStart) === planStart) return planCalendarDays;
+    return buildDefaultCalendarDays(viewWeekStart);
+  }, [planCalendarDays, viewWeekStart]);
 
-  const planWeekDates = useMemo(() => buildWeekDates(planWeekStart), [planWeekStart]);
-  const planHours = useMemo(() => buildSlots(planDensity), [planDensity]);
-  const planSlotsPerDay = planHours.length;
-  const planSlotCount = planWeekDates.length * planSlotsPerDay;
+  const viewCalendar = useMemo(
+    () => buildCalendarSlots(viewCalendarDays, viewDensity),
+    [viewCalendarDays, viewDensity]
+  );
+  const weekDates = useMemo(() => viewCalendarDays.map((day) => day.date), [viewCalendarDays]);
+  const slotsPerDay = viewCalendar.slotsPerDay;
+  const slotCount = viewCalendar.slotCount;
+  const slotHeaderLabels = useMemo(
+    () => buildSlotHeaderLabels(viewCalendar.hoursByDay, viewDensity),
+    [viewCalendar.hoursByDay, viewDensity]
+  );
+
+  const planCalendar = useMemo(
+    () => buildCalendarSlots(planCalendarDays, planDensity),
+    [planCalendarDays, planDensity]
+  );
+  const planWeekDates = useMemo(() => planCalendarDays.map((day) => day.date), [planCalendarDays]);
+  const planSlotsPerDay = planCalendar.slotsPerDay;
+  const planSlotCount = planCalendar.slotCount;
   const planSlotIndexToLabel = useMemo(
     () =>
       Array.from({ length: planSlotCount }, (_, i) =>
-        slotLabel({ density: planDensity, weekDates: planWeekDates, hours: planHours, slotIndex: i })
+        slotLabelFromCalendar({
+          density: planDensity,
+          calendarDays: planCalendarDays,
+          hoursByDay: planCalendar.hoursByDay,
+          slotIndex: i,
+        })
       ),
-    [planDensity, planHours, planSlotCount, planWeekDates]
+    [planCalendar.hoursByDay, planCalendarDays, planDensity, planSlotCount]
   );
 
-  const isPlanWeekView = toISODate(viewWeekStart) === toISODate(planWeekStart);
+  const planStartISO = planCalendarDays[0]?.date ?? toISODate(planWeekStart);
+  const isPlanWeekView = toISODate(viewWeekStart) === planStartISO;
 
   const geminiModel =
     (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || "gemini-2.5-flash";
@@ -699,18 +877,55 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         if (!payload || cancelled) return;
 
         const parsedWeekStart = new Date(payload.weekStartISO);
-        if (!Number.isNaN(parsedWeekStart.getTime())) {
-          parsedWeekStart.setHours(0, 0, 0, 0);
-          setPlanWeekStart(parsedWeekStart);
-          setViewWeekStart(parsedWeekStart);
+        const effectiveWeekStart = Number.isNaN(parsedWeekStart.getTime()) ? getDefaultWeekStart() : parsedWeekStart;
+        effectiveWeekStart.setHours(0, 0, 0, 0);
+        const nextCalendarDays = payload.calendarDays.length
+          ? payload.calendarDays
+          : buildDefaultCalendarDays(effectiveWeekStart);
+        const normalizedWeekStart = new Date(nextCalendarDays[0]?.date ?? payload.weekStartISO);
+        if (!Number.isNaN(normalizedWeekStart.getTime())) {
+          normalizedWeekStart.setHours(0, 0, 0, 0);
+          setPlanWeekStart(normalizedWeekStart);
+          setViewWeekStart(normalizedWeekStart);
         }
         setPlanDensity(payload.density);
         setViewDensity(payload.density);
+        setPlanCalendarDays(nextCalendarDays);
         const loadedItems = payload.items.length ? payload.items : SAMPLE_ITEMS;
         const loadedMaterials = payload.materials.length ? payload.materials : SAMPLE_MATERIALS;
+        const calendarSlots = buildCalendarSlots(nextCalendarDays, payload.density);
         setMaterialsMaster(mergeMaterialsFromItems(loadedItems, loadedMaterials));
         setItems(loadedItems);
-        setBlocks(payload.blocks.length ? payload.blocks : DEFAULT_BLOCKS());
+        const mappedBlocks = payload.blocks.map((block) => {
+          const startAtIndex = block.startAt
+            ? slotIndexFromDateTime(
+                block.startAt,
+                nextCalendarDays,
+                calendarSlots.rawHoursByDay,
+                calendarSlots.slotsPerDay
+              )
+            : null;
+          const endAtIndex = block.endAt
+            ? slotIndexFromDateTime(
+                block.endAt,
+                nextCalendarDays,
+                calendarSlots.rawHoursByDay,
+                calendarSlots.slotsPerDay,
+                true
+              )
+            : null;
+          const start = startAtIndex ?? block.start ?? 0;
+          const len =
+            startAtIndex !== null && endAtIndex !== null
+              ? Math.max(1, endAtIndex - startAtIndex)
+              : Math.max(1, block.len ?? 1);
+          return {
+            ...block,
+            start,
+            len,
+          };
+        });
+        setBlocks(mappedBlocks.length ? mappedBlocks : DEFAULT_BLOCKS());
       } catch {
         // 読み込み失敗時は既定値を維持
       } finally {
@@ -728,16 +943,36 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const controller = new AbortController();
     const savePlan = async () => {
       try {
+        const blocksWithDates = blocks.map((block) => {
+          const startAt = slotToDateTime(
+            block.start,
+            planCalendarDays,
+            planCalendar.rawHoursByDay,
+            planCalendar.slotsPerDay
+          );
+          const endAt = slotBoundaryToDateTime(
+            block.start + block.len,
+            planCalendarDays,
+            planCalendar.rawHoursByDay,
+            planCalendar.slotsPerDay
+          );
+          return {
+            ...block,
+            startAt: startAt?.toISOString(),
+            endAt: endAt?.toISOString(),
+          };
+        });
         await fetch("/api/plan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             version: 1,
-            weekStartISO: toISODate(planWeekStart),
+            weekStartISO: planCalendarDays[0]?.date ?? toISODate(planWeekStart),
             density: planDensity,
+            calendarDays: planCalendarDays,
             materials: materialsMaster,
             items,
-            blocks,
+            blocks: blocksWithDates,
           } satisfies PlanPayload),
           signal: controller.signal,
         });
@@ -749,7 +984,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return () => {
       controller.abort();
     };
-  }, [blocks, isPlanLoaded, items, materialsMaster, planDensity, planWeekStart]);
+  }, [
+    blocks,
+    isPlanLoaded,
+    items,
+    materialsMaster,
+    planCalendar,
+    planCalendarDays,
+    planDensity,
+    planWeekStart,
+  ]);
 
   useEffect(() => {
     if (!chatScrollRef.current) return;
@@ -815,11 +1059,28 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       itemId: b.itemId,
       itemName: itemMap.get(b.itemId)?.name ?? "",
       startSlot: b.start,
-      startLabel: slotLabel({ density: planDensity, weekDates: planWeekDates, hours: planHours, slotIndex: b.start }),
+      startLabel: slotLabelFromCalendar({
+        density: planDensity,
+        calendarDays: planCalendarDays,
+        hoursByDay: planCalendar.hoursByDay,
+        slotIndex: b.start,
+      }),
       len: b.len,
       amount: b.amount,
       memo: b.memo,
       approved: b.approved,
+      startAt: slotToDateTime(
+        b.start,
+        planCalendarDays,
+        planCalendar.rawHoursByDay,
+        planCalendar.slotsPerDay
+      )?.toISOString(),
+      endAt: slotBoundaryToDateTime(
+        b.start + b.len,
+        planCalendarDays,
+        planCalendar.rawHoursByDay,
+        planCalendar.slotsPerDay
+      )?.toISOString(),
     }));
 
     return JSON.stringify(
@@ -829,6 +1090,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         slotsPerDay: planSlotsPerDay,
         slotCount: planSlotCount,
         slotIndexToLabel: planSlotIndexToLabel,
+        calendarDays: planCalendarDays,
         materials: materialsMaster,
         items: items.map((item) => ({
           id: item.id,
@@ -1148,7 +1410,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const createBlockAt = (dayIndex: number, slot: number) => {
     if (!isPlanWeekView) return;
-    const absoluteSlot = dayIndex * slotsPerDay + slot;
+    const workingSlot = clampToWorkingSlot(dayIndex, slot, viewCalendar.rawHoursByDay);
+    if (workingSlot === null) return;
+    const absoluteSlot = dayIndex * slotsPerDay + workingSlot;
     const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
     const fallbackItemId = items[0]?.id ?? "";
     const b: Block = {
@@ -1211,7 +1475,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (!s) return;
 
     const slot = xToSlot(e.clientX, s.laneRect, slotsPerDay);
-    const absoluteSlot = s.dayIndex * slotsPerDay + slot;
+    const workingSlot = clampToWorkingSlot(s.dayIndex, slot, viewCalendar.rawHoursByDay);
+    if (workingSlot === null) return;
+    const absoluteSlot = s.dayIndex * slotsPerDay + workingSlot;
     const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
     const planSlotEnd = clamp(convertSlotIndex(absoluteSlot + 1, viewDensity, planDensity, "ceil"), 1, planSlotCount);
     s.moved = true;
@@ -1257,7 +1523,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       window.removeEventListener("pointerup", endPointer);
       window.removeEventListener("pointercancel", endPointer);
     };
-  }, [planDensity, planSlotCount, slotsPerDay, viewDensity]);
+  }, [planDensity, planSlotCount, slotsPerDay, viewCalendar, viewDensity]);
 
   const openRecipeEdit = (itemId: string) => {
     const it = items.find((x) => x.id === itemId);
@@ -1509,18 +1775,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   // JSONエクスポート
   const exportPlanAsJson = () => {
-    const exportWeekDates = buildWeekDates(planWeekStart);
-    const exportHours = buildSlots(planDensity);
-    const exportSlotsPerDay = exportHours.length;
-    const exportSlotCount = exportWeekDates.length * exportSlotsPerDay;
     const payload = buildExportPayload({
       weekStart: planWeekStart,
       timezone,
       density: planDensity,
-      weekDates: exportWeekDates,
-      hours: exportHours,
-      slotsPerDay: exportSlotsPerDay,
-      slotCount: exportSlotCount,
+      calendarDays: planCalendarDays,
+      hoursByDay: planCalendar.hoursByDay,
+      slotsPerDay: planSlotsPerDay,
+      slotCount: planSlotCount,
       materials: materialsMaster,
       items,
       blocks,
@@ -1576,7 +1838,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     <Card className="rounded-2xl shadow-sm">
       <CardHeader className="flex min-h-[56px] items-center pb-2">
         <CardTitle className="text-base font-medium">
-          週表示：{toMD(weekDates[0])} 〜 {toMD(weekDates[6])}
+          週表示：{weekDates[0] ? toMD(weekDates[0]) : ""} 〜{" "}
+          {weekDates.length ? toMD(weekDates[weekDates.length - 1]) : ""}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -1590,18 +1853,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           >
             {/* ヘッダ（時間） */}
             <div className="sticky left-0 top-0 z-50 bg-white border-b border-r p-3 font-medium">日付</div>
-            {hours.map((h, idx) => (
+            {slotHeaderLabels.map((label, idx) => (
               <div
-                key={`hour-${h}-${idx}`}
+                key={`hour-${label || "blank"}-${idx}`}
                 className="sticky top-0 z-20 bg-white border-b border-r p-2 text-center text-xs text-muted-foreground"
               >
-                {viewDensity === "day" ? "日" : `${h}:00`}
+                {label || (viewDensity === "day" ? "日" : "")}
               </div>
             ))}
             <div className="sticky top-0 z-30 bg-white border-b p-3 text-center font-medium">在庫（EOD）</div>
 
             {/* 行（日付） */}
             {weekDates.map((date, dayIdx) => {
+              const calendarDay = viewCalendarDays[dayIdx];
               const eodList = eodSummaryByDay[dayIdx] ?? [];
               const laneBlocks = (isPlanWeekView ? blocks : [])
                 .map((b) => {
@@ -1633,6 +1897,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   <div className="sticky left-0 z-40 bg-white border-b border-r p-3">
                     <div className="text-sm font-semibold">{toMD(date)}</div>
                     <div className="text-xs text-muted-foreground">({toWeekday(date)})</div>
+                    {calendarDay?.isHoliday ? (
+                      <div className="mt-1 text-[10px] font-medium text-rose-500">休日</div>
+                    ) : null}
                   </div>
 
                   <div
@@ -1865,10 +2132,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               {activeItem ? activeItem.name : ""}
               {activeBlock ? (
                 <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  {slotLabel({
+                  {slotLabelFromCalendar({
                     density: planDensity,
-                    weekDates: planWeekDates,
-                    hours: planHours,
+                    calendarDays: planCalendarDays,
+                    hoursByDay: planCalendar.hoursByDay,
                     slotIndex: activeBlock.start,
                   })}
                   {activeBlock.len ? `（${durationLabel(activeBlock.len, planDensity)}）` : ""}
@@ -1975,17 +2242,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     <div className="mt-2 flex items-center justify-between">
                       <div>期間</div>
                       <div className="font-medium">
-                        {slotLabel({
+                        {slotLabelFromCalendar({
                           density: planDensity,
-                          weekDates: planWeekDates,
-                          hours: planHours,
+                          calendarDays: planCalendarDays,
+                          hoursByDay: planCalendar.hoursByDay,
                           slotIndex: activeBlock.start,
                         })}
                         <span className="mx-1 text-muted-foreground">→</span>
-                        {slotLabel({
+                        {slotLabelFromCalendar({
                           density: planDensity,
-                          weekDates: planWeekDates,
-                          hours: planHours,
+                          calendarDays: planCalendarDays,
+                          hoursByDay: planCalendar.hoursByDay,
                           slotIndex: Math.min(planSlotCount - 1, activeBlock.start + activeBlock.len - 1),
                         })}
                       </div>

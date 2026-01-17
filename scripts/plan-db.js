@@ -59,10 +59,18 @@ function ensureSchema(db) {
       item_id TEXT NOT NULL,
       start INTEGER NOT NULL,
       len INTEGER NOT NULL,
+      start_at TEXT,
+      end_at TEXT,
       amount REAL NOT NULL,
       memo TEXT NOT NULL,
       approved INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS calendar_days (
+      date TEXT PRIMARY KEY,
+      is_holiday INTEGER NOT NULL DEFAULT 0,
+      work_start INTEGER NOT NULL,
+      work_end INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_blocks_start ON blocks(start);
     CREATE INDEX IF NOT EXISTS idx_blocks_item ON blocks(item_id);
@@ -78,6 +86,18 @@ function ensureBlocksApprovedColumn(db) {
   }
 }
 
+function ensureBlocksDateColumns(db) {
+  const columns = db.prepare("PRAGMA table_info(blocks)").all();
+  const hasStartAt = columns.some((column) => column.name === "start_at");
+  const hasEndAt = columns.some((column) => column.name === "end_at");
+  if (!hasStartAt) {
+    db.exec("ALTER TABLE blocks ADD COLUMN start_at TEXT");
+  }
+  if (!hasEndAt) {
+    db.exec("ALTER TABLE blocks ADD COLUMN end_at TEXT");
+  }
+}
+
 export async function openPlanDatabase() {
   await fs.mkdir(dataDir, { recursive: true });
   const db = new Database(PLAN_DB_PATH);
@@ -85,6 +105,7 @@ export async function openPlanDatabase() {
   db.pragma("foreign_keys = ON");
   ensureSchema(db);
   ensureBlocksApprovedColumn(db);
+  ensureBlocksDateColumns(db);
   return db;
 }
 
@@ -93,7 +114,17 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
   if (!metaRows.length) return null;
 
   const meta = new Map(metaRows.map((row) => [row.key, row.value]));
-  const weekStartISO = meta.get("weekStartISO") ?? "";
+  const calendarDays = db
+    .prepare("SELECT date, is_holiday, work_start, work_end FROM calendar_days ORDER BY date")
+    .all()
+    .map((row) => ({
+      date: row.date,
+      isHoliday: Boolean(row.is_holiday),
+      workStartHour: row.work_start,
+      workEndHour: row.work_end,
+    }));
+
+  const weekStartISO = meta.get("weekStartISO") ?? calendarDays[0]?.date ?? "";
   if (!weekStartISO) return null;
   const density = normalizeDensity(meta.get("density"));
   const version = Number(meta.get("version") ?? 1);
@@ -138,6 +169,8 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
 
   let startSlot = null;
   let endSlot = null;
+  let fromBoundary = null;
+  let toBoundary = null;
   if (from && to) {
     const fromDiff = diffDays(weekStartISO, from);
     const toDiff = diffDays(weekStartISO, to);
@@ -146,6 +179,8 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
       startSlot = fromDiff * perDay;
       endSlot = (toDiff + 1) * perDay - 1;
     }
+    fromBoundary = `${from}T00:00:00`;
+    toBoundary = `${to}T23:59:59`;
   }
 
   const conditions = [];
@@ -157,12 +192,19 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     conditions.push(`item_id IN (${placeholders})`);
     params.push(...filterItemIds);
   }
-  if (startSlot !== null && endSlot !== null) {
-    conditions.push("start <= ? AND (start + len - 1) >= ?");
-    params.push(endSlot, startSlot);
+  if (fromBoundary && toBoundary) {
+    if (startSlot !== null && endSlot !== null) {
+      conditions.push(
+        "((start_at IS NOT NULL AND end_at IS NOT NULL AND start_at <= ? AND end_at >= ?) OR (start_at IS NULL AND end_at IS NULL AND start <= ? AND (start + len - 1) >= ?))"
+      );
+      params.push(toBoundary, fromBoundary, endSlot, startSlot);
+    } else {
+      conditions.push("start_at <= ? AND end_at >= ?");
+      params.push(toBoundary, fromBoundary);
+    }
   }
 
-  const sql = `SELECT id, item_id, start, len, amount, memo, approved FROM blocks${
+  const sql = `SELECT id, item_id, start, len, start_at, end_at, amount, memo, approved FROM blocks${
     conditions.length ? ` WHERE ${conditions.join(" AND ")}` : ""
   } ORDER BY start, id`;
 
@@ -171,6 +213,8 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     itemId: row.item_id,
     start: row.start,
     len: row.len,
+    startAt: row.start_at ?? undefined,
+    endAt: row.end_at ?? undefined,
     amount: row.amount,
     memo: row.memo,
     approved: Boolean(row.approved),
@@ -180,6 +224,7 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     version: Number.isFinite(version) ? version : 1,
     weekStartISO,
     density,
+    calendarDays,
     materials,
     items: itemsWithRecipes,
     blocks,
@@ -195,8 +240,11 @@ export function savePlanPayload(db, payload) {
   const insertRecipe = db.prepare(
     "INSERT INTO item_recipes (item_id, material_id, per_unit, unit) VALUES (?, ?, ?, ?)"
   );
+  const insertCalendarDay = db.prepare(
+    "INSERT INTO calendar_days (date, is_holiday, work_start, work_end) VALUES (?, ?, ?, ?)"
+  );
   const insertBlock = db.prepare(
-    "INSERT INTO blocks (id, item_id, start, len, amount, memo, approved) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO blocks (id, item_id, start, len, start_at, end_at, amount, memo, approved) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   const transaction = db.transaction(() => {
@@ -204,11 +252,21 @@ export function savePlanPayload(db, payload) {
     db.exec("DELETE FROM item_recipes");
     db.exec("DELETE FROM items");
     db.exec("DELETE FROM materials");
+    db.exec("DELETE FROM calendar_days");
 
     insertMeta.run("version", String(payload.version ?? 1));
-    insertMeta.run("weekStartISO", payload.weekStartISO ?? "");
+    insertMeta.run("weekStartISO", payload.weekStartISO ?? payload.calendarDays?.[0]?.date ?? "");
     insertMeta.run("density", normalizeDensity(payload.density));
     insertMeta.run("updatedAtISO", new Date().toISOString());
+
+    payload.calendarDays?.forEach((day) => {
+      insertCalendarDay.run(
+        day.date,
+        day.isHoliday ? 1 : 0,
+        Math.trunc(day.workStartHour ?? 0),
+        Math.trunc(day.workEndHour ?? 0)
+      );
+    });
 
     payload.materials?.forEach((material) => {
       insertMaterial.run(material.id, material.name, material.unit);
@@ -227,6 +285,8 @@ export function savePlanPayload(db, payload) {
         block.itemId,
         Math.trunc(block.start ?? 0),
         Math.max(1, Math.trunc(block.len ?? 1)),
+        block.startAt ?? null,
+        block.endAt ?? null,
         block.amount ?? 0,
         block.memo ?? "",
         block.approved ? 1 : 0
