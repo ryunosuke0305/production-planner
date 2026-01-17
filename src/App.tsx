@@ -624,6 +624,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [constraintsDraft, setConstraintsDraft] = useState("");
   const [constraintsBusy, setConstraintsBusy] = useState(false);
   const [constraintsError, setConstraintsError] = useState<string | null>(null);
+  const [pendingBlockId, setPendingBlockId] = useState<string | null>(null);
 
   const modalBodyClassName = "px-6 py-4";
   const modalWideClassName = "max-w-2xl";
@@ -1089,12 +1090,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
   };
 
-  const openPlanEdit = (block: Block) => {
+  const openPlanEdit = (block: Block, options?: { isNew?: boolean }) => {
     setActiveBlockId(block.id);
     setFormAmount(String(block.amount ?? 0));
     setFormMemo(block.memo ?? "");
     setFormItemId(block.itemId);
     setFormApproved(block.approved);
+    setPendingBlockId(options?.isNew ? block.id : null);
     setOpenPlan(true);
   };
 
@@ -1114,18 +1116,34 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           : b
       )
     );
+    setPendingBlockId(null);
     setOpenPlan(false);
   };
 
   const onPlanDelete = () => {
     if (!activeBlockId) return;
     setBlocks((prev) => prev.filter((b) => b.id !== activeBlockId));
+    setPendingBlockId(null);
+    setActiveBlockId(null);
     setOpenPlan(false);
   };
 
   const toggleBlockApproval = () => {
     if (!activeBlockId) return;
     setFormApproved((prev) => !prev);
+  };
+
+  const handlePlanOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) {
+      setOpenPlan(true);
+      return;
+    }
+    if (pendingBlockId) {
+      setBlocks((prev) => prev.filter((b) => b.id !== pendingBlockId));
+      setPendingBlockId(null);
+      setActiveBlockId(null);
+    }
+    setOpenPlan(false);
   };
 
   const createBlockAt = (dayIndex: number, slot: number) => {
@@ -1143,7 +1161,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       approved: false,
     };
     setBlocks((prev) => [...prev, b]);
-    openPlanEdit(b);
+    openPlanEdit(b, { isNew: true });
   };
 
   const resolveOverlap = (candidate: Block, allBlocks: Block[]): Block => {
@@ -1522,8 +1540,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }px, rgba(148, 163, 184, 0.4) ${colW - 1}px, rgba(148, 163, 184, 0.4) ${colW}px)`;
 
   const scheduleView = (
-    <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:flex-row">
-      <div className="min-w-0 flex-1 space-y-4">
+    <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:flex-row lg:items-stretch">
+      <div className="min-w-0 flex-1 space-y-4 lg:flex lg:h-[calc(100vh-8rem)] lg:flex-col">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
             <div className="text-2xl font-semibold tracking-tight">製造計画（ガントチャート）</div>
@@ -1558,13 +1576,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           </div>
         </div>
 
-        <Card className="rounded-2xl shadow-sm">
+        <Card className="flex min-h-0 flex-1 flex-col rounded-2xl shadow-sm">
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-medium">
               週表示：{toMD(weekDates[0])} 〜 {toMD(weekDates[6])}
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="min-h-0 flex-1">
             <div className="overflow-auto rounded-xl border border-slate-200 bg-white">
               <div
                 className="min-w-[1100px] text-slate-900"
@@ -1739,7 +1757,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         </Card>
 
         {/* 計画編集モーダル */}
-        <Dialog open={openPlan} onOpenChange={setOpenPlan}>
+        <Dialog open={openPlan} onOpenChange={handlePlanOpenChange}>
           <DialogContent className="max-w-xl">
             <DialogHeader>
               <DialogTitle>
@@ -1878,7 +1896,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           </div>
 
             <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setOpenPlan(false)}>
+              <Button variant="outline" onClick={() => handlePlanOpenChange(false)}>
                 キャンセル
               </Button>
               <Button variant="destructive" onClick={onPlanDelete}>
