@@ -76,6 +76,10 @@ function parsePlanPayload(raw) {
       const name = asString(item.name).trim();
       const unit = asString(item.unit).trim();
       if (!id || !name || !unit) return null;
+      const planningPolicy = asString(item.planningPolicy || item.planning_policy).trim();
+      const safetyStock = asNumber(item.safetyStock ?? item.safety_stock, 0);
+      const reorderPoint = asNumber(item.reorderPoint ?? item.reorder_point, 0);
+      const lotSize = asNumber(item.lotSize ?? item.lot_size, 0);
       const recipe = asArray(item.recipe)
         .map((line) => {
           if (!line || typeof line !== "object") return null;
@@ -95,6 +99,10 @@ function parsePlanPayload(raw) {
         name,
         unit,
         stock: asNumber(item.stock, 0),
+        planningPolicy: planningPolicy === "make_to_order" ? "make_to_order" : "make_to_stock",
+        safetyStock: Math.max(0, safetyStock),
+        reorderPoint: Math.max(0, reorderPoint),
+        lotSize: Math.max(0, lotSize),
         recipe,
       };
     })

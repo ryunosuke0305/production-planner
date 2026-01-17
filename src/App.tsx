@@ -37,6 +37,8 @@ type RecipeUnit = "kg" | "g";
 
 type ItemUnit = "cs" | "kg";
 
+type PlanningPolicy = "make_to_order" | "make_to_stock";
+
 type Material = {
   id: string;
   name: string;
@@ -54,6 +56,10 @@ type Item = {
   name: string;
   unit: ItemUnit;
   stock: number;
+  planningPolicy: PlanningPolicy;
+  safetyStock: number;
+  reorderPoint: number;
+  lotSize: number;
   recipe: RecipeLine[];
 };
 
@@ -95,6 +101,10 @@ type ExportPayloadV1 = {
     name: string;
     unit: ItemUnit;
     stock: number;
+    planningPolicy: PlanningPolicy;
+    safetyStock: number;
+    reorderPoint: number;
+    lotSize: number;
     recipe: Array<{
       materialId: string;
       materialName: string;
@@ -166,6 +176,10 @@ const SAMPLE_ITEMS: Item[] = [
     name: "Item A",
     unit: "cs",
     stock: 140,
+    planningPolicy: "make_to_stock",
+    safetyStock: 20,
+    reorderPoint: 60,
+    lotSize: 50,
     recipe: [
       { materialId: "MAT-A", perUnit: 0.25, unit: "kg" },
       { materialId: "MAT-B", perUnit: 0.5, unit: "kg" },
@@ -176,6 +190,10 @@ const SAMPLE_ITEMS: Item[] = [
     name: "Item B",
     unit: "cs",
     stock: 70,
+    planningPolicy: "make_to_order",
+    safetyStock: 10,
+    reorderPoint: 30,
+    lotSize: 40,
     recipe: [
       { materialId: "MAT-A", perUnit: 0.1, unit: "kg" },
       { materialId: "MAT-C", perUnit: 0.2, unit: "kg" },
@@ -186,12 +204,21 @@ const SAMPLE_ITEMS: Item[] = [
     name: "Item C",
     unit: "kg",
     stock: 320,
+    planningPolicy: "make_to_stock",
+    safetyStock: 50,
+    reorderPoint: 120,
+    lotSize: 100,
     recipe: [
       { materialId: "MAT-D", perUnit: 0.35, unit: "kg" },
       { materialId: "MAT-E", perUnit: 0.05, unit: "kg" },
     ],
   },
 ];
+
+const PLANNING_POLICY_LABELS: Record<PlanningPolicy, string> = {
+  make_to_order: "受注生産",
+  make_to_stock: "見込生産",
+};
 
 function toISODate(d: Date): string {
   const y = d.getFullYear();
@@ -298,6 +325,10 @@ function asItemUnit(value: unknown): ItemUnit {
   return value === "kg" ? "kg" : "cs";
 }
 
+function asPlanningPolicy(value: unknown): PlanningPolicy {
+  return value === "make_to_order" ? "make_to_order" : "make_to_stock";
+}
+
 function asRecipeUnit(value: unknown): RecipeUnit {
   return value === "g" ? "g" : "kg";
 }
@@ -317,6 +348,10 @@ function sanitizeItems(raw: unknown): Item[] {
       if (!id || !name) return null;
       const unit = asItemUnit(record.unit);
       const stock = asNumber(record.stock);
+      const planningPolicy = asPlanningPolicy(record.planningPolicy ?? record.planning_policy);
+      const safetyStock = Math.max(0, asNumber(record.safetyStock ?? record.safety_stock));
+      const reorderPoint = Math.max(0, asNumber(record.reorderPoint ?? record.reorder_point));
+      const lotSize = Math.max(0, asNumber(record.lotSize ?? record.lot_size));
       const recipe = Array.isArray(record.recipe)
         ? record.recipe
             .map((r) => {
@@ -337,6 +372,10 @@ function sanitizeItems(raw: unknown): Item[] {
         name,
         unit,
         stock,
+        planningPolicy,
+        safetyStock,
+        reorderPoint,
+        lotSize,
         recipe,
       } satisfies Item;
     })
@@ -658,6 +697,10 @@ function buildExportPayload(p: {
       name: it.name,
       unit: it.unit,
       stock: it.stock,
+      planningPolicy: it.planningPolicy,
+      safetyStock: it.safetyStock,
+      reorderPoint: it.reorderPoint,
+      lotSize: it.lotSize,
       recipe: it.recipe.map((r) => ({
         materialId: r.materialId,
         materialName: materialMap.get(r.materialId)?.name ?? "未登録原料",
@@ -723,11 +766,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [itemNameDraft, setItemNameDraft] = useState("");
   const [itemUnitDraft, setItemUnitDraft] = useState<ItemUnit>("cs");
   const [itemStockDraft, setItemStockDraft] = useState("0");
+  const [itemPlanningPolicyDraft, setItemPlanningPolicyDraft] = useState<PlanningPolicy>("make_to_stock");
+  const [itemSafetyStockDraft, setItemSafetyStockDraft] = useState("0");
+  const [itemReorderPointDraft, setItemReorderPointDraft] = useState("0");
+  const [itemLotSizeDraft, setItemLotSizeDraft] = useState("0");
   const [itemFormError, setItemFormError] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editingItemName, setEditingItemName] = useState("");
   const [editingItemUnit, setEditingItemUnit] = useState<ItemUnit>("cs");
   const [editingItemStock, setEditingItemStock] = useState("0");
+  const [editingItemPlanningPolicy, setEditingItemPlanningPolicy] = useState<PlanningPolicy>("make_to_stock");
+  const [editingItemSafetyStock, setEditingItemSafetyStock] = useState("0");
+  const [editingItemReorderPoint, setEditingItemReorderPoint] = useState("0");
+  const [editingItemLotSize, setEditingItemLotSize] = useState("0");
 
   const viewCalendarDays = useMemo(() => {
     const planStart = planCalendarDays[0]?.date;
@@ -1097,6 +1148,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           name: item.name,
           unit: item.unit,
           stock: item.stock,
+          planningPolicy: item.planningPolicy,
+          safetyStock: item.safetyStock,
+          reorderPoint: item.reorderPoint,
+          lotSize: item.lotSize,
           recipe: item.recipe.map((line) => ({
             ...line,
             materialName: materialMap.get(line.materialId)?.name ?? "未登録原料",
@@ -1566,17 +1621,28 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       return;
     }
     const stock = Math.max(0, safeNumber(itemStockDraft));
+    const safetyStock = Math.max(0, safeNumber(itemSafetyStockDraft));
+    const reorderPoint = Math.max(0, safeNumber(itemReorderPointDraft));
+    const lotSize = Math.max(0, safeNumber(itemLotSizeDraft));
     const newItem: Item = {
       id: uid("item"),
       name,
       unit: itemUnitDraft,
       stock,
+      planningPolicy: itemPlanningPolicyDraft,
+      safetyStock,
+      reorderPoint,
+      lotSize,
       recipe: [],
     };
     setItems((prev) => [...prev, newItem]);
     setItemNameDraft("");
     setItemUnitDraft("cs");
     setItemStockDraft("0");
+    setItemPlanningPolicyDraft("make_to_stock");
+    setItemSafetyStockDraft("0");
+    setItemReorderPointDraft("0");
+    setItemLotSizeDraft("0");
     setItemFormError(null);
   };
 
@@ -1585,6 +1651,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setEditingItemName(item.name);
     setEditingItemUnit(item.unit);
     setEditingItemStock(String(item.stock ?? 0));
+    setEditingItemPlanningPolicy(item.planningPolicy ?? "make_to_stock");
+    setEditingItemSafetyStock(String(item.safetyStock ?? 0));
+    setEditingItemReorderPoint(String(item.reorderPoint ?? 0));
+    setEditingItemLotSize(String(item.lotSize ?? 0));
     setItemFormError(null);
   };
 
@@ -1593,6 +1663,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setEditingItemName("");
     setEditingItemUnit("cs");
     setEditingItemStock("0");
+    setEditingItemPlanningPolicy("make_to_stock");
+    setEditingItemSafetyStock("0");
+    setEditingItemReorderPoint("0");
+    setEditingItemLotSize("0");
     setItemFormError(null);
   };
 
@@ -1608,6 +1682,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       return;
     }
     const nextStock = Math.max(0, safeNumber(editingItemStock));
+    const nextSafetyStock = Math.max(0, safeNumber(editingItemSafetyStock));
+    const nextReorderPoint = Math.max(0, safeNumber(editingItemReorderPoint));
+    const nextLotSize = Math.max(0, safeNumber(editingItemLotSize));
     setItems((prev) =>
       prev.map((it) =>
         it.id === editingItemId
@@ -1616,6 +1693,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               name: nextName,
               unit: editingItemUnit,
               stock: nextStock,
+              planningPolicy: editingItemPlanningPolicy,
+              safetyStock: nextSafetyStock,
+              reorderPoint: nextReorderPoint,
+              lotSize: nextLotSize,
             }
           : it
       )
@@ -2300,7 +2381,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 placeholder="品目名"
               />
             </div>
-            <div className="col-span-3">
+            <div className="col-span-2">
               <Select
                 value={itemUnitDraft}
                 onValueChange={(value) => {
@@ -2317,6 +2398,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 </SelectContent>
               </Select>
             </div>
+            <div className="col-span-3">
+              <Select
+                value={itemPlanningPolicyDraft}
+                onValueChange={(value) => {
+                  setItemPlanningPolicyDraft(value as PlanningPolicy);
+                  setItemFormError(null);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="計画方針" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="make_to_stock">見込生産</SelectItem>
+                  <SelectItem value="make_to_order">受注生産</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="col-span-2">
               <Input
                 inputMode="decimal"
@@ -2328,7 +2426,42 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 placeholder="開始在庫"
               />
             </div>
-            <div className="col-span-2">
+          </div>
+          <div className="grid grid-cols-12 items-center gap-2">
+            <div className="col-span-3">
+              <Input
+                inputMode="decimal"
+                value={itemSafetyStockDraft}
+                onChange={(e) => {
+                  setItemSafetyStockDraft(e.target.value);
+                  setItemFormError(null);
+                }}
+                placeholder="安全在庫"
+              />
+            </div>
+            <div className="col-span-3">
+              <Input
+                inputMode="decimal"
+                value={itemReorderPointDraft}
+                onChange={(e) => {
+                  setItemReorderPointDraft(e.target.value);
+                  setItemFormError(null);
+                }}
+                placeholder="発注点"
+              />
+            </div>
+            <div className="col-span-3">
+              <Input
+                inputMode="decimal"
+                value={itemLotSizeDraft}
+                onChange={(e) => {
+                  setItemLotSizeDraft(e.target.value);
+                  setItemFormError(null);
+                }}
+                placeholder="ロットサイズ"
+              />
+            </div>
+            <div className="col-span-3">
               <Button onClick={onCreateItem} className="w-full">
                 追加
               </Button>
@@ -2346,17 +2479,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           {items.length ? (
             <div className="divide-y rounded-lg border">
               <div className="grid grid-cols-12 gap-2 bg-muted/30 p-2 text-xs text-muted-foreground">
-                <div className="col-span-4">品目名</div>
-                <div className="col-span-2">単位</div>
-                <div className="col-span-2 text-right">開始在庫</div>
-                <div className="col-span-2 text-center">レシピ</div>
+                <div className="col-span-3">品目名</div>
+                <div className="col-span-1 text-center">単位</div>
+                <div className="col-span-2">計画方針</div>
+                <div className="col-span-1 text-right">在庫</div>
+                <div className="col-span-1 text-right">安全在庫</div>
+                <div className="col-span-1 text-right">発注点</div>
+                <div className="col-span-1 text-right">ロット</div>
                 <div className="col-span-2 text-right">操作</div>
               </div>
               {items.map((item) => {
                 const isEditing = editingItemId === item.id;
                 return (
                   <div key={item.id} className="grid grid-cols-12 items-center gap-2 p-2">
-                    <div className="col-span-4">
+                    <div className="col-span-3">
                       {isEditing ? (
                         <Input
                           value={editingItemName}
@@ -2369,7 +2505,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         <div className="text-sm font-medium">{item.name}</div>
                       )}
                     </div>
-                    <div className="col-span-2">
+                    <div className="col-span-1">
                       {isEditing ? (
                         <Select value={editingItemUnit} onValueChange={(value) => setEditingItemUnit(value as ItemUnit)}>
                           <SelectTrigger>
@@ -2381,10 +2517,30 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                           </SelectContent>
                         </Select>
                       ) : (
-                        <div className="text-sm text-muted-foreground">{item.unit}</div>
+                        <div className="text-center text-sm text-muted-foreground">{item.unit}</div>
                       )}
                     </div>
-                    <div className="col-span-2 text-right">
+                    <div className="col-span-2">
+                      {isEditing ? (
+                        <Select
+                          value={editingItemPlanningPolicy}
+                          onValueChange={(value) => setEditingItemPlanningPolicy(value as PlanningPolicy)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="計画方針" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="make_to_stock">見込生産</SelectItem>
+                            <SelectItem value="make_to_order">受注生産</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="text-sm text-muted-foreground">
+                          {PLANNING_POLICY_LABELS[item.planningPolicy] ?? item.planningPolicy}
+                        </div>
+                      )}
+                    </div>
+                    <div className="col-span-1 text-right">
                       {isEditing ? (
                         <Input
                           inputMode="decimal"
@@ -2398,13 +2554,46 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         <div className="text-sm text-muted-foreground">{item.stock}</div>
                       )}
                     </div>
-                    <div className="col-span-2 flex justify-center">
+                    <div className="col-span-1 text-right">
                       {isEditing ? (
-                        <div className="text-xs text-muted-foreground">編集後に設定</div>
+                        <Input
+                          inputMode="decimal"
+                          value={editingItemSafetyStock}
+                          onChange={(e) => {
+                            setEditingItemSafetyStock(e.target.value);
+                            setItemFormError(null);
+                          }}
+                        />
                       ) : (
-                        <Button variant="outline" onClick={() => openRecipeEdit(item.id)}>
-                          レシピ {item.recipe.length}件
-                        </Button>
+                        <div className="text-sm text-muted-foreground">{item.safetyStock}</div>
+                      )}
+                    </div>
+                    <div className="col-span-1 text-right">
+                      {isEditing ? (
+                        <Input
+                          inputMode="decimal"
+                          value={editingItemReorderPoint}
+                          onChange={(e) => {
+                            setEditingItemReorderPoint(e.target.value);
+                            setItemFormError(null);
+                          }}
+                        />
+                      ) : (
+                        <div className="text-sm text-muted-foreground">{item.reorderPoint}</div>
+                      )}
+                    </div>
+                    <div className="col-span-1 text-right">
+                      {isEditing ? (
+                        <Input
+                          inputMode="decimal"
+                          value={editingItemLotSize}
+                          onChange={(e) => {
+                            setEditingItemLotSize(e.target.value);
+                            setItemFormError(null);
+                          }}
+                        />
+                      ) : (
+                        <div className="text-sm text-muted-foreground">{item.lotSize}</div>
                       )}
                     </div>
                     <div className="col-span-2 flex justify-end gap-2">
@@ -2417,6 +2606,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         </>
                       ) : (
                         <>
+                          <Button variant="outline" onClick={() => openRecipeEdit(item.id)}>
+                            レシピ {item.recipe.length}件
+                          </Button>
                           <Button variant="outline" onClick={() => onStartEditItem(item)}>
                             編集
                           </Button>
