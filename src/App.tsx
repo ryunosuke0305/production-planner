@@ -538,7 +538,7 @@ type DragState = {
   originStart: number;
   originLen: number;
   laneRect: { left: number; width: number };
-  itemId: string;
+  dayIndex: number;
   moved: boolean;
 };
 
@@ -637,10 +637,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return blocks.find((b) => b.id === activeBlockId) ?? null;
   }, [activeBlockId, blocks]);
 
+  const [formItemId, setFormItemId] = useState("");
+
   const activeItem = useMemo(() => {
+    if (formItemId) {
+      return itemMap.get(formItemId) ?? null;
+    }
     if (!activeBlock) return null;
     return itemMap.get(activeBlock.itemId) ?? null;
-  }, [activeBlock, itemMap]);
+  }, [activeBlock, formItemId, itemMap]);
 
   const materials = useMemo(() => {
     if (!activeItem) return [];
@@ -1018,13 +1023,25 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setActiveBlockId(block.id);
     setFormAmount(String(block.amount ?? 0));
     setFormMemo(block.memo ?? "");
+    setFormItemId(block.itemId);
     setOpenPlan(true);
   };
 
   const onPlanSave = () => {
     if (!activeBlockId) return;
     const amount = Math.max(0, safeNumber(formAmount));
-    setBlocks((prev) => prev.map((b) => (b.id === activeBlockId ? { ...b, amount, memo: formMemo } : b)));
+    setBlocks((prev) =>
+      prev.map((b) =>
+        b.id === activeBlockId
+          ? {
+              ...b,
+              itemId: formItemId || b.itemId,
+              amount,
+              memo: formMemo,
+            }
+          : b
+      )
+    );
     setOpenPlan(false);
   };
 
@@ -1034,12 +1051,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setOpenPlan(false);
   };
 
-  const createBlockAt = (itemId: string, slot: number) => {
+  const createBlockAt = (dayIndex: number, slot: number) => {
     if (!isPlanWeekView) return;
-    const planSlot = clamp(convertSlotIndex(slot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
+    const absoluteSlot = dayIndex * slotsPerDay + slot;
+    const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
+    const fallbackItemId = items[0]?.id ?? "";
     const b: Block = {
       id: uid("b"),
-      itemId,
+      itemId: fallbackItemId,
       start: planSlot,
       len: 1,
       amount: 0,
@@ -1050,9 +1069,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const resolveOverlap = (candidate: Block, allBlocks: Block[]): Block => {
-    const sameLane = allBlocks
-      .filter((x) => x.itemId === candidate.itemId && x.id !== candidate.id)
-      .sort((a, b) => a.start - b.start);
+    const sameLane = allBlocks.filter((x) => x.id !== candidate.id).sort((a, b) => a.start - b.start);
 
     let start = candidate.start;
     let len = candidate.len;
@@ -1072,9 +1089,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return { ...candidate, start, len };
   };
 
-  const beginPointer = (p: { kind: DragKind; blockId: string; itemId: string; clientX: number }) => {
+  const beginPointer = (p: { kind: DragKind; blockId: string; dayIndex: number; clientX: number }) => {
     if (!isPlanWeekView) return;
-    const laneEl = laneRefs.current[p.itemId];
+    const laneEl = laneRefs.current[String(p.dayIndex)];
     if (!laneEl) return;
     const rect = laneEl.getBoundingClientRect();
     const block = blocks.find((b) => b.id === p.blockId);
@@ -1088,7 +1105,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       originStart: block.start,
       originLen: block.len,
       laneRect: { left: rect.left, width: rect.width },
-      itemId: p.itemId,
+      dayIndex: p.dayIndex,
       moved: false,
     };
   };
@@ -1097,9 +1114,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const s = dragStateRef.current;
     if (!s) return;
 
-    const slot = xToSlot(e.clientX, s.laneRect, slotCount);
-    const planSlot = clamp(convertSlotIndex(slot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
-    const planSlotEnd = clamp(convertSlotIndex(slot + 1, viewDensity, planDensity, "ceil"), 1, planSlotCount);
+    const slot = xToSlot(e.clientX, s.laneRect, slotsPerDay);
+    const absoluteSlot = s.dayIndex * slotsPerDay + slot;
+    const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
+    const planSlotEnd = clamp(convertSlotIndex(absoluteSlot + 1, viewDensity, planDensity, "ceil"), 1, planSlotCount);
     s.moved = true;
 
     setBlocks((prev) => {
@@ -1143,7 +1161,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       window.removeEventListener("pointerup", endPointer);
       window.removeEventListener("pointercancel", endPointer);
     };
-  }, [planDensity, planSlotCount, slotCount, viewDensity]);
+  }, [planDensity, planSlotCount, slotsPerDay, viewDensity]);
 
   const openRecipeEdit = (itemId: string) => {
     const it = items.find((x) => x.id === itemId);
@@ -1369,6 +1387,30 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return out;
   }, [blocks, isPlanWeekView, items, planSlotsPerDay]);
 
+  const eodSummaryByDay = useMemo(() => {
+    const blocksForEod = isPlanWeekView ? blocks : [];
+    const itemsByDay: Record<number, Set<string>> = {};
+
+    for (const b of blocksForEod) {
+      const d = clamp(endDayIndex(b, planSlotsPerDay), 0, 6);
+      if (!itemsByDay[d]) itemsByDay[d] = new Set();
+      itemsByDay[d].add(b.itemId);
+    }
+
+    return weekDates.map((_, dayIdx) => {
+      const ids = Array.from(itemsByDay[dayIdx] ?? []);
+      return ids.map((id) => {
+        const item = itemMap.get(id);
+        return {
+          itemId: id,
+          name: item?.name ?? id,
+          unit: item?.unit ?? "",
+          stock: eodStockByItem[id]?.[dayIdx] ?? 0,
+        };
+      });
+    });
+  }, [blocks, eodStockByItem, isPlanWeekView, itemMap, planSlotsPerDay, weekDates]);
+
   // JSONエクスポート
   const exportPlanAsJson = () => {
     const exportWeekDates = buildWeekDates(planWeekStart);
@@ -1395,16 +1437,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   // 表示上の列幅
   const colW = viewDensity === "day" ? 120 : 72;
-  const dateSpan = hours.length;
 
-  // 日区切り強調用：背景
-  const dayW = colW * slotsPerDay;
+  // 目盛線（時間グリッド）
   const slotGridBg = `repeating-linear-gradient(to right, transparent 0, transparent ${
     colW - 1
   }px, rgba(148, 163, 184, 0.4) ${colW - 1}px, rgba(148, 163, 184, 0.4) ${colW}px)`;
-  const daySeparatorBg = `repeating-linear-gradient(to right, transparent 0, transparent ${
-    dayW - 2
-  }px, rgba(71, 85, 105, 0.55) ${dayW - 2}px, rgba(71, 85, 105, 0.55) ${dayW}px)`;
 
   const scheduleView = (
     <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:flex-row">
@@ -1455,132 +1492,84 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 className="min-w-[1100px] text-slate-900"
                 style={{
                   display: "grid",
-                  gridTemplateColumns: `260px 110px repeat(${slotCount}, ${colW}px)`,
+                  gridTemplateColumns: `220px repeat(${slotsPerDay}, ${colW}px) 220px`,
                 }}
               >
-              {/* ヘッダ（上段：日付） */}
-              <div className="sticky left-0 top-0 z-50 bg-white border-b border-r p-3 font-medium">品目</div>
-              <div className="sticky top-0 z-20 bg-white border-b border-r p-3 text-center font-medium">Stock</div>
-              {weekDates.map((date, i) => (
+              {/* ヘッダ（時間） */}
+              <div className="sticky left-0 top-0 z-50 bg-white border-b border-r p-3 font-medium">日付</div>
+              {hours.map((h, idx) => (
                 <div
-                  key={`date-${date}`}
-                  className={
-                    "sticky top-0 z-20 bg-white border-b p-3 text-center font-medium" +
-                    (i < 6 ? " border-r" : "")
-                  }
-                  style={{ gridColumn: `span ${dateSpan}` }}
+                  key={`hour-${h}-${idx}`}
+                  className="sticky top-0 z-20 bg-white border-b border-r p-2 text-center text-xs text-muted-foreground"
                 >
-                  <div className="text-sm font-semibold">{toMD(date)}</div>
-                  <div className="text-xs text-muted-foreground">({toWeekday(date)})</div>
+                  {viewDensity === "day" ? "日" : `${h}:00`}
                 </div>
               ))}
+              <div className="sticky top-0 z-30 bg-white border-b p-3 text-center font-medium">在庫（EOD）</div>
 
-              {/* ヘッダ（下段：時間） */}
-              <div className="sticky left-0 top-[49px] z-50 bg-white border-b border-r p-2 text-xs text-muted-foreground" />
-              <div className="sticky top-[49px] z-20 bg-white border-b border-r p-2 text-xs text-muted-foreground" />
-              {weekDates.flatMap((date, dayIdx) =>
-                hours.map((h, hourIdx) => (
-                  <div
-                    key={`hour-${date}-${h}`}
-                    className={
-                      "sticky top-[49px] z-20 bg-white border-b p-2 text-center text-xs text-muted-foreground" +
-                      (hourIdx === hours.length - 1 && dayIdx < 6 ? " border-r" : "")
-                    }
-                  >
-                    {viewDensity === "day" ? "" : `${h}`}
-                  </div>
-                ))
-              )}
-
-              {/* 行（品目） */}
-              {items.map((item) => {
+              {/* 行（日付） */}
+              {weekDates.map((date, dayIdx) => {
+                const eodList = eodSummaryByDay[dayIdx] ?? [];
                 const laneBlocks = (isPlanWeekView ? blocks : [])
-                  .filter((b) => b.itemId === item.id)
-                  .sort((a, b) => a.start - b.start);
-
-                const eod = eodStockByItem[item.id] ?? new Array(7).fill(item.stock);
+                  .map((b) => {
+                    const viewStart = clamp(
+                      convertSlotIndex(b.start, planDensity, viewDensity, "floor"),
+                      0,
+                      slotCount - 1
+                    );
+                    const viewLen = clamp(
+                      convertSlotLength(b.len, planDensity, viewDensity, "ceil"),
+                      1,
+                      slotCount - viewStart
+                    );
+                    const viewDayIdx = Math.floor(viewStart / slotsPerDay);
+                    const viewStartInDay = viewStart - viewDayIdx * slotsPerDay;
+                    const maxLen = Math.max(1, slotsPerDay - viewStartInDay);
+                    return {
+                      block: b,
+                      viewDayIdx,
+                      viewStartInDay,
+                      viewLen: clamp(viewLen, 1, maxLen),
+                    };
+                  })
+                  .filter((entry) => entry.viewDayIdx === dayIdx)
+                  .sort((a, b) => a.viewStartInDay - b.viewStartInDay);
 
                 return (
-                  <React.Fragment key={item.id}>
-                    {/* 左：品目（クリックでレシピモーダル） */}
+                  <React.Fragment key={date}>
                     <div className="sticky left-0 z-40 bg-white border-b border-r p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <button
-                          type="button"
-                          className="text-left font-medium underline-offset-4 hover:underline"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            openRecipeEdit(item.id);
-                          }}
-                        >
-                          {item.name}
-                        </button>
-                        <Badge variant="secondary">{item.unit}</Badge>
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">レシピ {item.recipe.length}件</div>
+                      <div className="text-sm font-semibold">{toMD(date)}</div>
+                      <div className="text-xs text-muted-foreground">({toWeekday(date)})</div>
                     </div>
 
-                    {/* 中：開始在庫 */}
-                    <div className="bg-white border-b border-r p-3 text-right">
-                      <div className="font-medium">{item.stock}</div>
-                      <div className="text-xs text-muted-foreground">開始在庫</div>
-                    </div>
-
-                    {/* 右：レーン */}
                     <div
                       className="relative border-b overflow-hidden"
-                      style={{ gridColumn: `span ${slotCount}`, height: 64 }}
+                      style={{ gridColumn: `span ${slotsPerDay}`, height: 72 }}
                       ref={(el) => {
-                        laneRefs.current[item.id] = el;
+                        laneRefs.current[String(dayIdx)] = el;
                       }}
                       onClick={(e) => {
                         if (suppressClickRef.current) return;
                         if (e.defaultPrevented) return;
 
                         const rect = e.currentTarget.getBoundingClientRect();
-                        const slot = xToSlot(e.clientX, { left: rect.left, width: rect.width }, slotCount);
-                        createBlockAt(item.id, slot);
+                        const slot = xToSlot(e.clientX, { left: rect.left, width: rect.width }, slotsPerDay);
+                        createBlockAt(dayIdx, slot);
                       }}
                     >
-                      {/* 目盛線（スロット + 日境界） */}
-                      <div
-                        className="absolute inset-0"
-                        style={{
-                          backgroundImage: `${slotGridBg}, ${daySeparatorBg}`,
-                          opacity: 0.8,
-                        }}
-                      />
+                      <div className="absolute inset-0" style={{ backgroundImage: slotGridBg, opacity: 0.8 }} />
 
-                      {/* 日末在庫（EOD） */}
-                      {weekDates.map((date, dayIdx) => {
-                        const x = (dayIdx + 1) * dayW;
-                        return (
-                          <div
-                            key={`eod-${item.id}-${date}`}
-                            className="absolute bottom-[4px]"
-                            style={{ left: x - 8, transform: "translateX(-100%)" }}
-                          >
-                            <div className="rounded-md border bg-background/90 px-2 py-0.5 text-[11px] text-muted-foreground shadow-sm">
-                              EOD {eod[dayIdx]}
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {/* ブロック */}
-                      {laneBlocks.map((b) => {
-                        const viewStart = clamp(convertSlotIndex(b.start, planDensity, viewDensity, "floor"), 0, slotCount - 1);
-                        const viewLen = clamp(convertSlotLength(b.len, planDensity, viewDensity, "ceil"), 1, slotCount - viewStart);
-                        const left = viewStart * colW;
+                      {laneBlocks.map(({ block, viewStartInDay, viewLen }) => {
+                        const left = viewStartInDay * colW;
                         const width = viewLen * colW;
-                        const isActive = b.id === activeBlockId;
+                        const isActive = block.id === activeBlockId;
+                        const item = itemMap.get(block.itemId);
 
                         return (
                           <motion.div
-                            key={b.id}
+                            key={block.id}
                             className={
-                              "absolute top-[6px] h-[42px] rounded-xl border shadow-sm touch-none " +
+                              "absolute top-[8px] h-[52px] rounded-xl border shadow-sm touch-none " +
                               (isActive
                                 ? " border-sky-400 bg-sky-200"
                                 : " border-sky-200 bg-sky-100 hover:bg-sky-200")
@@ -1591,32 +1580,29 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                               if (suppressClickRef.current) return;
                               ev.preventDefault();
                               ev.stopPropagation();
-                              openPlanEdit(b);
+                              openPlanEdit(block);
                             }}
                           >
-                            {/* 左リサイズ */}
                             <div
                               className="absolute left-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-l-xl touch-none"
                               onPointerDown={(ev) => {
                                 ev.preventDefault();
                                 ev.stopPropagation();
-                                beginPointer({ kind: "resizeL", blockId: b.id, itemId: item.id, clientX: ev.clientX });
+                                beginPointer({ kind: "resizeL", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
                               }}
                               title="幅調整（左）"
                             />
 
-                            {/* 右リサイズ */}
                             <div
                               className="absolute right-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-r-xl touch-none"
                               onPointerDown={(ev) => {
                                 ev.preventDefault();
                                 ev.stopPropagation();
-                                beginPointer({ kind: "resizeR", blockId: b.id, itemId: item.id, clientX: ev.clientX });
+                                beginPointer({ kind: "resizeR", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
                               }}
                               title="幅調整（右）"
                             />
 
-                            {/* 移動 */}
                             <div
                               className="absolute inset-0 z-10 cursor-grab select-none rounded-xl p-2 touch-none"
                               onPointerDown={(ev) => {
@@ -1625,30 +1611,42 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                                 if (x <= 8 || x >= r.width - 8) return;
                                 ev.preventDefault();
                                 ev.stopPropagation();
-                                beginPointer({ kind: "move", blockId: b.id, itemId: item.id, clientX: ev.clientX });
+                                beginPointer({ kind: "move", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
                               }}
                             >
                               <div className="flex h-full flex-col justify-between">
-                                <div className="flex items-center justify-between">
-                                  <div className="text-[11px] text-slate-700">
-                                    {slotLabel({
-                                      density: planDensity,
-                                      weekDates: planWeekDates,
-                                      hours: planHours,
-                                      slotIndex: b.start,
-                                    })}
-                                  </div>
-                                  <div className="text-[11px] text-slate-700">
-                                    {durationLabel(b.len, planDensity)}
-                                  </div>
+                                <div className="flex items-center justify-between text-[11px] text-slate-700">
+                                  <span>{item?.name ?? "未設定"}</span>
+                                  <span>{durationLabel(block.len, planDensity)}</span>
                                 </div>
-                                <div className="text-sm font-semibold">+{b.amount}</div>
-                                <div className="truncate text-[11px] text-slate-600">{b.memo || " "}</div>
+                                <div className="text-sm font-semibold">
+                                  +{block.amount}
+                                  <span className="ml-1 text-xs text-slate-600">{item?.unit ?? ""}</span>
+                                </div>
+                                <div className="truncate text-[11px] text-slate-600">{block.memo || " "}</div>
                               </div>
                             </div>
                           </motion.div>
                         );
                       })}
+                    </div>
+
+                    <div className="border-b p-3 text-xs">
+                      {eodList.length ? (
+                        <div className="space-y-1">
+                          {eodList.map((entry) => (
+                            <div key={`${entry.itemId}-${dayIdx}`} className="flex items-center justify-between">
+                              <div className="font-medium text-slate-700">{entry.name}</div>
+                              <div className="text-slate-600">
+                                {entry.stock}
+                                {entry.unit}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">生産なし</div>
+                      )}
                     </div>
                   </React.Fragment>
                 );
@@ -1680,6 +1678,29 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
           <div className={modalBodyClassName}>
             <div className="space-y-5">
+            <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
+              <div className="col-span-4 text-sm text-muted-foreground">品目</div>
+              <div className="col-span-8">
+                <Select value={formItemId} onValueChange={(value) => setFormItemId(value)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="品目を選択" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {items.length ? (
+                      items.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.name}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="__none__" disabled>
+                        品目が未登録です
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
               <div className="col-span-4 text-sm text-muted-foreground">生産数量</div>
               <div className="col-span-6">
