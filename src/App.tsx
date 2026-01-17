@@ -1542,7 +1542,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const scheduleHeader = (
     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
       <div className="space-y-1">
-        <div className="text-2xl font-semibold tracking-tight">製造計画（ガントチャート）</div>
+        <div className="text-2xl font-semibold tracking-tight">製造計画</div>
         <div className="text-sm text-muted-foreground">
           バーをドラッグで移動、左右ハンドルで幅調整できます。空白クリックで新規作成します。
         </div>
@@ -1759,6 +1759,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[auto_1fr] lg:gap-4">
       <div className="min-w-0 lg:col-start-1 lg:row-start-1">{scheduleHeader}</div>
       <div className="min-w-0 lg:col-start-1 lg:row-start-2">{scheduleCard}</div>
+
 
       <div className="w-full shrink-0 lg:col-start-2 lg:row-start-2">
         <Card className="flex h-[calc(100vh-8rem)] flex-col rounded-2xl shadow-sm">
