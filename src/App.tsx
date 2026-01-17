@@ -603,6 +603,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [formAmount, setFormAmount] = useState("0");
   const [formMemo, setFormMemo] = useState("");
+  const [formApproved, setFormApproved] = useState(false);
 
   const [openRecipe, setOpenRecipe] = useState(false);
   const [activeRecipeItemId, setActiveRecipeItemId] = useState<string | null>(null);
@@ -1093,6 +1094,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setFormAmount(String(block.amount ?? 0));
     setFormMemo(block.memo ?? "");
     setFormItemId(block.itemId);
+    setFormApproved(block.approved);
     setOpenPlan(true);
   };
 
@@ -1107,6 +1109,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               itemId: formItemId || b.itemId,
               amount,
               memo: formMemo,
+              approved: formApproved,
             }
           : b
       )
@@ -1122,16 +1125,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const toggleBlockApproval = () => {
     if (!activeBlockId) return;
-    setBlocks((prev) =>
-      prev.map((b) =>
-        b.id === activeBlockId
-          ? {
-              ...b,
-              approved: !b.approved,
-            }
-          : b
-      )
-    );
+    setFormApproved((prev) => !prev);
   };
 
   const createBlockAt = (dayIndex: number, slot: number) => {
@@ -1845,14 +1839,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   exit={{ opacity: 0, y: 6 }}
                   className="rounded-xl border p-3 text-sm"
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-muted-foreground">現在のブロック</div>
-                    <Badge
-                      variant="secondary"
-                      className={activeBlock.approved ? "bg-emerald-100 text-emerald-700" : "bg-sky-100 text-sky-700"}
-                    >
-                      {activeBlock.approved ? "承認済み" : "未承認"}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant="secondary"
+                        className={formApproved ? "bg-emerald-100 text-emerald-700" : "bg-sky-100 text-sky-700"}
+                      >
+                        {formApproved ? "承認済み" : "未承認"}
+                      </Badge>
+                      <Button variant="outline" size="sm" onClick={toggleBlockApproval}>
+                        {formApproved ? "未承認に戻す" : "承認する"}
+                      </Button>
+                    </div>
                   </div>
                   <div className="mt-2 flex items-center justify-between">
                     <div>期間</div>
@@ -1881,9 +1880,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             <DialogFooter className="gap-2">
               <Button variant="outline" onClick={() => setOpenPlan(false)}>
                 キャンセル
-              </Button>
-              <Button variant="outline" onClick={toggleBlockApproval} disabled={!activeBlock}>
-                {activeBlock?.approved ? "未承認に戻す" : "承認する"}
               </Button>
               <Button variant="destructive" onClick={onPlanDelete}>
                 削除

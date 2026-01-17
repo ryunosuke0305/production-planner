@@ -17,6 +17,10 @@ function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function asBoolean(value, fallback = false) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
 function normalizeDensity(value) {
   if (value === "hour" || value === "2hour" || value === "day") return value;
   return "hour";
@@ -85,6 +89,7 @@ function parsePlanPayload(raw) {
         len: Math.max(1, Math.trunc(asNumber(block.len, 1))),
         amount: asNumber(block.amount, 0),
         memo: asString(block.memo),
+        approved: asBoolean(block.approved, false),
       };
     })
     .filter(Boolean);
