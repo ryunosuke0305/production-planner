@@ -61,6 +61,7 @@ function ensureSchema(db) {
       len INTEGER NOT NULL,
       amount REAL NOT NULL,
       memo TEXT NOT NULL,
+      approved INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_blocks_start ON blocks(start);
@@ -69,12 +70,21 @@ function ensureSchema(db) {
   `);
 }
 
+function ensureBlocksApprovedColumn(db) {
+  const columns = db.prepare("PRAGMA table_info(blocks)").all();
+  const hasApproved = columns.some((column) => column.name === "approved");
+  if (!hasApproved) {
+    db.exec("ALTER TABLE blocks ADD COLUMN approved INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
 export async function openPlanDatabase() {
   await fs.mkdir(dataDir, { recursive: true });
   const db = new Database(PLAN_DB_PATH);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   ensureSchema(db);
+  ensureBlocksApprovedColumn(db);
   return db;
 }
 
@@ -152,7 +162,7 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     params.push(endSlot, startSlot);
   }
 
-  const sql = `SELECT id, item_id, start, len, amount, memo FROM blocks${
+  const sql = `SELECT id, item_id, start, len, amount, memo, approved FROM blocks${
     conditions.length ? ` WHERE ${conditions.join(" AND ")}` : ""
   } ORDER BY start, id`;
 
@@ -163,6 +173,7 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     len: row.len,
     amount: row.amount,
     memo: row.memo,
+    approved: Boolean(row.approved),
   }));
 
   return {
@@ -185,7 +196,7 @@ export function savePlanPayload(db, payload) {
     "INSERT INTO item_recipes (item_id, material_id, per_unit, unit) VALUES (?, ?, ?, ?)"
   );
   const insertBlock = db.prepare(
-    "INSERT INTO blocks (id, item_id, start, len, amount, memo) VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO blocks (id, item_id, start, len, amount, memo, approved) VALUES (?, ?, ?, ?, ?, ?, ?)"
   );
 
   const transaction = db.transaction(() => {
@@ -217,7 +228,8 @@ export function savePlanPayload(db, payload) {
         Math.trunc(block.start ?? 0),
         Math.max(1, Math.trunc(block.len ?? 1)),
         block.amount ?? 0,
-        block.memo ?? ""
+        block.memo ?? "",
+        block.approved ? 1 : 0
       );
     });
   });
