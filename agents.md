@@ -15,3 +15,7 @@
 ## コマンドの推奨
 - 検索は `rg` を優先して使用する。
 - 目的のファイルが分かっている場合は直接パス指定で開く。
+
+## UI共通スタイルの補足
+- フォーム系 UI（Input / Textarea / Select）の共通クラスは `src/components/ui/form-control.ts` に集約しています。
+- フォームの見た目やフォーカス状態を変更する場合は、まず `formControlBase` を確認してください。

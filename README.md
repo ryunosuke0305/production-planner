@@ -121,6 +121,11 @@ Gemini API との通信をサーバー側で中継し、クライアントに AP
 └─ README.md
 ```
 
+## 品質チェックメモ
+
+- フォーム系 UI（Input / Textarea / Select）の見た目は `src/components/ui/form-control.ts` に集約し、重複したクラス定義を避けています。
+- フォーム系のスタイル変更は `formControlBase` を起点に行うことで、UI の統一感を保てます。
+
 ## データスキーマ
 
 ### 計画保存データ（`/api/plan`）
