@@ -53,6 +53,7 @@ type RecipeLine = {
 
 type Item = {
   id: string;
+  publicId?: string;
   name: string;
   unit: ItemUnit;
   stock: number;
@@ -98,6 +99,7 @@ type ExportPayloadV1 = {
   };
   items: Array<{
     id: string;
+    publicId?: string;
     name: string;
     unit: ItemUnit;
     stock: number;
@@ -139,7 +141,6 @@ type ChatAction = {
   type: "create_block" | "update_block" | "delete_block";
   blockId?: string;
   itemId?: string;
-  itemName?: string;
   startSlot?: number;
   startLabel?: string;
   len?: number;
@@ -344,6 +345,7 @@ function sanitizeItems(raw: unknown): Item[] {
       if (!entry || typeof entry !== "object") return null;
       const record = entry as Record<string, unknown>;
       const id = asString(record.id).trim();
+      const publicId = asString(record.publicId ?? record.public_id ?? record.itemKey ?? record.item_key).trim();
       const name = asString(record.name).trim();
       if (!id || !name) return null;
       const unit = asItemUnit(record.unit);
@@ -369,6 +371,7 @@ function sanitizeItems(raw: unknown): Item[] {
         : [];
       return {
         id,
+        publicId: publicId || undefined,
         name,
         unit,
         stock,
@@ -694,6 +697,7 @@ function buildExportPayload(p: {
     },
     items: p.items.map((it) => ({
       id: it.id,
+      publicId: it.publicId,
       name: it.name,
       unit: it.unit,
       stock: it.stock,
@@ -764,6 +768,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [materialsMaster, setMaterialsMaster] = useState<Material[]>(SAMPLE_MATERIALS);
   const [items, setItems] = useState<Item[]>(SAMPLE_ITEMS);
   const [itemNameDraft, setItemNameDraft] = useState("");
+  const [itemPublicIdDraft, setItemPublicIdDraft] = useState("");
   const [itemUnitDraft, setItemUnitDraft] = useState<ItemUnit>("cs");
   const [itemStockDraft, setItemStockDraft] = useState("0");
   const [itemPlanningPolicyDraft, setItemPlanningPolicyDraft] = useState<PlanningPolicy>("make_to_stock");
@@ -773,6 +778,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [itemFormError, setItemFormError] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editingItemName, setEditingItemName] = useState("");
+  const [editingItemPublicId, setEditingItemPublicId] = useState("");
   const [editingItemUnit, setEditingItemUnit] = useState<ItemUnit>("cs");
   const [editingItemStock, setEditingItemStock] = useState("0");
   const [editingItemPlanningPolicy, setEditingItemPlanningPolicy] = useState<PlanningPolicy>("make_to_stock");
@@ -869,6 +875,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const itemMap = useMemo(() => {
     return new Map(items.map((item) => [item.id, item]));
+  }, [items]);
+
+  const itemKeyMap = useMemo(() => {
+    const map = new Map<string, string>();
+    items.forEach((item) => {
+      const key = (item.publicId ?? "").trim() || item.id;
+      map.set(item.id, item.id);
+      map.set(key, item.id);
+    });
+    return map;
   }, [items]);
 
   const activeBlock = useMemo(() => {
@@ -1107,8 +1123,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const buildPlanContext = () => {
     const blockSummaries = blocks.map((b) => ({
       id: b.id,
-      itemId: b.itemId,
-      itemName: itemMap.get(b.itemId)?.name ?? "",
+      itemId: (itemMap.get(b.itemId)?.publicId ?? "").trim() || b.itemId,
       startSlot: b.start,
       startLabel: slotLabelFromCalendar({
         density: planDensity,
@@ -1144,8 +1159,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         calendarDays: planCalendarDays,
         materials: materialsMaster,
         items: items.map((item) => ({
-          id: item.id,
-          name: item.name,
+          itemId: (item.publicId ?? "").trim() || item.id,
           unit: item.unit,
           stock: item.stock,
           planningPolicy: item.planningPolicy,
@@ -1165,12 +1179,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const resolveItemId = (action: ChatAction) => {
-    if (action.itemId && items.some((x) => x.id === action.itemId)) return action.itemId;
-    if (action.itemName) {
-      const match = items.find((x) => x.name.toLowerCase() === action.itemName?.toLowerCase());
-      if (match) return match.id;
-    }
-    return null;
+    if (!action.itemId) return null;
+    const trimmed = action.itemId.trim();
+    return itemKeyMap.get(trimmed) ?? null;
   };
 
   const resolveSlotIndex = (action: ChatAction) => {
@@ -1272,8 +1283,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       "    {",
       '      "type": "create_block | update_block | delete_block",',
       '      "blockId": "既存ブロックID（更新/削除時に推奨）",',
-      '      "itemId": "品目ID",',
-      '      "itemName": "品目名（itemIdが不明な場合）",',
+      '      "itemId": "品目ID（マスタで設定したID）",',
       '      "startSlot": "開始スロット番号（0始まり）",',
       '      "startLabel": "開始ラベル（startSlotが不明な場合）",',
       '      "len": "スロット長",',
@@ -1612,6 +1622,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const onCreateItem = () => {
     const name = itemNameDraft.trim();
+    const publicId = itemPublicIdDraft.trim();
     if (!name) {
       setItemFormError("品目名を入力してください。");
       return;
@@ -1620,12 +1631,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       setItemFormError("同じ品目名がすでに登録されています。");
       return;
     }
+    if (publicId && items.some((it) => it.id === publicId || (it.publicId ?? "").trim() === publicId)) {
+      setItemFormError("同じ品目IDがすでに登録されています。");
+      return;
+    }
     const stock = Math.max(0, safeNumber(itemStockDraft));
     const safetyStock = Math.max(0, safeNumber(itemSafetyStockDraft));
     const reorderPoint = Math.max(0, safeNumber(itemReorderPointDraft));
     const lotSize = Math.max(0, safeNumber(itemLotSizeDraft));
     const newItem: Item = {
       id: uid("item"),
+      publicId: publicId || undefined,
       name,
       unit: itemUnitDraft,
       stock,
@@ -1637,6 +1653,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     };
     setItems((prev) => [...prev, newItem]);
     setItemNameDraft("");
+    setItemPublicIdDraft("");
     setItemUnitDraft("cs");
     setItemStockDraft("0");
     setItemPlanningPolicyDraft("make_to_stock");
@@ -1649,6 +1666,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const onStartEditItem = (item: Item) => {
     setEditingItemId(item.id);
     setEditingItemName(item.name);
+    setEditingItemPublicId(item.publicId ?? "");
     setEditingItemUnit(item.unit);
     setEditingItemStock(String(item.stock ?? 0));
     setEditingItemPlanningPolicy(item.planningPolicy ?? "make_to_stock");
@@ -1661,6 +1679,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const onCancelEditItem = () => {
     setEditingItemId(null);
     setEditingItemName("");
+    setEditingItemPublicId("");
     setEditingItemUnit("cs");
     setEditingItemStock("0");
     setEditingItemPlanningPolicy("make_to_stock");
@@ -1673,12 +1692,22 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const onSaveEditItem = () => {
     if (!editingItemId) return;
     const nextName = editingItemName.trim();
+    const nextPublicId = editingItemPublicId.trim();
     if (!nextName) {
       setItemFormError("品目名を入力してください。");
       return;
     }
     if (items.some((it) => it.name === nextName && it.id !== editingItemId)) {
       setItemFormError("同じ品目名がすでに登録されています。");
+      return;
+    }
+    if (
+      nextPublicId &&
+      items.some(
+        (it) => it.id !== editingItemId && (it.id === nextPublicId || (it.publicId ?? "").trim() === nextPublicId)
+      )
+    ) {
+      setItemFormError("同じ品目IDがすでに登録されています。");
       return;
     }
     const nextStock = Math.max(0, safeNumber(editingItemStock));
@@ -1690,6 +1719,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         it.id === editingItemId
           ? {
               ...it,
+              publicId: nextPublicId || undefined,
               name: nextName,
               unit: editingItemUnit,
               stock: nextStock,
@@ -2159,7 +2189,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     void sendChatMessage();
                   }
                 }}
-                placeholder="例：Item A を 9/12 10:00から2時間、40cs 追加して"
+                placeholder="例：品目ID A を 9/12 10:00から2時間、40cs 追加して"
                 rows={3}
               />
               <div className="flex items-center justify-between">
@@ -2238,7 +2268,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       {items.length ? (
                         items.map((item) => (
                           <SelectItem key={item.id} value={item.id}>
-                            {item.name}
+                            {item.publicId ? `${item.name} (${item.publicId})` : item.name}
                           </SelectItem>
                         ))
                       ) : (
@@ -2370,8 +2400,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           <CardTitle className="text-base font-medium">品目を追加</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid grid-cols-12 items-center gap-2">
-            <div className="col-span-5">
+          <div className="grid grid-cols-14 items-center gap-2">
+            <div className="col-span-4">
               <Input
                 value={itemNameDraft}
                 onChange={(e) => {
@@ -2379,6 +2409,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   setItemFormError(null);
                 }}
                 placeholder="品目名"
+              />
+            </div>
+            <div className="col-span-2">
+              <Input
+                value={itemPublicIdDraft}
+                onChange={(e) => {
+                  setItemPublicIdDraft(e.target.value);
+                  setItemFormError(null);
+                }}
+                placeholder="品目ID"
               />
             </div>
             <div className="col-span-2">
@@ -2415,7 +2455,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 </SelectContent>
               </Select>
             </div>
-            <div className="col-span-2">
+            <div className="col-span-3">
               <Input
                 inputMode="decimal"
                 value={itemStockDraft}
@@ -2478,8 +2518,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         <CardContent className="space-y-2">
           {items.length ? (
             <div className="divide-y rounded-lg border">
-              <div className="grid grid-cols-12 gap-2 bg-muted/30 p-2 text-xs text-muted-foreground">
+              <div className="grid grid-cols-14 gap-2 bg-muted/30 p-2 text-xs text-muted-foreground">
                 <div className="col-span-3">品目名</div>
+                <div className="col-span-2">品目ID</div>
                 <div className="col-span-1 text-center">単位</div>
                 <div className="col-span-2">計画方針</div>
                 <div className="col-span-1 text-right">在庫</div>
@@ -2491,7 +2532,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               {items.map((item) => {
                 const isEditing = editingItemId === item.id;
                 return (
-                  <div key={item.id} className="grid grid-cols-12 items-center gap-2 p-2">
+                  <div key={item.id} className="grid grid-cols-14 items-center gap-2 p-2">
                     <div className="col-span-3">
                       {isEditing ? (
                         <Input
@@ -2503,6 +2544,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         />
                       ) : (
                         <div className="text-sm font-medium">{item.name}</div>
+                      )}
+                    </div>
+                    <div className="col-span-2">
+                      {isEditing ? (
+                        <Input
+                          value={editingItemPublicId}
+                          onChange={(e) => {
+                            setEditingItemPublicId(e.target.value);
+                            setItemFormError(null);
+                          }}
+                        />
+                      ) : (
+                        <div className="text-sm text-muted-foreground">{item.publicId || "未設定"}</div>
                       )}
                     </div>
                     <div className="col-span-1">
