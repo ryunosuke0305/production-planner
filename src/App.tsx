@@ -287,12 +287,25 @@ function toWeekday(isoDate: string): string {
 
 const DEFAULT_WORK_START_HOUR = 8;
 const DEFAULT_WORK_END_HOUR = 18;
+const DAYS_IN_WEEK = 7;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-function buildDefaultCalendarDays(start: Date): CalendarDay[] {
+function addDays(base: Date, delta: number): Date {
+  const d = new Date(base);
+  d.setDate(base.getDate() + delta);
+  return d;
+}
+
+function diffDays(startISO: string, endISO: string): number {
+  const start = new Date(`${startISO}T00:00:00`);
+  const end = new Date(`${endISO}T00:00:00`);
+  return Math.round((end.getTime() - start.getTime()) / MS_PER_DAY);
+}
+
+function buildCalendarDays(start: Date, days: number): CalendarDay[] {
   const out: CalendarDay[] = [];
-  for (let i = 0; i < 7; i += 1) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
+  for (let i = 0; i < days; i += 1) {
+    const d = addDays(start, i);
     const isoDate = toISODate(d);
     const weekday = d.getDay();
     out.push({
@@ -303,6 +316,10 @@ function buildDefaultCalendarDays(start: Date): CalendarDay[] {
     });
   }
   return out;
+}
+
+function buildDefaultCalendarDays(start: Date): CalendarDay[] {
+  return buildCalendarDays(start, DAYS_IN_WEEK);
 }
 
 function calcMaterials(
@@ -949,11 +966,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
   const [itemModalMode, setItemModalMode] = useState<"create" | "edit">("create");
 
+  const viewStartISO = toISODate(viewWeekStart);
+  const planStartISO = planCalendarDays[0]?.date ?? toISODate(planWeekStart);
+  const viewStartOffsetDays = useMemo(() => diffDays(planStartISO, viewStartISO), [planStartISO, viewStartISO]);
+  const isViewWithinPlanRange =
+    viewStartOffsetDays >= 0 && viewStartOffsetDays + DAYS_IN_WEEK <= planCalendarDays.length;
+
   const viewCalendarDays = useMemo(() => {
-    const planStart = planCalendarDays[0]?.date;
-    if (planStart && toISODate(viewWeekStart) === planStart) return planCalendarDays;
-    return buildDefaultCalendarDays(viewWeekStart);
-  }, [planCalendarDays, viewWeekStart]);
+    if (!isViewWithinPlanRange) return buildDefaultCalendarDays(viewWeekStart);
+    return planCalendarDays.slice(viewStartOffsetDays, viewStartOffsetDays + DAYS_IN_WEEK);
+  }, [isViewWithinPlanRange, planCalendarDays, viewStartOffsetDays, viewWeekStart]);
 
   const viewCalendar = useMemo(
     () => buildCalendarSlots(viewCalendarDays, viewDensity),
@@ -962,6 +984,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const weekDates = useMemo(() => viewCalendarDays.map((day) => day.date), [viewCalendarDays]);
   const slotsPerDay = viewCalendar.slotsPerDay;
   const slotCount = viewCalendar.slotCount;
+  const viewOffsetSlots = viewStartOffsetDays * slotsPerDay;
   const slotHeaderLabels = useMemo(
     () => buildSlotHeaderLabels(viewCalendar.hoursByDay, viewDensity),
     [viewCalendar.hoursByDay, viewDensity]
@@ -987,8 +1010,37 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     [planCalendar.hoursByDay, planCalendarDays, planDensity, planSlotCount]
   );
 
-  const planStartISO = planCalendarDays[0]?.date ?? toISODate(planWeekStart);
-  const isPlanWeekView = toISODate(viewWeekStart) === planStartISO;
+  const isPlanWeekView = isViewWithinPlanRange;
+
+  useEffect(() => {
+    if (!planCalendarDays.length) return;
+    const currentPlanStartISO = planCalendarDays[0].date;
+    const currentPlanEndISO = planCalendarDays[planCalendarDays.length - 1].date;
+    const viewEndISO = toISODate(addDays(viewWeekStart, DAYS_IN_WEEK - 1));
+
+    if (viewStartISO < currentPlanStartISO) {
+      const daysToPrepend = diffDays(viewStartISO, currentPlanStartISO);
+      if (daysToPrepend > 0) {
+        const newDays = buildCalendarDays(new Date(viewStartISO), daysToPrepend);
+        const shiftSlots = daysToPrepend * planSlotsPerDay;
+        setPlanCalendarDays((prev) => [...newDays, ...prev]);
+        setPlanWeekStart(new Date(viewStartISO));
+        if (shiftSlots > 0) {
+          setBlocks((prev) => prev.map((b) => ({ ...b, start: b.start + shiftSlots })));
+        }
+      }
+      return;
+    }
+
+    if (viewEndISO > currentPlanEndISO) {
+      const daysToAppend = diffDays(currentPlanEndISO, viewEndISO);
+      if (daysToAppend > 0) {
+        const appendStart = addDays(new Date(currentPlanEndISO), 1);
+        const newDays = buildCalendarDays(appendStart, daysToAppend);
+        setPlanCalendarDays((prev) => [...prev, ...newDays]);
+      }
+    }
+  }, [planCalendarDays, planSlotsPerDay, viewStartISO, viewWeekStart]);
 
   const geminiModel =
     (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim() || "gemini-2.5-flash";
@@ -1809,7 +1861,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (!isPlanWeekView) return;
     const workingSlot = clampToWorkingSlot(dayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
-    const absoluteSlot = dayIndex * slotsPerDay + workingSlot;
+    const absoluteSlot = (viewStartOffsetDays + dayIndex) * slotsPerDay + workingSlot;
     const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
     const fallbackItemId = items[0]?.id ?? "";
     const b: Block = {
@@ -1874,7 +1926,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const slot = xToSlot(e.clientX, s.laneRect, slotsPerDay);
     const workingSlot = clampToWorkingSlot(s.dayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
-    const absoluteSlot = s.dayIndex * slotsPerDay + workingSlot;
+    const absoluteSlot = (viewStartOffsetDays + s.dayIndex) * slotsPerDay + workingSlot;
     const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
     const planSlotEnd = clamp(convertSlotIndex(absoluteSlot + 1, viewDensity, planDensity, "ceil"), 1, planSlotCount);
     s.moved = true;
@@ -2236,14 +2288,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const eodStockByItem = useMemo(() => {
     const blocksForEod = isPlanWeekView ? blocks : [];
     const out: Record<string, number[]> = {};
-    const weekDatesForEod = planCalendarDays.map((day) => day.date).slice(0, 7);
+    const weekDatesForEod = weekDates;
 
     for (const it of items) {
       const addByDay = new Array(7).fill(0);
       for (const b of blocksForEod) {
         if (b.itemId !== it.id) continue;
-        const d = clamp(endDayIndex(b, planSlotsPerDay), 0, 6);
-        addByDay[d] += Number.isFinite(b.amount) ? b.amount : 0;
+        const dayIndex = endDayIndex(b, planSlotsPerDay) - viewStartOffsetDays;
+        if (dayIndex < 0 || dayIndex >= 7) continue;
+        addByDay[dayIndex] += Number.isFinite(b.amount) ? b.amount : 0;
       }
       const eod = new Array(7).fill(0);
       let cur = it.stock;
@@ -2261,14 +2314,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
 
     return out;
-  }, [blocks, dailyStockMap, isPlanWeekView, items, ordersByShipDate, planCalendarDays, planSlotsPerDay]);
+  }, [blocks, dailyStockMap, isPlanWeekView, items, ordersByShipDate, planSlotsPerDay, viewStartOffsetDays, weekDates]);
 
   const eodSummaryByDay = useMemo(() => {
     const blocksForEod = isPlanWeekView ? blocks : [];
     const itemsByDay: Record<number, Set<string>> = {};
 
     for (const b of blocksForEod) {
-      const d = clamp(endDayIndex(b, planSlotsPerDay), 0, 6);
+      const d = endDayIndex(b, planSlotsPerDay) - viewStartOffsetDays;
+      if (d < 0 || d >= 7) continue;
       if (!itemsByDay[d]) itemsByDay[d] = new Set();
       itemsByDay[d].add(b.itemId);
     }
@@ -2285,7 +2339,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         };
       });
     });
-  }, [blocks, eodStockByItem, isPlanWeekView, itemMap, planSlotsPerDay, weekDates]);
+  }, [blocks, eodStockByItem, isPlanWeekView, itemMap, planSlotsPerDay, viewStartOffsetDays, weekDates]);
 
   // JSONエクスポート
   const exportPlanAsJson = () => {
@@ -2408,17 +2462,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               const eodList = eodSummaryByDay[dayIdx] ?? [];
               const laneBlocks = (isPlanWeekView ? blocks : [])
                 .map((b) => {
-                  const viewStart = clamp(
-                    convertSlotIndex(b.start, planDensity, viewDensity, "floor"),
-                    0,
-                    slotCount - 1
-                  );
-                  const viewLen = clamp(
-                    convertSlotLength(b.len, planDensity, viewDensity, "ceil"),
-                    1,
-                    slotCount - viewStart
-                  );
+                  const rawViewStart = convertSlotIndex(b.start, planDensity, viewDensity, "floor");
+                  const viewStart = rawViewStart - viewOffsetSlots;
+                  const viewLen = convertSlotLength(b.len, planDensity, viewDensity, "ceil");
                   const viewDayIdx = Math.floor(viewStart / slotsPerDay);
+                  if (viewDayIdx < 0 || viewDayIdx >= DAYS_IN_WEEK) return null;
                   const viewStartInDay = viewStart - viewDayIdx * slotsPerDay;
                   const maxLen = Math.max(1, slotsPerDay - viewStartInDay);
                   return {
@@ -2428,6 +2476,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     viewLen: clamp(viewLen, 1, maxLen),
                   };
                 })
+                .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
                 .filter((entry) => entry.viewDayIdx === dayIdx)
                 .sort((a, b) => a.viewStartInDay - b.viewStartInDay);
 
