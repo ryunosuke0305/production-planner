@@ -156,6 +156,7 @@ type ChatMessage = {
   id: string;
   role: ChatRole;
   content: string;
+  createdAt?: string;
 };
 
 type ChatAction = {
@@ -1700,7 +1701,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const trimmed = chatInput.trim();
     if (!trimmed || chatBusy) return;
     const userMessageId = uid("chat");
-    const userMessage: ChatMessage = { id: userMessageId, role: "user", content: trimmed };
+    const userMessage: ChatMessage = {
+      id: userMessageId,
+      role: "user",
+      content: trimmed,
+      createdAt: new Date().toISOString(),
+    };
     setChatMessages((prev) => [...prev, userMessage]);
     setChatInput("");
     setChatBusy(true);
@@ -1734,6 +1740,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const planContext = buildPlanContext();
     const constraintsNote = constraintsText.trim() ? `\n\nユーザー制約条件:\n${constraintsText.trim()}` : "";
     const messageWithContext = `${trimmed}${constraintsNote}\n\n現在の計画データ(JSON):\n${planContext}`;
+    const chatHistoryCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const recentChatMessages = chatMessages.filter((message) => {
+      if (!message.createdAt) return false;
+      const timestamp = Date.parse(message.createdAt);
+      if (Number.isNaN(timestamp)) return false;
+      return timestamp >= chatHistoryCutoff;
+    });
 
     try {
       const response = await fetch("/api/gemini", {
@@ -1743,7 +1756,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           model: geminiModel,
           systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
           contents: [
-            ...chatMessages.map((msg) => ({
+            ...recentChatMessages.map((msg) => ({
               role: msg.role === "assistant" ? "model" : "user",
               parts: [{ text: msg.content }],
             })),
@@ -1758,7 +1771,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           errorPayload?.message ??
           "現在別の指示を処理しています。処理結果を確認後に再度実行してください。";
         setChatError(message);
-        const assistantMessage: ChatMessage = { id: uid("chat"), role: "assistant", content: message };
+        const assistantMessage: ChatMessage = {
+          id: uid("chat"),
+          role: "assistant",
+          content: message,
+          createdAt: new Date().toISOString(),
+        };
         setChatMessages((prev) => [...prev, assistantMessage]);
         void appendChatHistory([userMessage, assistantMessage]);
         return;
@@ -1772,7 +1790,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         });
         const message = "サーバー側にGemini APIキーが設定されていません。data/.envにGEMINI_API_KEYを設定してください。";
         setChatError(message);
-        const assistantMessage: ChatMessage = { id: uid("chat"), role: "assistant", content: message };
+        const assistantMessage: ChatMessage = {
+          id: uid("chat"),
+          role: "assistant",
+          content: message,
+          createdAt: new Date().toISOString(),
+        };
         setChatMessages((prev) => [...prev, assistantMessage]);
         void appendChatHistory([userMessage, assistantMessage]);
         return;
@@ -1808,6 +1831,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         id: uid("chat"),
         role: "assistant",
         content: assistantContent.trim() || "更新しました。",
+        createdAt: new Date().toISOString(),
       };
       setChatMessages((prev) => [...prev, assistantMessage]);
       void appendChatHistory([userMessage, assistantMessage]);
@@ -1819,6 +1843,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         id: uid("chat"),
         role: "assistant",
         content: "API呼び出しでエラーが発生しました。",
+        createdAt: new Date().toISOString(),
       };
       setChatMessages((prev) => [...prev, assistantMessage]);
       void appendChatHistory([userMessage, assistantMessage]);

@@ -28,6 +28,7 @@ type ChatHistoryMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  createdAt?: string;
 };
 
 const CONSTRAINTS_PATH = fileURLToPath(new URL("./data/gemini-constraints.json", import.meta.url));
@@ -130,6 +131,7 @@ const createChatHistoryApiMiddleware = () => {
     if (typeof value.id !== "string") return false;
     if (value.role !== "user" && value.role !== "assistant") return false;
     if (typeof value.content !== "string") return false;
+    if (typeof value.createdAt !== "undefined" && typeof value.createdAt !== "string") return false;
     return true;
   };
 
