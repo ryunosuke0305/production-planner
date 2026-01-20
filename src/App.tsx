@@ -200,6 +200,16 @@ type OrderEntry = {
   quantity: number;
 };
 
+type DailyStocksResponse = {
+  updatedAtISO: string | null;
+  entries: DailyStockEntry[];
+};
+
+type OrdersResponse = {
+  updatedAtISO: string | null;
+  entries: OrderEntry[];
+};
+
 const SAMPLE_MATERIALS: Material[] = [
   { id: "MAT-A", name: "原料A", unit: "kg" },
   { id: "MAT-B", name: "原料B", unit: "kg" },
@@ -810,6 +820,13 @@ function downloadTextFile(filename: string, text: string, mime = "application/js
   URL.revokeObjectURL(url);
 }
 
+function formatUpdatedAt(value: string | null): string {
+  if (!value) return "未更新";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "未更新";
+  return parsed.toLocaleString("ja-JP");
+}
+
 function buildExportPayload(p: {
   weekStart: Date;
   timezone: string;
@@ -942,6 +959,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [items, setItems] = useState<Item[]>(SAMPLE_ITEMS);
   const [dailyStocks, setDailyStocks] = useState<DailyStockEntry[]>([]);
   const [orders, setOrders] = useState<OrderEntry[]>([]);
+  const [dailyStockUpdatedAt, setDailyStockUpdatedAt] = useState<string | null>(null);
+  const [orderUpdatedAt, setOrderUpdatedAt] = useState<string | null>(null);
   const [dailyStockImportNote, setDailyStockImportNote] = useState<string | null>(null);
   const [orderImportNote, setOrderImportNote] = useState<string | null>(null);
   const [dailyStockImportError, setDailyStockImportError] = useState<string | null>(null);
@@ -1294,11 +1313,40 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return { entries: next, missingItem, invalidRows };
   };
 
+  const saveDailyStocksToServer = async (entries: DailyStockEntry[]) => {
+    const response = await fetch("/api/daily-stocks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries }),
+    });
+    if (!response.ok) {
+      throw new Error("日別在庫の保存に失敗しました。");
+    }
+    const payload = (await response.json()) as Partial<DailyStocksResponse>;
+    const updatedAtISO = typeof payload.updatedAtISO === "string" ? payload.updatedAtISO : null;
+    setDailyStockUpdatedAt(updatedAtISO);
+  };
+
+  const saveOrdersToServer = async (entries: OrderEntry[]) => {
+    const response = await fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries }),
+    });
+    if (!response.ok) {
+      throw new Error("受注一覧の保存に失敗しました。");
+    }
+    const payload = (await response.json()) as Partial<OrdersResponse>;
+    const updatedAtISO = typeof payload.updatedAtISO === "string" ? payload.updatedAtISO : null;
+    setOrderUpdatedAt(updatedAtISO);
+  };
+
   const handleDailyStockImport = async (file: File) => {
     setDailyStockImportError(null);
     setDailyStockImportNote(null);
     const rows = await readFirstSheetRows(file);
     const result = parseDailyStockRows(rows);
+    await saveDailyStocksToServer(result.entries);
     setDailyStocks(result.entries);
     setDailyStockImportNote(
       `日別在庫を${result.entries.length}件取り込みました。` +
@@ -1313,6 +1361,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setOrderImportNote(null);
     const rows = await readFirstSheetRows(file);
     const result = parseOrderRows(rows);
+    await saveOrdersToServer(result.entries);
     setOrders(result.entries);
     setOrderImportNote(
       `受注一覧を${result.entries.length}件取り込みました。` +
@@ -1401,6 +1450,29 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       }
     };
     void loadPlan();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadImportedData = async () => {
+      try {
+        const [dailyResponse, orderResponse] = await Promise.all([fetch("/api/daily-stocks"), fetch("/api/orders")]);
+        if (!dailyResponse.ok || !orderResponse.ok) return;
+        const dailyPayload = (await dailyResponse.json()) as Partial<DailyStocksResponse>;
+        const orderPayload = (await orderResponse.json()) as Partial<OrdersResponse>;
+        if (cancelled) return;
+        setDailyStocks(Array.isArray(dailyPayload.entries) ? dailyPayload.entries : []);
+        setOrders(Array.isArray(orderPayload.entries) ? orderPayload.entries : []);
+        setDailyStockUpdatedAt(typeof dailyPayload.updatedAtISO === "string" ? dailyPayload.updatedAtISO : null);
+        setOrderUpdatedAt(typeof orderPayload.updatedAtISO === "string" ? orderPayload.updatedAtISO : null);
+      } catch {
+        // 読み込み失敗時は既定値を維持
+      }
+    };
+    void loadImportedData();
     return () => {
       cancelled = true;
     };
@@ -3145,6 +3217,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         <CardContent className="space-y-4 text-sm">
           <div className="space-y-2">
             <div className="font-medium text-slate-700">日別在庫（yyyyMMdd / 品目コード / 在庫数）</div>
+            <div className="text-xs text-muted-foreground">
+              最終更新: {formatUpdatedAt(dailyStockUpdatedAt)}
+            </div>
             <Input
               key={`daily-stock-${dailyStockInputKey}`}
               type="file"
@@ -3223,6 +3298,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           </div>
           <div className="space-y-2">
             <div className="font-medium text-slate-700">受注一覧（納品日 / 出荷日 / 品目コード / 受注数）</div>
+            <div className="text-xs text-muted-foreground">最終更新: {formatUpdatedAt(orderUpdatedAt)}</div>
             <Input
               key={`orders-${orderInputKey}`}
               type="file"

@@ -4,7 +4,15 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import react from "@vitejs/plugin-react";
 import { GoogleGenAI } from "@google/genai";
-import { loadPlanPayload, openPlanDatabase, savePlanPayload } from "./scripts/plan-db.js";
+import {
+  loadDailyStocks,
+  loadOrders,
+  loadPlanPayload,
+  openPlanDatabase,
+  saveDailyStocks,
+  saveOrders,
+  savePlanPayload,
+} from "./scripts/plan-db.js";
 
 type MiddlewareRequest = {
   method?: string;
@@ -253,6 +261,132 @@ const createPlanApiMiddleware = () => {
   };
 };
 
+const createDailyStocksApiMiddleware = () => {
+  return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    if (req.method === "GET") {
+      let db;
+      try {
+        db = await openPlanDatabase();
+        const payload = loadDailyStocks(db);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify(payload));
+      } catch (error) {
+        console.error("Failed to read daily stocks:", error);
+        res.statusCode = 500;
+        res.end("Failed to read daily stocks.");
+      } finally {
+        db?.close();
+      }
+      return;
+    }
+
+    if (req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk: any) => {
+        body += chunk.toString("utf-8");
+      });
+      req.on("end", async () => {
+        let parsed: { entries?: unknown };
+        try {
+          parsed = JSON.parse(body || "{}") as { entries?: unknown };
+        } catch {
+          res.statusCode = 400;
+          res.end("Invalid JSON payload.");
+          return;
+        }
+        const entries = Array.isArray(parsed.entries) ? parsed.entries : null;
+        if (!entries) {
+          res.statusCode = 400;
+          res.end("Invalid daily stocks payload.");
+          return;
+        }
+        let db;
+        try {
+          db = await openPlanDatabase();
+          const updatedAtISO = saveDailyStocks(db, entries);
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ updatedAtISO }));
+        } catch (error) {
+          console.error("Failed to save daily stocks:", error);
+          res.statusCode = 500;
+          res.end("Failed to save daily stocks.");
+        } finally {
+          db?.close();
+        }
+      });
+      return;
+    }
+
+    res.statusCode = 405;
+    res.end("Method Not Allowed");
+  };
+};
+
+const createOrdersApiMiddleware = () => {
+  return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    if (req.method === "GET") {
+      let db;
+      try {
+        db = await openPlanDatabase();
+        const payload = loadOrders(db);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify(payload));
+      } catch (error) {
+        console.error("Failed to read orders:", error);
+        res.statusCode = 500;
+        res.end("Failed to read orders.");
+      } finally {
+        db?.close();
+      }
+      return;
+    }
+
+    if (req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk: any) => {
+        body += chunk.toString("utf-8");
+      });
+      req.on("end", async () => {
+        let parsed: { entries?: unknown };
+        try {
+          parsed = JSON.parse(body || "{}") as { entries?: unknown };
+        } catch {
+          res.statusCode = 400;
+          res.end("Invalid JSON payload.");
+          return;
+        }
+        const entries = Array.isArray(parsed.entries) ? parsed.entries : null;
+        if (!entries) {
+          res.statusCode = 400;
+          res.end("Invalid orders payload.");
+          return;
+        }
+        let db;
+        try {
+          db = await openPlanDatabase();
+          const updatedAtISO = saveOrders(db, entries);
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ updatedAtISO }));
+        } catch (error) {
+          console.error("Failed to save orders:", error);
+          res.statusCode = 500;
+          res.end("Failed to save orders.");
+        } finally {
+          db?.close();
+        }
+      });
+      return;
+    }
+
+    res.statusCode = 405;
+    res.end("Method Not Allowed");
+  };
+};
+
 const createGeminiProxyMiddleware = (env: { GEMINI_API_KEY?: string; GEMINI_MODEL?: string }) => {
   let isBusy = false;
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
@@ -344,12 +478,16 @@ export default defineConfig(({ mode }) => {
         name: "plan-and-gemini-api",
         configureServer(server) {
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
+          server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
+          server.middlewares.use("/api/orders", createOrdersApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
         },
         configurePreviewServer(server) {
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
+          server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
+          server.middlewares.use("/api/orders", createOrdersApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
