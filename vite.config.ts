@@ -6,10 +6,12 @@ import react from "@vitejs/plugin-react";
 import { GoogleGenAI } from "@google/genai";
 import {
   loadDailyStocks,
+  loadImportHeaderOverrides,
   loadOrders,
   loadPlanPayload,
   openPlanDatabase,
   saveDailyStocks,
+  saveImportHeaderOverrides,
   saveOrders,
   savePlanPayload,
 } from "./scripts/plan-db.js";
@@ -387,6 +389,63 @@ const createOrdersApiMiddleware = () => {
   };
 };
 
+const createImportHeadersApiMiddleware = () => {
+  return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    if (req.method === "GET") {
+      let db;
+      try {
+        db = await openPlanDatabase();
+        const payload = loadImportHeaderOverrides(db);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify(payload));
+      } catch (error) {
+        console.error("Failed to read import headers:", error);
+        res.statusCode = 500;
+        res.end("Failed to read import headers.");
+      } finally {
+        db?.close();
+      }
+      return;
+    }
+
+    if (req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk: any) => {
+        body += chunk.toString("utf-8");
+      });
+      req.on("end", async () => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(body || "{}");
+        } catch {
+          res.statusCode = 400;
+          res.end("Invalid JSON payload.");
+          return;
+        }
+        let db;
+        try {
+          db = await openPlanDatabase();
+          const saved = saveImportHeaderOverrides(db, parsed);
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify(saved));
+        } catch (error) {
+          console.error("Failed to save import headers:", error);
+          res.statusCode = 500;
+          res.end("Failed to save import headers.");
+        } finally {
+          db?.close();
+        }
+      });
+      return;
+    }
+
+    res.statusCode = 405;
+    res.end("Method Not Allowed");
+  };
+};
+
 const createGeminiProxyMiddleware = (env: { GEMINI_API_KEY?: string; GEMINI_MODEL?: string }) => {
   let isBusy = false;
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
@@ -480,6 +539,7 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
           server.middlewares.use("/api/orders", createOrdersApiMiddleware());
+          server.middlewares.use("/api/import-headers", createImportHeadersApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
@@ -488,6 +548,7 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
           server.middlewares.use("/api/orders", createOrdersApiMiddleware());
+          server.middlewares.use("/api/import-headers", createImportHeadersApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));

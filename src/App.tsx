@@ -210,6 +210,72 @@ type OrdersResponse = {
   entries: OrderEntry[];
 };
 
+type ImportHeaderOverrides = {
+  dailyStock: {
+    date: string;
+    itemCode: string;
+    stock: string;
+  };
+  orders: {
+    deliveryDate: string;
+    shipDate: string;
+    itemCode: string;
+    quantity: string;
+  };
+};
+
+const DEFAULT_IMPORT_HEADER_OVERRIDES: ImportHeaderOverrides = {
+  dailyStock: {
+    date: "",
+    itemCode: "",
+    stock: "",
+  },
+  orders: {
+    deliveryDate: "",
+    shipDate: "",
+    itemCode: "",
+    quantity: "",
+  },
+};
+
+const normalizeImportHeaderOverrides = (payload?: Partial<ImportHeaderOverrides> | null): ImportHeaderOverrides => ({
+  dailyStock: {
+    date: typeof payload?.dailyStock?.date === "string" ? payload.dailyStock.date : "",
+    itemCode: typeof payload?.dailyStock?.itemCode === "string" ? payload.dailyStock.itemCode : "",
+    stock: typeof payload?.dailyStock?.stock === "string" ? payload.dailyStock.stock : "",
+  },
+  orders: {
+    deliveryDate: typeof payload?.orders?.deliveryDate === "string" ? payload.orders.deliveryDate : "",
+    shipDate: typeof payload?.orders?.shipDate === "string" ? payload.orders.shipDate : "",
+    itemCode: typeof payload?.orders?.itemCode === "string" ? payload.orders.itemCode : "",
+    quantity: typeof payload?.orders?.quantity === "string" ? payload.orders.quantity : "",
+  },
+});
+
+type InfoTooltipProps = {
+  text: string;
+};
+
+const InfoTooltip = ({ text }: InfoTooltipProps) => (
+  <span className="group relative inline-flex h-4 w-4 items-center justify-center text-slate-500">
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      className="h-4 w-4"
+      fill="currentColor"
+    >
+      <path
+        fillRule="evenodd"
+        d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.75a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM9 9.5a.75.75 0 011.5 0v5a.75.75 0 01-1.5 0v-5z"
+        clipRule="evenodd"
+      />
+    </svg>
+    <span className="pointer-events-none absolute left-1/2 top-6 z-10 w-56 -translate-x-1/2 rounded bg-slate-900 px-2 py-1 text-[11px] text-white opacity-0 shadow transition-opacity group-hover:opacity-100 whitespace-pre-line">
+      {text}
+    </span>
+  </span>
+);
+
 const SAMPLE_MATERIALS: Material[] = [
   { id: "MAT-A", name: "原料A", unit: "kg" },
   { id: "MAT-B", name: "原料B", unit: "kg" },
@@ -967,17 +1033,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [orderImportError, setOrderImportError] = useState<string | null>(null);
   const [dailyStockInputKey, setDailyStockInputKey] = useState(0);
   const [orderInputKey, setOrderInputKey] = useState(0);
-  const [dailyStockHeaderOverrides, setDailyStockHeaderOverrides] = useState({
-    date: "",
-    itemCode: "",
-    stock: "",
+  const [dailyStockHeaderOverrides, setDailyStockHeaderOverrides] = useState(
+    DEFAULT_IMPORT_HEADER_OVERRIDES.dailyStock
+  );
+  const [orderHeaderOverrides, setOrderHeaderOverrides] = useState(DEFAULT_IMPORT_HEADER_OVERRIDES.orders);
+  const [importHeaderSaveNote, setImportHeaderSaveNote] = useState<{ daily: string | null; order: string | null }>({
+    daily: null,
+    order: null,
   });
-  const [orderHeaderOverrides, setOrderHeaderOverrides] = useState({
-    deliveryDate: "",
-    shipDate: "",
-    itemCode: "",
-    quantity: "",
+  const [importHeaderSaveError, setImportHeaderSaveError] = useState<{ daily: string | null; order: string | null }>({
+    daily: null,
+    order: null,
   });
+  const [importHeaderSaveBusy, setImportHeaderSaveBusy] = useState(false);
   const [itemNameDraft, setItemNameDraft] = useState("");
   const [itemPublicIdDraft, setItemPublicIdDraft] = useState("");
   const [itemUnitDraft, setItemUnitDraft] = useState<ItemUnit>("cs");
@@ -1341,6 +1409,30 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setOrderUpdatedAt(updatedAtISO);
   };
 
+  const saveImportHeaderOverrides = async (target: "daily" | "order") => {
+    setImportHeaderSaveBusy(true);
+    setImportHeaderSaveNote((prev) => ({ ...prev, [target]: null }));
+    setImportHeaderSaveError((prev) => ({ ...prev, [target]: null }));
+    try {
+      const response = await fetch("/api/import-headers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dailyStock: dailyStockHeaderOverrides,
+          orders: orderHeaderOverrides,
+        } satisfies ImportHeaderOverrides),
+      });
+      if (!response.ok) {
+        throw new Error("ヘッダー指定の保存に失敗しました。");
+      }
+      setImportHeaderSaveNote((prev) => ({ ...prev, [target]: "ヘッダー指定を保存しました。" }));
+    } catch {
+      setImportHeaderSaveError((prev) => ({ ...prev, [target]: "ヘッダー指定の保存に失敗しました。" }));
+    } finally {
+      setImportHeaderSaveBusy(false);
+    }
+  };
+
   const handleDailyStockImport = async (file: File) => {
     setDailyStockImportError(null);
     setDailyStockImportNote(null);
@@ -1473,6 +1565,27 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       }
     };
     void loadImportedData();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadImportHeaders = async () => {
+      try {
+        const response = await fetch("/api/import-headers");
+        if (!response.ok) return;
+        const payload = (await response.json()) as Partial<ImportHeaderOverrides>;
+        if (cancelled) return;
+        const normalized = normalizeImportHeaderOverrides(payload);
+        setDailyStockHeaderOverrides(normalized.dailyStock);
+        setOrderHeaderOverrides(normalized.orders);
+      } catch {
+        // 読み込み失敗時は既定値を維持
+      }
+    };
+    void loadImportHeaders();
     return () => {
       cancelled = true;
     };
@@ -3202,6 +3315,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     </div>
   );
 
+  const importHeaderTooltips = {
+    dailyStock: {
+      date: "在庫を計上する対象日。\n形式: yyyyMMdd または yyyy-MM-dd",
+      itemCode: "在庫を紐づける品目コード。\n形式: 品目マスタの品目コードと一致する文字列",
+      stock: "対象日の在庫数量。\n形式: 数値（小数可）",
+    },
+    orders: {
+      deliveryDate: "受注の納品予定日。\n形式: yyyyMMdd または yyyy-MM-dd",
+      shipDate: "受注の出荷予定日。\n形式: yyyyMMdd または yyyy-MM-dd",
+      itemCode: "受注対象の品目コード。\n形式: 品目マスタの品目コードと一致する文字列",
+      quantity: "受注の数量。\n形式: 数値（小数可）",
+    },
+  };
+
   const importView = (
     <div className="mx-auto w-full max-w-3xl space-y-4">
       <div className="space-y-1">
@@ -3212,183 +3339,230 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       </div>
       <Card className="rounded-2xl shadow-sm">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">取込対象</CardTitle>
+          <CardTitle className="text-base font-medium">日別在庫（yyyyMMdd / 品目コード / 在庫数）</CardTitle>
+          <div className="text-xs text-muted-foreground">最終更新: {formatUpdatedAt(dailyStockUpdatedAt)}</div>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
-          <div className="space-y-2">
-            <div className="font-medium text-slate-700">日別在庫（yyyyMMdd / 品目コード / 在庫数）</div>
-            <div className="text-xs text-muted-foreground">
-              最終更新: {formatUpdatedAt(dailyStockUpdatedAt)}
-            </div>
-            <Input
-              key={`daily-stock-${dailyStockInputKey}`}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                try {
-                  await handleDailyStockImport(file);
-                } catch (error) {
-                  const message = error instanceof Error ? error.message : "日別在庫の取り込みに失敗しました。";
-                  setDailyStockImportError(message);
-                }
-              }}
-            />
-            <div className="rounded-lg border bg-muted/10 p-3 text-xs">
-              <div className="font-semibold text-slate-700">ヘッダー指定（任意）</div>
-              <div className="text-muted-foreground">
-                カンマ区切りで列名候補を追加できます。入力した候補を優先的に検索します。
-              </div>
-              <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                <div className="space-y-1">
-                  <div className="text-[11px] font-medium text-slate-600">日付</div>
-                  <Input
-                    value={dailyStockHeaderOverrides.date}
-                    placeholder="例: 取込日, 入荷日"
-                    onChange={(e) =>
-                      setDailyStockHeaderOverrides((prev) => ({
-                        ...prev,
-                        date: e.target.value,
-                      }))
-                    }
-                  />
-                  <div className="text-[11px] text-muted-foreground">在庫を計上する対象日。</div>
-                </div>
-                <div className="space-y-1">
-                  <div className="text-[11px] font-medium text-slate-600">品目コード</div>
-                  <Input
-                    value={dailyStockHeaderOverrides.itemCode}
-                    placeholder="例: 商品コード, SKU"
-                    onChange={(e) =>
-                      setDailyStockHeaderOverrides((prev) => ({
-                        ...prev,
-                        itemCode: e.target.value,
-                      }))
-                    }
-                  />
-                  <div className="text-[11px] text-muted-foreground">在庫を紐づける品目。</div>
-                </div>
-                <div className="space-y-1">
-                  <div className="text-[11px] font-medium text-slate-600">在庫数</div>
-                  <Input
-                    value={dailyStockHeaderOverrides.stock}
-                    placeholder="例: 在庫数量, 残数"
-                    onChange={(e) =>
-                      setDailyStockHeaderOverrides((prev) => ({
-                        ...prev,
-                        stock: e.target.value,
-                      }))
-                    }
-                  />
-                  <div className="text-[11px] text-muted-foreground">対象日の在庫数量。</div>
+          <Input
+            key={`daily-stock-${dailyStockInputKey}`}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              try {
+                await handleDailyStockImport(file);
+              } catch (error) {
+                const message = error instanceof Error ? error.message : "日別在庫の取り込みに失敗しました。";
+                setDailyStockImportError(message);
+              }
+            }}
+          />
+          <div className="rounded-lg border bg-muted/10 p-3 text-xs">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="space-y-1">
+                <div className="font-semibold text-slate-700">ヘッダー指定（任意）</div>
+                <div className="text-muted-foreground">
+                  カンマ区切りで列名候補を追加できます。入力した候補を優先的に検索します。
                 </div>
               </div>
+              <Button size="sm" onClick={() => void saveImportHeaderOverrides("daily")} disabled={importHeaderSaveBusy}>
+                設定を保存
+              </Button>
             </div>
-            {dailyStockImportNote ? (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-                {dailyStockImportNote}
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                  日付
+                  <InfoTooltip text={importHeaderTooltips.dailyStock.date} />
+                </div>
+                <Input
+                  value={dailyStockHeaderOverrides.date}
+                  placeholder="例: 取込日, 入荷日"
+                  onChange={(e) =>
+                    setDailyStockHeaderOverrides((prev) => ({
+                      ...prev,
+                      date: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                  品目コード
+                  <InfoTooltip text={importHeaderTooltips.dailyStock.itemCode} />
+                </div>
+                <Input
+                  value={dailyStockHeaderOverrides.itemCode}
+                  placeholder="例: 商品コード, SKU"
+                  onChange={(e) =>
+                    setDailyStockHeaderOverrides((prev) => ({
+                      ...prev,
+                      itemCode: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                  在庫数
+                  <InfoTooltip text={importHeaderTooltips.dailyStock.stock} />
+                </div>
+                <Input
+                  value={dailyStockHeaderOverrides.stock}
+                  placeholder="例: 在庫数量, 残数"
+                  onChange={(e) =>
+                    setDailyStockHeaderOverrides((prev) => ({
+                      ...prev,
+                      stock: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            {importHeaderSaveNote.daily ? (
+              <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                {importHeaderSaveNote.daily}
               </div>
             ) : null}
-            {dailyStockImportError ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                {dailyStockImportError}
+            {importHeaderSaveError.daily ? (
+              <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+                {importHeaderSaveError.daily}
               </div>
             ) : null}
           </div>
-          <div className="space-y-2">
-            <div className="font-medium text-slate-700">受注一覧（納品日 / 出荷日 / 品目コード / 受注数）</div>
-            <div className="text-xs text-muted-foreground">最終更新: {formatUpdatedAt(orderUpdatedAt)}</div>
-            <Input
-              key={`orders-${orderInputKey}`}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                try {
-                  await handleOrderImport(file);
-                } catch (error) {
-                  const message = error instanceof Error ? error.message : "受注一覧の取り込みに失敗しました。";
-                  setOrderImportError(message);
-                }
-              }}
-            />
-            <div className="rounded-lg border bg-muted/10 p-3 text-xs">
-              <div className="font-semibold text-slate-700">ヘッダー指定（任意）</div>
-              <div className="text-muted-foreground">
-                カンマ区切りで列名候補を追加できます。入力した候補を優先的に検索します。
+          {dailyStockImportNote ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+              {dailyStockImportNote}
+            </div>
+          ) : null}
+          {dailyStockImportError ? (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+              {dailyStockImportError}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+      <Card className="rounded-2xl shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium">受注一覧（納品日 / 出荷日 / 品目コード / 受注数）</CardTitle>
+          <div className="text-xs text-muted-foreground">最終更新: {formatUpdatedAt(orderUpdatedAt)}</div>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <Input
+            key={`orders-${orderInputKey}`}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              try {
+                await handleOrderImport(file);
+              } catch (error) {
+                const message = error instanceof Error ? error.message : "受注一覧の取り込みに失敗しました。";
+                setOrderImportError(message);
+              }
+            }}
+          />
+          <div className="rounded-lg border bg-muted/10 p-3 text-xs">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="space-y-1">
+                <div className="font-semibold text-slate-700">ヘッダー指定（任意）</div>
+                <div className="text-muted-foreground">
+                  カンマ区切りで列名候補を追加できます。入力した候補を優先的に検索します。
+                </div>
               </div>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <div className="text-[11px] font-medium text-slate-600">納品日</div>
-                  <Input
-                    value={orderHeaderOverrides.deliveryDate}
-                    placeholder="例: 納品予定, 納期"
-                    onChange={(e) =>
-                      setOrderHeaderOverrides((prev) => ({
-                        ...prev,
-                        deliveryDate: e.target.value,
-                      }))
-                    }
-                  />
-                  <div className="text-[11px] text-muted-foreground">受注の納品予定日。</div>
+              <Button size="sm" onClick={() => void saveImportHeaderOverrides("order")} disabled={importHeaderSaveBusy}>
+                設定を保存
+              </Button>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="space-y-1">
+                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                  納品日
+                  <InfoTooltip text={importHeaderTooltips.orders.deliveryDate} />
                 </div>
-                <div className="space-y-1">
-                  <div className="text-[11px] font-medium text-slate-600">出荷日</div>
-                  <Input
-                    value={orderHeaderOverrides.shipDate}
-                    placeholder="例: 出荷予定, 発送日"
-                    onChange={(e) =>
-                      setOrderHeaderOverrides((prev) => ({
-                        ...prev,
-                        shipDate: e.target.value,
-                      }))
-                    }
-                  />
-                  <div className="text-[11px] text-muted-foreground">受注の出荷予定日。</div>
+                <Input
+                  value={orderHeaderOverrides.deliveryDate}
+                  placeholder="例: 納品予定, 納期"
+                  onChange={(e) =>
+                    setOrderHeaderOverrides((prev) => ({
+                      ...prev,
+                      deliveryDate: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                  出荷日
+                  <InfoTooltip text={importHeaderTooltips.orders.shipDate} />
                 </div>
-                <div className="space-y-1">
-                  <div className="text-[11px] font-medium text-slate-600">品目コード</div>
-                  <Input
-                    value={orderHeaderOverrides.itemCode}
-                    placeholder="例: 商品コード, SKU"
-                    onChange={(e) =>
-                      setOrderHeaderOverrides((prev) => ({
-                        ...prev,
-                        itemCode: e.target.value,
-                      }))
-                    }
-                  />
-                  <div className="text-[11px] text-muted-foreground">受注対象の品目。</div>
+                <Input
+                  value={orderHeaderOverrides.shipDate}
+                  placeholder="例: 出荷予定, 発送日"
+                  onChange={(e) =>
+                    setOrderHeaderOverrides((prev) => ({
+                      ...prev,
+                      shipDate: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                  品目コード
+                  <InfoTooltip text={importHeaderTooltips.orders.itemCode} />
                 </div>
-                <div className="space-y-1">
-                  <div className="text-[11px] font-medium text-slate-600">受注数</div>
-                  <Input
-                    value={orderHeaderOverrides.quantity}
-                    placeholder="例: 注文数, 数量"
-                    onChange={(e) =>
-                      setOrderHeaderOverrides((prev) => ({
-                        ...prev,
-                        quantity: e.target.value,
-                      }))
-                    }
-                  />
-                  <div className="text-[11px] text-muted-foreground">受注の数量。</div>
+                <Input
+                  value={orderHeaderOverrides.itemCode}
+                  placeholder="例: 商品コード, SKU"
+                  onChange={(e) =>
+                    setOrderHeaderOverrides((prev) => ({
+                      ...prev,
+                      itemCode: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                  受注数
+                  <InfoTooltip text={importHeaderTooltips.orders.quantity} />
                 </div>
+                <Input
+                  value={orderHeaderOverrides.quantity}
+                  placeholder="例: 注文数, 数量"
+                  onChange={(e) =>
+                    setOrderHeaderOverrides((prev) => ({
+                      ...prev,
+                      quantity: e.target.value,
+                    }))
+                  }
+                />
               </div>
             </div>
-            {orderImportNote ? (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-                {orderImportNote}
+            {importHeaderSaveNote.order ? (
+              <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                {importHeaderSaveNote.order}
               </div>
             ) : null}
-            {orderImportError ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                {orderImportError}
+            {importHeaderSaveError.order ? (
+              <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+                {importHeaderSaveError.order}
               </div>
             ) : null}
           </div>
+          {orderImportNote ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+              {orderImportNote}
+            </div>
+          ) : null}
+          {orderImportError ? (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+              {orderImportError}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </div>
