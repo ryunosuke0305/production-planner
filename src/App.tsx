@@ -1076,6 +1076,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [constraintsDraft, setConstraintsDraft] = useState("");
   const [constraintsBusy, setConstraintsBusy] = useState(false);
   const [constraintsError, setConstraintsError] = useState<string | null>(null);
+  const [geminiHorizonDays, setGeminiHorizonDays] = useState(30);
+  const [geminiHorizonDaysDraft, setGeminiHorizonDaysDraft] = useState("30");
   const [pendingBlockId, setPendingBlockId] = useState<string | null>(null);
 
   const modalBodyClassName = "px-6 py-4";
@@ -1488,6 +1490,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const buildPlanContext = () => {
+    const horizonDays = Math.max(1, Math.floor(geminiHorizonDays));
+    const horizonEndISO = toISODate(addDays(new Date(), horizonDays));
+    const horizonEndIndex = planCalendarDays.findIndex((day) => day.date > horizonEndISO);
+    const horizonCalendarDays =
+      horizonEndIndex === -1 ? planCalendarDays : planCalendarDays.slice(0, horizonEndIndex);
+    const horizonWeekDates = horizonCalendarDays.map((day) => day.date);
+    const horizonSlotCount = horizonCalendarDays.length * planSlotsPerDay;
+    const horizonSlotIndexToLabel = planSlotIndexToLabel.slice(0, horizonSlotCount);
     const blockSummaries = blocks.map((b) => ({
       id: b.id,
       itemId: (itemMap.get(b.itemId)?.publicId ?? "").trim() || b.itemId,
@@ -1515,20 +1525,28 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         planCalendar.slotsPerDay
       )?.toISOString(),
     }));
+    const filteredBlocks = blockSummaries.filter((block) => {
+      if (!block.startAt) return false;
+      return block.startAt.slice(0, 10) <= horizonEndISO;
+    });
+    const filteredDailyStocks = dailyStocks.filter((entry) => entry.date <= horizonEndISO);
+    const filteredOrders = orders.filter(
+      (entry) => entry.deliveryDate <= horizonEndISO || entry.shipDate <= horizonEndISO
+    );
     const eodStocks = items.map((item) => ({
       itemId: (item.publicId ?? "").trim() || item.id,
-      dates: planWeekDates,
-      stocks: eodStockByItem[item.id] ?? [],
+      dates: horizonWeekDates,
+      stocks: horizonWeekDates.map((_, idx) => eodStockByItem[item.id]?.[idx] ?? 0),
     }));
 
     return JSON.stringify(
       {
-        weekStartISO: planWeekDates[0],
+        weekStartISO: horizonWeekDates[0] ?? planWeekDates[0],
         density: planDensity,
         slotsPerDay: planSlotsPerDay,
-        slotCount: planSlotCount,
-        slotIndexToLabel: planSlotIndexToLabel,
-        calendarDays: planCalendarDays,
+        slotCount: horizonSlotCount,
+        slotIndexToLabel: horizonSlotIndexToLabel,
+        calendarDays: horizonCalendarDays,
         materials: materialsMaster,
         items: items.map((item) => ({
           itemId: (item.publicId ?? "").trim() || item.id,
@@ -1543,19 +1561,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             materialName: materialMap.get(line.materialId)?.name ?? "未登録原料",
           })),
         })),
-        dailyStocks: dailyStocks.map((entry) => ({
+        dailyStocks: filteredDailyStocks.map((entry) => ({
           date: entry.date,
           itemCode: entry.itemCode,
           stock: entry.stock,
         })),
-        orders: orders.map((entry) => ({
+        orders: filteredOrders.map((entry) => ({
           deliveryDate: entry.deliveryDate,
           shipDate: entry.shipDate,
           itemCode: entry.itemCode,
           quantity: entry.quantity,
         })),
         eodStocks,
-        blocks: blockSummaries,
+        blocks: filteredBlocks,
       },
       null,
       2
@@ -1783,6 +1801,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setConstraintsBusy(true);
     setConstraintsError(null);
     try {
+      const nextHorizonDays = Math.max(1, Math.floor(safeNumber(geminiHorizonDaysDraft) || 30));
       const response = await fetch("/api/constraints", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1792,6 +1811,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         throw new Error("保存に失敗しました。");
       }
       setConstraintsText(constraintsDraft);
+      setGeminiHorizonDays(nextHorizonDays);
+      setGeminiHorizonDaysDraft(String(nextHorizonDays));
       setConstraintsOpen(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "保存に失敗しました。";
@@ -2622,6 +2643,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 size="sm"
                 onClick={() => {
                   setConstraintsDraft(constraintsText);
+                  setGeminiHorizonDaysDraft(String(geminiHorizonDays));
                   setConstraintsError(null);
                   setConstraintsOpen(true);
                 }}
@@ -2686,6 +2708,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               <div className="space-y-3">
                 <div className="text-sm text-muted-foreground">
                   Geminiへ送る追加の制約条件を入力してください。
+                </div>
+                <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-sm font-medium">計画データの対象日数</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={geminiHorizonDaysDraft}
+                      onChange={(e) => setGeminiHorizonDaysDraft(e.target.value)}
+                      className="w-28"
+                    />
+                    <span className="text-sm text-muted-foreground">日先まで</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    今日を起点に、指定日数分の計画データのみをGeminiへ渡します。
+                  </div>
                 </div>
                 <Textarea
                   value={constraintsDraft}
