@@ -181,11 +181,11 @@ API でやり取りする JSON は従来と同じ構造で、保存先は SQLite
       "publicId": "ITEM-001",
       "name": "Item A",
       "unit": "cs",
-      "stock": 140,
       "planningPolicy": "make_to_stock",
       "safetyStock": 20,
-      "reorderPoint": 60,
-      "lotSize": 50,
+      "shelfLifeDays": 30,
+      "productionEfficiency": 40,
+      "notes": "定番商品のため平準化。",
       "recipe": [
         { "materialId": "MAT-A", "perUnit": 0.25, "unit": "kg" }
       ]
@@ -206,7 +206,7 @@ API でやり取りする JSON は従来と同じ構造で、保存先は SQLite
 ```
 meta(key TEXT PRIMARY KEY, value TEXT)
 materials(id TEXT PRIMARY KEY, name TEXT, unit TEXT)
-items(id TEXT PRIMARY KEY, public_id TEXT, name TEXT, unit TEXT, stock REAL, planning_policy TEXT, safety_stock REAL, reorder_point REAL, lot_size REAL)
+items(id TEXT PRIMARY KEY, public_id TEXT, name TEXT, unit TEXT, planning_policy TEXT, safety_stock REAL, shelf_life_days REAL, production_efficiency REAL, notes TEXT)
 item_recipes(item_id TEXT, material_id TEXT, per_unit REAL, unit TEXT, PRIMARY KEY(item_id, material_id))
 blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, amount REAL, memo TEXT)
 ```
@@ -223,7 +223,7 @@ blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, amount REA
 
 ```json
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.2.0",
   "meta": {
     "exportedAtISO": "2026-01-14T00:00:00.000Z",
     "timezone": "Asia/Tokyo",
@@ -241,7 +241,9 @@ blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, amount REA
       "id": "A",
       "name": "Item A",
       "unit": "cs",
-      "stock": 140,
+      "shelfLifeDays": 30,
+      "productionEfficiency": 40,
+      "notes": "定番商品のため平準化。",
       "recipe": [
         {
           "materialId": "MAT-A",
