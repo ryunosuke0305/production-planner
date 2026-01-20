@@ -73,6 +73,7 @@ function parsePlanPayload(raw) {
       if (!entry || typeof entry !== "object") return null;
       const item = entry;
       const id = asString(item.id).trim();
+      const publicId = asString(item.publicId || item.public_id || item.itemKey || item.item_key).trim();
       const name = asString(item.name).trim();
       const unit = asString(item.unit).trim();
       if (!id || !name || !unit) return null;
@@ -96,6 +97,7 @@ function parsePlanPayload(raw) {
         .filter(Boolean);
       return {
         id,
+        publicId: publicId || undefined,
         name,
         unit,
         stock: asNumber(item.stock, 0),

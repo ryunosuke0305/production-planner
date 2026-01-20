@@ -50,6 +50,7 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 ## データ保存について
 
 - 画面上の計画データは開発サーバー経由で `data/plan.sqlite` に保存され、再読み込みしても保持されます。
+- 品目マスタで入力した品目コード（品目ID）は SQLite に保存され、日別在庫や受注一覧の照合に利用されます。
 - 既存の `data/plan.json` を SQLite に移行する場合は `npm run migrate:plan` を実行してください（再実行しても最新の内容で上書きされます）。
 - `.env` は `data/` ディレクトリにまとめて配置してください（例: `data/.env`）。
 - `GEMINI_API_KEY` を設定するとチャット機能が利用できます。モデルを変えたい場合は `GEMINI_MODEL` または `VITE_GEMINI_MODEL` を設定してください。
@@ -170,6 +171,7 @@ API でやり取りする JSON は従来と同じ構造で、保存先は SQLite
   "items": [
     {
       "id": "A",
+      "publicId": "ITEM-001",
       "name": "Item A",
       "unit": "cs",
       "stock": 140,
@@ -197,7 +199,7 @@ API でやり取りする JSON は従来と同じ構造で、保存先は SQLite
 ```
 meta(key TEXT PRIMARY KEY, value TEXT)
 materials(id TEXT PRIMARY KEY, name TEXT, unit TEXT)
-items(id TEXT PRIMARY KEY, name TEXT, unit TEXT, stock REAL, planning_policy TEXT, safety_stock REAL, reorder_point REAL, lot_size REAL)
+items(id TEXT PRIMARY KEY, public_id TEXT, name TEXT, unit TEXT, stock REAL, planning_policy TEXT, safety_stock REAL, reorder_point REAL, lot_size REAL)
 item_recipes(item_id TEXT, material_id TEXT, per_unit REAL, unit TEXT, PRIMARY KEY(item_id, material_id))
 blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, amount REAL, memo TEXT)
 ```
