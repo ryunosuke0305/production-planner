@@ -61,11 +61,11 @@ type Item = {
   publicId?: string;
   name: string;
   unit: ItemUnit;
-  stock: number;
   planningPolicy: PlanningPolicy;
   safetyStock: number;
-  reorderPoint: number;
-  lotSize: number;
+  shelfLifeDays: number;
+  productionEfficiency: number;
+  notes: string;
   recipe: RecipeLine[];
 };
 
@@ -89,7 +89,7 @@ type Block = {
 };
 
 type ExportPayloadV1 = {
-  schemaVersion: "1.1.0";
+  schemaVersion: "1.2.0";
   meta: {
     exportedAtISO: string;
     timezone: string;
@@ -107,11 +107,11 @@ type ExportPayloadV1 = {
     publicId?: string;
     name: string;
     unit: ItemUnit;
-    stock: number;
     planningPolicy: PlanningPolicy;
     safetyStock: number;
-    reorderPoint: number;
-    lotSize: number;
+    shelfLifeDays: number;
+    productionEfficiency: number;
+    notes: string;
     recipe: Array<{
       materialId: string;
       materialName: string;
@@ -212,11 +212,11 @@ const SAMPLE_ITEMS: Item[] = [
     id: "A",
     name: "Item A",
     unit: "cs",
-    stock: 140,
     planningPolicy: "make_to_stock",
     safetyStock: 20,
-    reorderPoint: 60,
-    lotSize: 50,
+    shelfLifeDays: 30,
+    productionEfficiency: 40,
+    notes: "定番商品のため平準化。",
     recipe: [
       { materialId: "MAT-A", perUnit: 0.25, unit: "kg" },
       { materialId: "MAT-B", perUnit: 0.5, unit: "kg" },
@@ -226,11 +226,11 @@ const SAMPLE_ITEMS: Item[] = [
     id: "B",
     name: "Item B",
     unit: "cs",
-    stock: 70,
     planningPolicy: "make_to_order",
     safetyStock: 10,
-    reorderPoint: 30,
-    lotSize: 40,
+    shelfLifeDays: 7,
+    productionEfficiency: 20,
+    notes: "受注対応中心。",
     recipe: [
       { materialId: "MAT-A", perUnit: 0.1, unit: "kg" },
       { materialId: "MAT-C", perUnit: 0.2, unit: "kg" },
@@ -240,11 +240,11 @@ const SAMPLE_ITEMS: Item[] = [
     id: "C",
     name: "Item C",
     unit: "kg",
-    stock: 320,
     planningPolicy: "make_to_stock",
     safetyStock: 50,
-    reorderPoint: 120,
-    lotSize: 100,
+    shelfLifeDays: 14,
+    productionEfficiency: 60,
+    notes: "週末の追加生産あり。",
     recipe: [
       { materialId: "MAT-D", perUnit: 0.35, unit: "kg" },
       { materialId: "MAT-E", perUnit: 0.05, unit: "kg" },
@@ -487,11 +487,24 @@ function sanitizeItems(raw: unknown): Item[] {
       const name = asString(record.name).trim();
       if (!id || !name) return null;
       const unit = asItemUnit(record.unit);
-      const stock = asNumber(record.stock);
       const planningPolicy = asPlanningPolicy(record.planningPolicy ?? record.planning_policy);
       const safetyStock = Math.max(0, asNumber(record.safetyStock ?? record.safety_stock));
-      const reorderPoint = Math.max(0, asNumber(record.reorderPoint ?? record.reorder_point));
-      const lotSize = Math.max(0, asNumber(record.lotSize ?? record.lot_size));
+      const shelfLifeDays = Math.max(
+        0,
+        asNumber(
+          record.shelfLifeDays ??
+            record.shelf_life_days ??
+            record.expirationDays ??
+            record.expiration_days ??
+            record.shelfLife ??
+            record.shelf_life
+        )
+      );
+      const productionEfficiency = Math.max(
+        0,
+        asNumber(record.productionEfficiency ?? record.production_efficiency ?? record.efficiency)
+      );
+      const notes = asString(record.notes ?? record.note ?? record.memo ?? record.remark ?? record.remarks);
       const recipe = Array.isArray(record.recipe)
         ? record.recipe
             .map((r) => {
@@ -512,11 +525,11 @@ function sanitizeItems(raw: unknown): Item[] {
         publicId: publicId || undefined,
         name,
         unit,
-        stock,
         planningPolicy,
         safetyStock,
-        reorderPoint,
-        lotSize,
+        shelfLifeDays,
+        productionEfficiency,
+        notes,
         recipe,
       } satisfies Item;
     })
@@ -823,7 +836,7 @@ function buildExportPayload(p: {
   const exportHours = p.hoursByDay[0]?.filter((hour): hour is number => hour !== null) ?? [];
 
   return {
-    schemaVersion: "1.1.0",
+    schemaVersion: "1.2.0",
     meta: {
       exportedAtISO: new Date().toISOString(),
       timezone: p.timezone,
@@ -841,11 +854,11 @@ function buildExportPayload(p: {
       publicId: it.publicId,
       name: it.name,
       unit: it.unit,
-      stock: it.stock,
       planningPolicy: it.planningPolicy,
       safetyStock: it.safetyStock,
-      reorderPoint: it.reorderPoint,
-      lotSize: it.lotSize,
+      shelfLifeDays: it.shelfLifeDays,
+      productionEfficiency: it.productionEfficiency,
+      notes: it.notes,
       recipe: it.recipe.map((r) => ({
         materialId: r.materialId,
         materialName: materialMap.get(r.materialId)?.name ?? "未登録原料",
@@ -948,21 +961,21 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [itemNameDraft, setItemNameDraft] = useState("");
   const [itemPublicIdDraft, setItemPublicIdDraft] = useState("");
   const [itemUnitDraft, setItemUnitDraft] = useState<ItemUnit>("cs");
-  const [itemStockDraft, setItemStockDraft] = useState("0");
   const [itemPlanningPolicyDraft, setItemPlanningPolicyDraft] = useState<PlanningPolicy>("make_to_stock");
   const [itemSafetyStockDraft, setItemSafetyStockDraft] = useState("0");
-  const [itemReorderPointDraft, setItemReorderPointDraft] = useState("0");
-  const [itemLotSizeDraft, setItemLotSizeDraft] = useState("0");
+  const [itemShelfLifeDaysDraft, setItemShelfLifeDaysDraft] = useState("0");
+  const [itemProductionEfficiencyDraft, setItemProductionEfficiencyDraft] = useState("0");
+  const [itemNotesDraft, setItemNotesDraft] = useState("");
   const [itemFormError, setItemFormError] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editingItemName, setEditingItemName] = useState("");
   const [editingItemPublicId, setEditingItemPublicId] = useState("");
   const [editingItemUnit, setEditingItemUnit] = useState<ItemUnit>("cs");
-  const [editingItemStock, setEditingItemStock] = useState("0");
   const [editingItemPlanningPolicy, setEditingItemPlanningPolicy] = useState<PlanningPolicy>("make_to_stock");
   const [editingItemSafetyStock, setEditingItemSafetyStock] = useState("0");
-  const [editingItemReorderPoint, setEditingItemReorderPoint] = useState("0");
-  const [editingItemLotSize, setEditingItemLotSize] = useState("0");
+  const [editingItemShelfLifeDays, setEditingItemShelfLifeDays] = useState("0");
+  const [editingItemProductionEfficiency, setEditingItemProductionEfficiency] = useState("0");
+  const [editingItemNotes, setEditingItemNotes] = useState("");
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
   const [itemModalMode, setItemModalMode] = useState<"create" | "edit">("create");
 
@@ -1152,6 +1165,24 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const amount = Math.max(0, safeNumber(formAmount));
     return calcMaterials(activeItem, amount, materialMap);
   }, [activeItem, formAmount, materialMap]);
+
+  const activeManufactureDate = useMemo(() => {
+    if (!activeBlock) return null;
+    const dateTime = slotToDateTime(
+      activeBlock.start,
+      planCalendarDays,
+      planCalendar.rawHoursByDay,
+      planCalendar.slotsPerDay
+    );
+    return dateTime ? toISODate(dateTime) : null;
+  }, [activeBlock, planCalendar.rawHoursByDay, planCalendar.slotsPerDay, planCalendarDays]);
+
+  const activeExpirationDate = useMemo(() => {
+    if (!activeItem || !activeManufactureDate) return null;
+    const base = new Date(`${activeManufactureDate}T00:00:00`);
+    if (Number.isNaN(base.getTime())) return null;
+    return toISODate(addDays(base, activeItem.shelfLifeDays ?? 0));
+  }, [activeItem, activeManufactureDate]);
 
   const activeRecipeItem = useMemo(() => {
     if (!activeRecipeItemId) return null;
@@ -1551,11 +1582,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         items: items.map((item) => ({
           itemId: (item.publicId ?? "").trim() || item.id,
           unit: item.unit,
-          stock: item.stock,
           planningPolicy: item.planningPolicy,
           safetyStock: item.safetyStock,
-          reorderPoint: item.reorderPoint,
-          lotSize: item.lotSize,
+          shelfLifeDays: item.shelfLifeDays,
+          productionEfficiency: item.productionEfficiency,
+          notes: item.notes,
           recipe: item.recipe.map((line) => ({
             ...line,
             materialName: materialMap.get(line.materialId)?.name ?? "未登録原料",
@@ -2029,11 +2060,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setItemNameDraft("");
     setItemPublicIdDraft("");
     setItemUnitDraft("cs");
-    setItemStockDraft("0");
     setItemPlanningPolicyDraft("make_to_stock");
     setItemSafetyStockDraft("0");
-    setItemReorderPointDraft("0");
-    setItemLotSizeDraft("0");
+    setItemShelfLifeDaysDraft("0");
+    setItemProductionEfficiencyDraft("0");
+    setItemNotesDraft("");
   };
 
   const openCreateItemModal = () => {
@@ -2058,20 +2089,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       setItemFormError("同じ品目コードがすでに登録されています。");
       return false;
     }
-    const stock = Math.max(0, safeNumber(itemStockDraft));
     const safetyStock = Math.max(0, safeNumber(itemSafetyStockDraft));
-    const reorderPoint = Math.max(0, safeNumber(itemReorderPointDraft));
-    const lotSize = Math.max(0, safeNumber(itemLotSizeDraft));
+    const shelfLifeDays = Math.max(0, safeNumber(itemShelfLifeDaysDraft));
+    const productionEfficiency = Math.max(0, safeNumber(itemProductionEfficiencyDraft));
     const newItem: Item = {
       id: uid("item"),
       publicId: publicId || undefined,
       name,
       unit: itemUnitDraft,
-      stock,
       planningPolicy: itemPlanningPolicyDraft,
       safetyStock,
-      reorderPoint,
-      lotSize,
+      shelfLifeDays,
+      productionEfficiency,
+      notes: itemNotesDraft.trim(),
       recipe: [],
     };
     setItems((prev) => [...prev, newItem]);
@@ -2085,11 +2115,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setEditingItemName(item.name);
     setEditingItemPublicId(item.publicId ?? "");
     setEditingItemUnit(item.unit);
-    setEditingItemStock(String(item.stock ?? 0));
     setEditingItemPlanningPolicy(item.planningPolicy ?? "make_to_stock");
     setEditingItemSafetyStock(String(item.safetyStock ?? 0));
-    setEditingItemReorderPoint(String(item.reorderPoint ?? 0));
-    setEditingItemLotSize(String(item.lotSize ?? 0));
+    setEditingItemShelfLifeDays(String(item.shelfLifeDays ?? 0));
+    setEditingItemProductionEfficiency(String(item.productionEfficiency ?? 0));
+    setEditingItemNotes(item.notes ?? "");
     setItemFormError(null);
   };
 
@@ -2098,11 +2128,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setEditingItemName("");
     setEditingItemPublicId("");
     setEditingItemUnit("cs");
-    setEditingItemStock("0");
     setEditingItemPlanningPolicy("make_to_stock");
     setEditingItemSafetyStock("0");
-    setEditingItemReorderPoint("0");
-    setEditingItemLotSize("0");
+    setEditingItemShelfLifeDays("0");
+    setEditingItemProductionEfficiency("0");
+    setEditingItemNotes("");
     setItemFormError(null);
   };
 
@@ -2127,10 +2157,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       setItemFormError("同じ品目コードがすでに登録されています。");
       return false;
     }
-    const nextStock = Math.max(0, safeNumber(editingItemStock));
     const nextSafetyStock = Math.max(0, safeNumber(editingItemSafetyStock));
-    const nextReorderPoint = Math.max(0, safeNumber(editingItemReorderPoint));
-    const nextLotSize = Math.max(0, safeNumber(editingItemLotSize));
+    const nextShelfLifeDays = Math.max(0, safeNumber(editingItemShelfLifeDays));
+    const nextProductionEfficiency = Math.max(0, safeNumber(editingItemProductionEfficiency));
+    const nextNotes = editingItemNotes.trim();
     setItems((prev) =>
       prev.map((it) =>
         it.id === editingItemId
@@ -2139,11 +2169,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               publicId: nextPublicId || undefined,
               name: nextName,
               unit: editingItemUnit,
-              stock: nextStock,
               planningPolicy: editingItemPlanningPolicy,
               safetyStock: nextSafetyStock,
-              reorderPoint: nextReorderPoint,
-              lotSize: nextLotSize,
+              shelfLifeDays: nextShelfLifeDays,
+              productionEfficiency: nextProductionEfficiency,
+              notes: nextNotes,
             }
           : it
       )
@@ -2320,7 +2350,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         addByDay[dayIndex] += Number.isFinite(b.amount) ? b.amount : 0;
       }
       const eod = new Array(7).fill(0);
-      let cur = it.stock;
+      let cur = 0;
       for (let d = 0; d < 7; d += 1) {
         const date = weekDatesForEod[d];
         const override = dailyStockMap.get(it.id)?.get(date ?? "");
@@ -2808,6 +2838,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 <div className="col-span-2 text-sm text-muted-foreground">{activeItem?.unit ?? ""}</div>
               </div>
 
+              <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
+                <div className="col-span-4 text-sm text-muted-foreground">製造日</div>
+                <div className="col-span-8 text-sm text-slate-700">
+                  {activeManufactureDate ? `${activeManufactureDate} (${toMD(activeManufactureDate)})` : "未設定"}
+                </div>
+                <div className="col-span-4 text-sm text-muted-foreground">賞味期限</div>
+                <div className="col-span-8 text-sm text-slate-700">
+                  {activeExpirationDate ? `${activeExpirationDate} (${toMD(activeExpirationDate)})` : "未設定"}
+                </div>
+              </div>
+
               <Card className="rounded-2xl">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium">原材料（数量から自動計算）</CardTitle>
@@ -2911,7 +2952,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const masterSectionDescriptionMap: Record<"home" | "items" | "materials", string> = {
     home: "品目・原料マスタの登録・編集・削除を行います。",
-    items: "品目の在庫・計画方針・レシピを管理します。",
+    items: "品目の計画方針・安全在庫・賞味期限・製造効率などを管理します。",
     materials: "原料の単位と名称を管理します。",
   };
 
@@ -2971,10 +3012,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       <th className="px-3 py-2 text-left font-medium">品目コード</th>
                       <th className="px-3 py-2 text-center font-medium">単位</th>
                       <th className="px-3 py-2 text-left font-medium">計画方針</th>
-                      <th className="px-3 py-2 text-right font-medium">在庫</th>
                       <th className="px-3 py-2 text-right font-medium">安全在庫</th>
-                      <th className="px-3 py-2 text-right font-medium">発注点</th>
-                      <th className="px-3 py-2 text-right font-medium">ロット</th>
+                      <th className="px-3 py-2 text-right font-medium">賞味期限(日)</th>
+                      <th className="px-3 py-2 text-right font-medium">製造効率</th>
+                      <th className="px-3 py-2 text-left font-medium">備考</th>
                       <th className="px-3 py-2 text-right font-medium">操作</th>
                     </tr>
                   </thead>
@@ -2989,10 +3030,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         <td className="px-3 py-2 text-muted-foreground">
                           {PLANNING_POLICY_LABELS[item.planningPolicy] ?? item.planningPolicy}
                         </td>
-                        <td className="px-3 py-2 text-right text-muted-foreground">{item.stock}</td>
                         <td className="px-3 py-2 text-right text-muted-foreground">{item.safetyStock}</td>
-                        <td className="px-3 py-2 text-right text-muted-foreground">{item.reorderPoint}</td>
-                        <td className="px-3 py-2 text-right text-muted-foreground">{item.lotSize}</td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">{item.shelfLifeDays}</td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">{item.productionEfficiency}</td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          <div className="max-w-[200px] truncate">{item.notes || "-"}</div>
+                        </td>
                         <td className="px-3 py-2">
                           <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => openRecipeEdit(item.id)}>
@@ -3505,21 +3548,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       <SelectItem value="make_to_order">受注生産</SelectItem>
                     </SelectContent>
                   </Select>
-                  <div className="text-sm font-medium text-muted-foreground">開始在庫</div>
-                  <Input
-                    inputMode="decimal"
-                    value={isItemEditMode ? editingItemStock : itemStockDraft}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (isItemEditMode) {
-                        setEditingItemStock(next);
-                      } else {
-                        setItemStockDraft(next);
-                      }
-                      setItemFormError(null);
-                    }}
-                    placeholder="開始在庫"
-                  />
                   <div className="text-sm font-medium text-muted-foreground">安全在庫</div>
                   <Input
                     inputMode="decimal"
@@ -3535,35 +3563,49 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     }}
                     placeholder="安全在庫"
                   />
-                  <div className="text-sm font-medium text-muted-foreground">発注点</div>
+                  <div className="text-sm font-medium text-muted-foreground">賞味期限（日数）</div>
                   <Input
                     inputMode="decimal"
-                    value={isItemEditMode ? editingItemReorderPoint : itemReorderPointDraft}
+                    value={isItemEditMode ? editingItemShelfLifeDays : itemShelfLifeDaysDraft}
                     onChange={(e) => {
                       const next = e.target.value;
                       if (isItemEditMode) {
-                        setEditingItemReorderPoint(next);
+                        setEditingItemShelfLifeDays(next);
                       } else {
-                        setItemReorderPointDraft(next);
+                        setItemShelfLifeDaysDraft(next);
                       }
                       setItemFormError(null);
                     }}
-                    placeholder="発注点"
+                    placeholder="賞味期限（日数）"
                   />
-                  <div className="text-sm font-medium text-muted-foreground">ロットサイズ</div>
+                  <div className="text-sm font-medium text-muted-foreground">製造効率</div>
                   <Input
                     inputMode="decimal"
-                    value={isItemEditMode ? editingItemLotSize : itemLotSizeDraft}
+                    value={isItemEditMode ? editingItemProductionEfficiency : itemProductionEfficiencyDraft}
                     onChange={(e) => {
                       const next = e.target.value;
                       if (isItemEditMode) {
-                        setEditingItemLotSize(next);
+                        setEditingItemProductionEfficiency(next);
                       } else {
-                        setItemLotSizeDraft(next);
+                        setItemProductionEfficiencyDraft(next);
                       }
                       setItemFormError(null);
                     }}
-                    placeholder="ロットサイズ"
+                    placeholder="1人1時間あたりの製造数量"
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">備考</div>
+                  <Textarea
+                    value={isItemEditMode ? editingItemNotes : itemNotesDraft}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (isItemEditMode) {
+                        setEditingItemNotes(next);
+                      } else {
+                        setItemNotesDraft(next);
+                      }
+                      setItemFormError(null);
+                    }}
+                    placeholder="自由記入（長文可）"
                   />
                 </div>
                 {itemFormError ? <div className="mt-4 text-sm text-destructive">{itemFormError}</div> : null}
