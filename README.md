@@ -129,6 +129,24 @@ GEMINI_API_KEY=your_api_key_here
 - `itemId`: 品目 ID でブロックを絞り込み
 - `itemName`: 品目名（部分一致・小文字化）でブロックを絞り込み
 
+### `/api/daily-stocks`（Vite ミドルウェア）
+
+Excel取り込みで更新する日別在庫の保存先です。アップロード時に全件上書きします。
+
+| メソッド | 説明 | 入出力 |
+| --- | --- | --- |
+| GET | 日別在庫を取得 | `updatedAtISO` と `entries` を返却 |
+| POST | 日別在庫を保存 | `entries` を受け取り全件置換 |
+
+### `/api/orders`（Vite ミドルウェア）
+
+Excel取り込みで更新する受注一覧の保存先です。アップロード時に全件上書きします。
+
+| メソッド | 説明 | 入出力 |
+| --- | --- | --- |
+| GET | 受注一覧を取得 | `updatedAtISO` と `entries` を返却 |
+| POST | 受注一覧を保存 | `entries` を受け取り全件置換 |
+
 ### `/api/gemini`（Vite ミドルウェア）
 
 Gemini API との通信をサーバー側で中継し、クライアントに API キーを渡さないためのエンドポイントです。
@@ -210,6 +228,8 @@ materials(id TEXT PRIMARY KEY, name TEXT, unit TEXT)
 items(id TEXT PRIMARY KEY, public_id TEXT, name TEXT, unit TEXT, planning_policy TEXT, safety_stock REAL, shelf_life_days REAL, production_efficiency REAL, notes TEXT)
 item_recipes(item_id TEXT, material_id TEXT, per_unit REAL, unit TEXT, PRIMARY KEY(item_id, material_id))
 blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, amount REAL, memo TEXT)
+daily_stocks(date TEXT, item_id TEXT, item_code TEXT, stock REAL, PRIMARY KEY(date, item_id))
+orders(delivery_date TEXT, ship_date TEXT, item_id TEXT, item_code TEXT, quantity REAL, PRIMARY KEY(delivery_date, ship_date, item_id))
 ```
 
 #### インデックス方針
@@ -217,6 +237,10 @@ blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, amount REA
 - 期間検索: `blocks(start)`（スロット範囲の検索に使用）
 - 品目検索: `blocks(item_id)`
 - 期間 + 品目の複合検索: `blocks(item_id, start)`
+- 日別在庫の期間検索: `daily_stocks(date)`
+- 日別在庫の品目検索: `daily_stocks(item_id)`
+- 受注の納品日検索: `orders(delivery_date)`
+- 受注の品目検索: `orders(item_id)`
 
 ### JSON エクスポート（`ExportPayloadV1`）
 

@@ -71,12 +71,31 @@ function ensureSchema(db) {
       approved INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS daily_stocks (
+      date TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      item_code TEXT NOT NULL,
+      stock REAL NOT NULL,
+      PRIMARY KEY (date, item_id)
+    );
+    CREATE TABLE IF NOT EXISTS orders (
+      delivery_date TEXT NOT NULL,
+      ship_date TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      item_code TEXT NOT NULL,
+      quantity REAL NOT NULL,
+      PRIMARY KEY (delivery_date, ship_date, item_id)
+    );
     CREATE TABLE IF NOT EXISTS calendar_days (
       date TEXT PRIMARY KEY,
       is_holiday INTEGER NOT NULL DEFAULT 0,
       work_start INTEGER NOT NULL,
       work_end INTEGER NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS idx_daily_stocks_date ON daily_stocks(date);
+    CREATE INDEX IF NOT EXISTS idx_daily_stocks_item ON daily_stocks(item_id);
+    CREATE INDEX IF NOT EXISTS idx_orders_delivery_date ON orders(delivery_date);
+    CREATE INDEX IF NOT EXISTS idx_orders_item ON orders(item_id);
     CREATE INDEX IF NOT EXISTS idx_blocks_start ON blocks(start);
     CREATE INDEX IF NOT EXISTS idx_blocks_item ON blocks(item_id);
     CREATE INDEX IF NOT EXISTS idx_blocks_item_start ON blocks(item_id, start);
@@ -137,6 +156,11 @@ export async function openPlanDatabase() {
   ensureBlocksDateColumns(db);
   ensureItemsPlanningColumns(db);
   return db;
+}
+
+function loadMetaValue(db, key) {
+  const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(key);
+  return row?.value ?? null;
 }
 
 export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
@@ -273,6 +297,41 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
   };
 }
 
+export function loadDailyStocks(db) {
+  const entries = db
+    .prepare("SELECT date, item_id, item_code, stock FROM daily_stocks ORDER BY date, item_code")
+    .all()
+    .map((row) => ({
+      date: row.date,
+      itemId: row.item_id,
+      itemCode: row.item_code,
+      stock: row.stock,
+    }));
+  return {
+    updatedAtISO: loadMetaValue(db, "dailyStocksUpdatedAtISO"),
+    entries,
+  };
+}
+
+export function loadOrders(db) {
+  const entries = db
+    .prepare(
+      "SELECT delivery_date, ship_date, item_id, item_code, quantity FROM orders ORDER BY delivery_date, ship_date, item_code"
+    )
+    .all()
+    .map((row) => ({
+      deliveryDate: row.delivery_date,
+      shipDate: row.ship_date,
+      itemId: row.item_id,
+      itemCode: row.item_code,
+      quantity: row.quantity,
+    }));
+  return {
+    updatedAtISO: loadMetaValue(db, "ordersUpdatedAtISO"),
+    entries,
+  };
+}
+
 export function savePlanPayload(db, payload) {
   const insertMeta = db.prepare(
     "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
@@ -349,4 +408,48 @@ export function savePlanPayload(db, payload) {
   });
 
   transaction();
+}
+
+export function saveDailyStocks(db, entries = []) {
+  const insertMeta = db.prepare(
+    "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  );
+  const insertDailyStock = db.prepare(
+    "INSERT INTO daily_stocks (date, item_id, item_code, stock) VALUES (?, ?, ?, ?)"
+  );
+  const updatedAtISO = new Date().toISOString();
+  const transaction = db.transaction(() => {
+    db.exec("DELETE FROM daily_stocks");
+    entries.forEach((entry) => {
+      insertDailyStock.run(entry.date, entry.itemId, entry.itemCode, entry.stock ?? 0);
+    });
+    insertMeta.run("dailyStocksUpdatedAtISO", updatedAtISO);
+  });
+  transaction();
+  return updatedAtISO;
+}
+
+export function saveOrders(db, entries = []) {
+  const insertMeta = db.prepare(
+    "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  );
+  const insertOrder = db.prepare(
+    "INSERT INTO orders (delivery_date, ship_date, item_id, item_code, quantity) VALUES (?, ?, ?, ?, ?)"
+  );
+  const updatedAtISO = new Date().toISOString();
+  const transaction = db.transaction(() => {
+    db.exec("DELETE FROM orders");
+    entries.forEach((entry) => {
+      insertOrder.run(
+        entry.deliveryDate,
+        entry.shipDate,
+        entry.itemId,
+        entry.itemCode,
+        entry.quantity ?? 0
+      );
+    });
+    insertMeta.run("ordersUpdatedAtISO", updatedAtISO);
+  });
+  transaction();
+  return updatedAtISO;
 }
