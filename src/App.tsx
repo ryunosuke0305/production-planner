@@ -893,6 +893,7 @@ type DragState = {
 export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [navOpen, setNavOpen] = useState(false);
   const [activeView, setActiveView] = useState<"schedule" | "master" | "import" | "manual">("schedule");
+  const [masterSection, setMasterSection] = useState<"home" | "items" | "materials">("home");
   const [manualAudience, setManualAudience] = useState<"user" | "admin">("user");
   const [planWeekStart, setPlanWeekStart] = useState<Date>(() => getDefaultWeekStart());
   const [viewWeekStart, setViewWeekStart] = useState<Date>(() => getDefaultWeekStart());
@@ -2814,115 +2815,162 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     </div>
   );
 
+  const masterSectionLabelMap: Record<"home" | "items" | "materials", string> = {
+    home: "マスタ管理",
+    items: "品目一覧",
+    materials: "原料一覧",
+  };
+
+  const masterSectionDescriptionMap: Record<"home" | "items" | "materials", string> = {
+    home: "品目・原料マスタの登録・編集・削除を行います。",
+    items: "品目の在庫・計画方針・レシピを管理します。",
+    materials: "原料の単位と名称を管理します。",
+  };
+
   const masterView = (
     <div className="mx-auto w-full max-w-5xl space-y-4">
-      <div className="space-y-1">
-        <div className="text-2xl font-semibold tracking-tight">マスタ管理</div>
-        <div className="text-sm text-muted-foreground">品目・原料マスタの登録・編集・削除を行います。</div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="text-2xl font-semibold tracking-tight">{masterSectionLabelMap[masterSection]}</div>
+          <div className="text-sm text-muted-foreground">{masterSectionDescriptionMap[masterSection]}</div>
+        </div>
+        {masterSection !== "home" ? (
+          <Button variant="outline" size="sm" onClick={() => setMasterSection("home")}>
+            マスタ管理へ戻る
+          </Button>
+        ) : null}
       </div>
 
-      <Card className="rounded-2xl">
-        <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
-          <CardTitle className="text-base font-medium">品目一覧</CardTitle>
-          <Button onClick={openCreateItemModal}>品目を追加</Button>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {items.length ? (
-            <div className="divide-y rounded-lg border">
-              <div className="grid grid-cols-14 gap-2 bg-muted/30 p-2 text-xs text-muted-foreground">
-                <div className="col-span-3">品目名</div>
-                <div className="col-span-2">品目コード</div>
-                <div className="col-span-1 text-center">単位</div>
-                <div className="col-span-2">計画方針</div>
-                <div className="col-span-1 text-right">在庫</div>
-                <div className="col-span-1 text-right">安全在庫</div>
-                <div className="col-span-1 text-right">発注点</div>
-                <div className="col-span-1 text-right">ロット</div>
-                <div className="col-span-2 text-right">操作</div>
+      {masterSection === "home" ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card className="rounded-2xl">
+            <CardHeader className="space-y-2 pb-2">
+              <CardTitle className="text-base font-medium">品目一覧</CardTitle>
+              <div className="text-sm text-muted-foreground">
+                品目マスタの確認・編集やレシピ登録を行います。
               </div>
-              {items.map((item) => (
-                <div key={item.id} className="grid grid-cols-14 items-center gap-2 p-2">
-                  <div className="col-span-3">
-                    <div className="text-sm font-medium">{item.name}</div>
-                  </div>
-                  <div className="col-span-2">
-                    <div className="text-sm text-muted-foreground">{item.publicId || "未設定"}</div>
-                  </div>
-                  <div className="col-span-1">
-                    <div className="text-center text-sm text-muted-foreground">{item.unit}</div>
-                  </div>
-                  <div className="col-span-2">
-                    <div className="text-sm text-muted-foreground">
-                      {PLANNING_POLICY_LABELS[item.planningPolicy] ?? item.planningPolicy}
-                    </div>
-                  </div>
-                  <div className="col-span-1 text-right">
-                    <div className="text-sm text-muted-foreground">{item.stock}</div>
-                  </div>
-                  <div className="col-span-1 text-right">
-                    <div className="text-sm text-muted-foreground">{item.safetyStock}</div>
-                  </div>
-                  <div className="col-span-1 text-right">
-                    <div className="text-sm text-muted-foreground">{item.reorderPoint}</div>
-                  </div>
-                  <div className="col-span-1 text-right">
-                    <div className="text-sm text-muted-foreground">{item.lotSize}</div>
-                  </div>
-                  <div className="col-span-2 flex justify-end gap-2">
-                    <Button variant="outline" onClick={() => openRecipeEdit(item.id)}>
-                      レシピ {item.recipe.length}件
-                    </Button>
-                    <Button variant="outline" onClick={() => openEditItemModal(item)}>
-                      編集
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              品目マスタが未登録です。右上の「品目を追加」ボタンから追加してください。
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm">
+              <div className="text-muted-foreground">登録件数: {items.length}件</div>
+              <Button onClick={() => setMasterSection("items")}>品目一覧を開く</Button>
+            </CardContent>
+          </Card>
 
-      <Card className="rounded-2xl">
-        <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
-          <CardTitle className="text-base font-medium">原料一覧</CardTitle>
-          <Button onClick={openCreateMaterialModal}>原料を追加</Button>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {materialsMaster.length ? (
-            <div className="divide-y rounded-lg border">
-              <div className="grid grid-cols-12 gap-2 bg-muted/30 p-2 text-xs text-muted-foreground">
-                <div className="col-span-6">原料名</div>
-                <div className="col-span-2">単位</div>
-                <div className="col-span-4 text-right">操作</div>
+          <Card className="rounded-2xl">
+            <CardHeader className="space-y-2 pb-2">
+              <CardTitle className="text-base font-medium">原料一覧</CardTitle>
+              <div className="text-sm text-muted-foreground">原料マスタの確認・編集を行います。</div>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm">
+              <div className="text-muted-foreground">登録件数: {materialsMaster.length}件</div>
+              <Button onClick={() => setMasterSection("materials")}>原料一覧を開く</Button>
+            </CardContent>
+          </Card>
+        </div>
+      ) : masterSection === "items" ? (
+        <Card className="rounded-2xl">
+          <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
+            <CardTitle className="text-base font-medium">品目一覧</CardTitle>
+            <Button onClick={openCreateItemModal}>品目を追加</Button>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {items.length ? (
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/30 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">品目名</th>
+                      <th className="px-3 py-2 text-left font-medium">品目コード</th>
+                      <th className="px-3 py-2 text-center font-medium">単位</th>
+                      <th className="px-3 py-2 text-left font-medium">計画方針</th>
+                      <th className="px-3 py-2 text-right font-medium">在庫</th>
+                      <th className="px-3 py-2 text-right font-medium">安全在庫</th>
+                      <th className="px-3 py-2 text-right font-medium">発注点</th>
+                      <th className="px-3 py-2 text-right font-medium">ロット</th>
+                      <th className="px-3 py-2 text-right font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {items.map((item) => (
+                      <tr key={item.id} className="align-middle">
+                        <td className="px-3 py-2">
+                          <div className="font-medium">{item.name}</div>
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">{item.publicId || "未設定"}</td>
+                        <td className="px-3 py-2 text-center text-muted-foreground">{item.unit}</td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {PLANNING_POLICY_LABELS[item.planningPolicy] ?? item.planningPolicy}
+                        </td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">{item.stock}</td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">{item.safetyStock}</td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">{item.reorderPoint}</td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">{item.lotSize}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex justify-end gap-2">
+                            <Button variant="outline" onClick={() => openRecipeEdit(item.id)}>
+                              レシピ {item.recipe.length}件
+                            </Button>
+                            <Button variant="outline" onClick={() => openEditItemModal(item)}>
+                              編集
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              {materialsMaster.map((material) => (
-                <div key={material.id} className="grid grid-cols-12 items-center gap-2 p-2">
-                  <div className="col-span-6">
-                    <div className="text-sm font-medium">{material.name}</div>
-                  </div>
-                  <div className="col-span-2">
-                    <div className="text-sm text-muted-foreground">{material.unit}</div>
-                  </div>
-                  <div className="col-span-4 flex justify-end gap-2">
-                    <Button variant="outline" onClick={() => openEditMaterialModal(material)}>
-                      編集
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              原料マスタが未登録です。右上の「原料を追加」ボタンから追加してください。
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            ) : (
+              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                品目マスタが未登録です。右上の「品目を追加」ボタンから追加してください。
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="rounded-2xl">
+          <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
+            <CardTitle className="text-base font-medium">原料一覧</CardTitle>
+            <Button onClick={openCreateMaterialModal}>原料を追加</Button>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {materialsMaster.length ? (
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/30 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">原料名</th>
+                      <th className="px-3 py-2 text-left font-medium">単位</th>
+                      <th className="px-3 py-2 text-right font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {materialsMaster.map((material) => (
+                      <tr key={material.id}>
+                        <td className="px-3 py-2">
+                          <div className="font-medium">{material.name}</div>
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">{material.unit}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex justify-end gap-2">
+                            <Button variant="outline" onClick={() => openEditMaterialModal(material)}>
+                              編集
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                原料マスタが未登録です。右上の「原料を追加」ボタンから追加してください。
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 
@@ -3177,7 +3225,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     manual: "マニュアル",
   };
 
-  const viewLabel = viewLabelMap[activeView];
+  const masterViewLabelMap: Record<"home" | "items" | "materials", string> = {
+    home: "マスタ管理",
+    items: "マスタ管理 / 品目一覧",
+    materials: "マスタ管理 / 原料一覧",
+  };
+
+  const viewLabel = activeView === "master" ? masterViewLabelMap[masterSection] : viewLabelMap[activeView];
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -3235,6 +3289,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               }`}
               onClick={() => {
                 setActiveView("master");
+                setMasterSection("home");
                 setNavOpen(false);
               }}
             >
