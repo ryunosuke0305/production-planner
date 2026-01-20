@@ -41,6 +41,7 @@ function ensureSchema(db) {
     );
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
+      public_id TEXT,
       name TEXT NOT NULL,
       unit TEXT NOT NULL,
       stock REAL NOT NULL,
@@ -104,10 +105,14 @@ function ensureBlocksDateColumns(db) {
 
 function ensureItemsPlanningColumns(db) {
   const columns = db.prepare("PRAGMA table_info(items)").all();
+  const hasPublicId = columns.some((column) => column.name === "public_id");
   const hasPlanningPolicy = columns.some((column) => column.name === "planning_policy");
   const hasSafetyStock = columns.some((column) => column.name === "safety_stock");
   const hasReorderPoint = columns.some((column) => column.name === "reorder_point");
   const hasLotSize = columns.some((column) => column.name === "lot_size");
+  if (!hasPublicId) {
+    db.exec("ALTER TABLE items ADD COLUMN public_id TEXT");
+  }
   if (!hasPlanningPolicy) {
     db.exec("ALTER TABLE items ADD COLUMN planning_policy TEXT NOT NULL DEFAULT 'make_to_stock'");
   }
@@ -161,11 +166,12 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
 
   const items = db
     .prepare(
-      "SELECT id, name, unit, stock, planning_policy, safety_stock, reorder_point, lot_size FROM items ORDER BY id"
+      "SELECT id, public_id, name, unit, stock, planning_policy, safety_stock, reorder_point, lot_size FROM items ORDER BY id"
     )
     .all()
     .map((row) => ({
       id: row.id,
+      publicId: row.public_id ?? undefined,
       name: row.name,
       unit: row.unit,
       stock: row.stock,
@@ -273,7 +279,7 @@ export function savePlanPayload(db, payload) {
   );
   const insertMaterial = db.prepare("INSERT INTO materials (id, name, unit) VALUES (?, ?, ?)");
   const insertItem = db.prepare(
-    "INSERT INTO items (id, name, unit, stock, planning_policy, safety_stock, reorder_point, lot_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO items (id, public_id, name, unit, stock, planning_policy, safety_stock, reorder_point, lot_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
   const insertRecipe = db.prepare(
     "INSERT INTO item_recipes (item_id, material_id, per_unit, unit) VALUES (?, ?, ?, ?)"
@@ -313,6 +319,7 @@ export function savePlanPayload(db, payload) {
     payload.items?.forEach((item) => {
       insertItem.run(
         item.id,
+        item.publicId ?? null,
         item.name,
         item.unit,
         item.stock ?? 0,
