@@ -53,6 +53,7 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 
 - 画面上の計画データは開発サーバー経由で `data/plan.sqlite` に保存され、再読み込みしても保持されます。
 - 品目マスタで入力した品目コード（品目ID）は SQLite に保存され、日別在庫や受注一覧の照合に利用されます。
+- Excel取り込み画面のヘッダー指定（任意）も SQLite に保存され、再読み込みしても保持されます。
 - 既存の `data/plan.json` を SQLite に移行する場合は `npm run migrate:plan` を実行してください（再実行しても最新の内容で上書きされます）。
 - `.env` は `data/` ディレクトリにまとめて配置してください（例: `data/.env`）。
 - `GEMINI_API_KEY` を設定するとチャット機能が利用できます。モデルを変えたい場合は `GEMINI_MODEL` または `VITE_GEMINI_MODEL` を設定してください。
@@ -66,6 +67,7 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 ## Excel取り込み
 
 Excel取り込みタブから `.xlsx` / `.xls` / `.csv` をアップロードすると、日別在庫または受注一覧を更新できます。読み込み対象は **先頭シート** のみで、1行目をヘッダーとして判定します。
+ヘッダー名が異なる場合は、ヘッダー指定欄に候補名を入力して「設定を保存」を押すことで、次回以降も同じ候補で判定できます。
 
 ### 日別在庫（必要列）
 

@@ -163,6 +163,37 @@ function loadMetaValue(db, key) {
   return row?.value ?? null;
 }
 
+const DEFAULT_IMPORT_HEADER_OVERRIDES = {
+  dailyStock: {
+    date: "",
+    itemCode: "",
+    stock: "",
+  },
+  orders: {
+    deliveryDate: "",
+    shipDate: "",
+    itemCode: "",
+    quantity: "",
+  },
+};
+
+function normalizeImportHeaderOverrides(payload) {
+  const toText = (value) => (typeof value === "string" ? value : "");
+  return {
+    dailyStock: {
+      date: toText(payload?.dailyStock?.date),
+      itemCode: toText(payload?.dailyStock?.itemCode),
+      stock: toText(payload?.dailyStock?.stock),
+    },
+    orders: {
+      deliveryDate: toText(payload?.orders?.deliveryDate),
+      shipDate: toText(payload?.orders?.shipDate),
+      itemCode: toText(payload?.orders?.itemCode),
+      quantity: toText(payload?.orders?.quantity),
+    },
+  };
+}
+
 export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
   const metaRows = db.prepare("SELECT key, value FROM meta").all();
   if (!metaRows.length) return null;
@@ -330,6 +361,26 @@ export function loadOrders(db) {
     updatedAtISO: loadMetaValue(db, "ordersUpdatedAtISO"),
     entries,
   };
+}
+
+export function loadImportHeaderOverrides(db) {
+  const raw = loadMetaValue(db, "importHeaderOverrides");
+  if (!raw) return DEFAULT_IMPORT_HEADER_OVERRIDES;
+  try {
+    const parsed = JSON.parse(raw);
+    return normalizeImportHeaderOverrides(parsed);
+  } catch {
+    return DEFAULT_IMPORT_HEADER_OVERRIDES;
+  }
+}
+
+export function saveImportHeaderOverrides(db, payload) {
+  const insertMeta = db.prepare(
+    "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  );
+  const normalized = normalizeImportHeaderOverrides(payload);
+  insertMeta.run("importHeaderOverrides", JSON.stringify(normalized));
+  return normalized;
 }
 
 export function savePlanPayload(db, payload) {
