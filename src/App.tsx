@@ -541,6 +541,23 @@ const ORDER_HEADERS = {
   quantity: ["受注数", "受注数量", "数量", "orderqty", "order_qty", "qty"],
 };
 
+const ITEM_HEADERS = {
+  code: ["品目コード", "コード", "itemcode", "item_code", "itemid", "item_id"],
+  name: ["品目名", "品名", "name", "itemname", "item_name"],
+  unit: ["単位", "unit"],
+  planningPolicy: ["計画方針", "方針", "planningpolicy", "planning_policy", "policy"],
+  safetyStock: ["安全在庫", "安全在庫数", "safetystock", "safety_stock"],
+  shelfLifeDays: ["賞味期限", "賞味期限日数", "shelflifedays", "shelf_life_days", "expirationdays"],
+  productionEfficiency: ["製造効率", "生産効率", "efficiency", "productionefficiency", "production_efficiency"],
+  notes: ["備考", "メモ", "notes", "note", "memo", "remark", "remarks"],
+};
+
+const MATERIAL_HEADERS = {
+  code: ["原料コード", "コード", "materialcode", "material_code", "materialid", "material_id"],
+  name: ["原料名", "名称", "name", "material", "materialname", "material_name"],
+  unit: ["単位", "unit"],
+};
+
 function mergeHeaderCandidates(defaults: string[], override: string): string[] {
   const extras = override
     .split(/[,、\n]/)
@@ -552,6 +569,27 @@ function mergeHeaderCandidates(defaults: string[], override: string): string[] {
 function isEmptyRow(row: unknown[]): boolean {
   return row.every((cell) => cell === null || cell === undefined || String(cell).trim() === "");
 }
+
+function itemCodeKey(item: Item): string {
+  return (item.publicId ?? "").trim() || item.id;
+}
+
+type ItemImportRow = {
+  code: string;
+  name: string;
+  unit: ItemUnit;
+  planningPolicy: PlanningPolicy;
+  safetyStock: number;
+  shelfLifeDays: number;
+  productionEfficiency: number;
+  notes: string;
+};
+
+type MaterialImportRow = {
+  code: string;
+  name: string;
+  unit: RecipeUnit;
+};
 
 function sanitizeItems(raw: unknown): Item[] {
   if (!Array.isArray(raw)) return [];
@@ -1029,10 +1067,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [orderUpdatedAt, setOrderUpdatedAt] = useState<string | null>(null);
   const [dailyStockImportNote, setDailyStockImportNote] = useState<string | null>(null);
   const [orderImportNote, setOrderImportNote] = useState<string | null>(null);
+  const [itemMasterImportNote, setItemMasterImportNote] = useState<string | null>(null);
+  const [materialMasterImportNote, setMaterialMasterImportNote] = useState<string | null>(null);
   const [dailyStockImportError, setDailyStockImportError] = useState<string | null>(null);
   const [orderImportError, setOrderImportError] = useState<string | null>(null);
+  const [itemMasterImportError, setItemMasterImportError] = useState<string | null>(null);
+  const [materialMasterImportError, setMaterialMasterImportError] = useState<string | null>(null);
   const [dailyStockInputKey, setDailyStockInputKey] = useState(0);
   const [orderInputKey, setOrderInputKey] = useState(0);
+  const [itemMasterInputKey, setItemMasterInputKey] = useState(0);
+  const [materialMasterInputKey, setMaterialMasterInputKey] = useState(0);
   const [dailyStockHeaderOverrides, setDailyStockHeaderOverrides] = useState(
     DEFAULT_IMPORT_HEADER_OVERRIDES.dailyStock
   );
@@ -1200,7 +1244,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const itemKeyMap = useMemo(() => {
     const map = new Map<string, string>();
     items.forEach((item) => {
-      const key = (item.publicId ?? "").trim() || item.id;
+      const key = itemCodeKey(item);
       map.set(item.id, item.id);
       map.set(key, item.id);
     });
@@ -1295,6 +1339,41 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return rows ?? [];
   };
 
+  const runExcelImportWithFeedback = async <TResult, TSummary = void>({
+    file,
+    parseRows,
+    onSuccess,
+    buildNote,
+    setNote,
+    setError,
+    setInputKey,
+    fallbackErrorMessage,
+  }: {
+    file: File;
+    parseRows: (rows: unknown[][]) => TResult;
+    onSuccess: (result: TResult) => Promise<TSummary> | TSummary;
+    buildNote: (result: TResult, summary: TSummary) => string;
+    setNote: React.Dispatch<React.SetStateAction<string | null>>;
+    setError: React.Dispatch<React.SetStateAction<string | null>>;
+    setInputKey?: React.Dispatch<React.SetStateAction<number>>;
+    fallbackErrorMessage: string;
+  }) => {
+    setError(null);
+    setNote(null);
+    try {
+      const rows = await readFirstSheetRows(file);
+      const result = parseRows(rows);
+      const summary = await onSuccess(result);
+      setNote(buildNote(result, summary));
+      if (setInputKey) {
+        setInputKey((prev) => prev + 1);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : fallbackErrorMessage;
+      setError(message);
+    }
+  };
+
   const parseDailyStockRows = (rows: unknown[][]) => {
     if (!rows.length) {
       throw new Error("シートが空です。");
@@ -1340,6 +1419,62 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return { entries: next, missingItem, invalidRows };
   };
 
+  const parseItemMasterRows = (rows: unknown[][]) => {
+    if (!rows.length) {
+      throw new Error("シートが空です。");
+    }
+    const headers = rows[0] ?? [];
+    const codeIndex = findHeaderIndex(headers, ITEM_HEADERS.code);
+    const nameIndex = findHeaderIndex(headers, ITEM_HEADERS.name);
+    if (codeIndex < 0 || nameIndex < 0) {
+      throw new Error("品目マスタの必須列（品目コード/品目名）が見つかりません。");
+    }
+    const unitIndex = findHeaderIndex(headers, ITEM_HEADERS.unit);
+    const policyIndex = findHeaderIndex(headers, ITEM_HEADERS.planningPolicy);
+    const safetyStockIndex = findHeaderIndex(headers, ITEM_HEADERS.safetyStock);
+    const shelfLifeIndex = findHeaderIndex(headers, ITEM_HEADERS.shelfLifeDays);
+    const efficiencyIndex = findHeaderIndex(headers, ITEM_HEADERS.productionEfficiency);
+    const notesIndex = findHeaderIndex(headers, ITEM_HEADERS.notes);
+
+    const next: ItemImportRow[] = [];
+    let invalidRows = 0;
+    let duplicateCodes = 0;
+    const seen = new Set<string>();
+
+    rows.slice(1).forEach((row) => {
+      if (!row || isEmptyRow(row)) return;
+      const code = String(row[codeIndex] ?? "").trim();
+      const name = String(row[nameIndex] ?? "").trim();
+      if (!code || !name) {
+        invalidRows += 1;
+        return;
+      }
+      if (seen.has(code)) {
+        duplicateCodes += 1;
+        return;
+      }
+      seen.add(code);
+      const unit = unitIndex >= 0 ? asItemUnit(row[unitIndex]) : "cs";
+      const planningPolicy = policyIndex >= 0 ? asPlanningPolicy(row[policyIndex]) : "make_to_stock";
+      const safetyStock = Math.max(0, normalizeNumberInput(row[safetyStockIndex]) ?? 0);
+      const shelfLifeDays = Math.max(0, normalizeNumberInput(row[shelfLifeIndex]) ?? 0);
+      const productionEfficiency = Math.max(0, normalizeNumberInput(row[efficiencyIndex]) ?? 0);
+      const notes = notesIndex >= 0 ? String(row[notesIndex] ?? "").trim() : "";
+      next.push({
+        code,
+        name,
+        unit,
+        planningPolicy,
+        safetyStock,
+        shelfLifeDays,
+        productionEfficiency,
+        notes,
+      });
+    });
+
+    return { entries: next, invalidRows, duplicateCodes };
+  };
+
   const parseOrderRows = (rows: unknown[][]) => {
     if (!rows.length) {
       throw new Error("シートが空です。");
@@ -1379,6 +1514,43 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     });
 
     return { entries: next, missingItem, invalidRows };
+  };
+
+  const parseMaterialMasterRows = (rows: unknown[][]) => {
+    if (!rows.length) {
+      throw new Error("シートが空です。");
+    }
+    const headers = rows[0] ?? [];
+    const codeIndex = findHeaderIndex(headers, MATERIAL_HEADERS.code);
+    const nameIndex = findHeaderIndex(headers, MATERIAL_HEADERS.name);
+    if (codeIndex < 0 || nameIndex < 0) {
+      throw new Error("原料マスタの必須列（原料コード/原料名）が見つかりません。");
+    }
+    const unitIndex = findHeaderIndex(headers, MATERIAL_HEADERS.unit);
+
+    const next: MaterialImportRow[] = [];
+    let invalidRows = 0;
+    let duplicateCodes = 0;
+    const seen = new Set<string>();
+
+    rows.slice(1).forEach((row) => {
+      if (!row || isEmptyRow(row)) return;
+      const code = String(row[codeIndex] ?? "").trim();
+      const name = String(row[nameIndex] ?? "").trim();
+      if (!code || !name) {
+        invalidRows += 1;
+        return;
+      }
+      if (seen.has(code)) {
+        duplicateCodes += 1;
+        return;
+      }
+      seen.add(code);
+      const unit = unitIndex >= 0 ? asRecipeUnit(row[unitIndex]) : "kg";
+      next.push({ code, name, unit });
+    });
+
+    return { entries: next, invalidRows, duplicateCodes };
   };
 
   const saveDailyStocksToServer = async (entries: DailyStockEntry[]) => {
@@ -1434,33 +1606,153 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const handleDailyStockImport = async (file: File) => {
-    setDailyStockImportError(null);
-    setDailyStockImportNote(null);
-    const rows = await readFirstSheetRows(file);
-    const result = parseDailyStockRows(rows);
-    await saveDailyStocksToServer(result.entries);
-    setDailyStocks(result.entries);
-    setDailyStockImportNote(
-      `日別在庫を${result.entries.length}件取り込みました。` +
+    await runExcelImportWithFeedback({
+      file,
+      parseRows: parseDailyStockRows,
+      onSuccess: async (result) => {
+        await saveDailyStocksToServer(result.entries);
+        setDailyStocks(result.entries);
+      },
+      buildNote: (result) =>
+        `日別在庫を${result.entries.length}件取り込みました。` +
         (result.missingItem ? ` (品目未登録:${result.missingItem}件)` : "") +
-        (result.invalidRows ? ` (無効行:${result.invalidRows}件)` : "")
-    );
-    setDailyStockInputKey((prev) => prev + 1);
+        (result.invalidRows ? ` (無効行:${result.invalidRows}件)` : ""),
+      setNote: setDailyStockImportNote,
+      setError: setDailyStockImportError,
+      setInputKey: setDailyStockInputKey,
+      fallbackErrorMessage: "日別在庫の取り込みに失敗しました。",
+    });
   };
 
   const handleOrderImport = async (file: File) => {
-    setOrderImportError(null);
-    setOrderImportNote(null);
-    const rows = await readFirstSheetRows(file);
-    const result = parseOrderRows(rows);
-    await saveOrdersToServer(result.entries);
-    setOrders(result.entries);
-    setOrderImportNote(
-      `受注一覧を${result.entries.length}件取り込みました。` +
+    await runExcelImportWithFeedback({
+      file,
+      parseRows: parseOrderRows,
+      onSuccess: async (result) => {
+        await saveOrdersToServer(result.entries);
+        setOrders(result.entries);
+      },
+      buildNote: (result) =>
+        `受注一覧を${result.entries.length}件取り込みました。` +
         (result.missingItem ? ` (品目未登録:${result.missingItem}件)` : "") +
-        (result.invalidRows ? ` (無効行:${result.invalidRows}件)` : "")
-    );
-    setOrderInputKey((prev) => prev + 1);
+        (result.invalidRows ? ` (無効行:${result.invalidRows}件)` : ""),
+      setNote: setOrderImportNote,
+      setError: setOrderImportError,
+      setInputKey: setOrderInputKey,
+      fallbackErrorMessage: "受注一覧の取り込みに失敗しました。",
+    });
+  };
+
+  const handleItemMasterImport = async (file: File) => {
+    await runExcelImportWithFeedback({
+      file,
+      parseRows: parseItemMasterRows,
+      onSuccess: (result) => {
+        const existingByCode = new Map(items.map((item) => [itemCodeKey(item), item]));
+        const indexById = new Map(items.map((item, idx) => [item.id, idx]));
+        const nextItems = [...items];
+        let created = 0;
+        let updated = 0;
+        result.entries.forEach((row) => {
+          const existing = existingByCode.get(row.code);
+          if (existing) {
+            const updatedItem: Item = {
+              ...existing,
+              publicId: row.code,
+              name: row.name,
+              unit: row.unit,
+              planningPolicy: row.planningPolicy,
+              safetyStock: row.safetyStock,
+              shelfLifeDays: row.shelfLifeDays,
+              productionEfficiency: row.productionEfficiency,
+              notes: row.notes,
+            };
+            const idx = indexById.get(existing.id);
+            if (typeof idx === "number") {
+              nextItems[idx] = updatedItem;
+            } else {
+              nextItems.push(updatedItem);
+            }
+            updated += 1;
+          } else {
+            nextItems.push({
+              id: uid("i"),
+              publicId: row.code,
+              name: row.name,
+              unit: row.unit,
+              planningPolicy: row.planningPolicy,
+              safetyStock: row.safetyStock,
+              shelfLifeDays: row.shelfLifeDays,
+              productionEfficiency: row.productionEfficiency,
+              notes: row.notes,
+              recipe: [],
+            });
+            created += 1;
+          }
+        });
+        setItems(nextItems);
+        return { created, updated };
+      },
+      buildNote: (result, summary) =>
+        `品目マスタを${summary.created + summary.updated}件取り込みました。` +
+        ` (新規:${summary.created}件/更新:${summary.updated}件)` +
+        (result.duplicateCodes ? ` (重複コード:${result.duplicateCodes}件)` : "") +
+        (result.invalidRows ? ` (無効行:${result.invalidRows}件)` : ""),
+      setNote: setItemMasterImportNote,
+      setError: setItemMasterImportError,
+      setInputKey: setItemMasterInputKey,
+      fallbackErrorMessage: "品目マスタの取り込みに失敗しました。",
+    });
+  };
+
+  const handleMaterialMasterImport = async (file: File) => {
+    await runExcelImportWithFeedback({
+      file,
+      parseRows: parseMaterialMasterRows,
+      onSuccess: (result) => {
+        const existingByCode = new Map(materialsMaster.map((material) => [material.id, material]));
+        const indexById = new Map(materialsMaster.map((material, idx) => [material.id, idx]));
+        const nextMaterials = [...materialsMaster];
+        let created = 0;
+        let updated = 0;
+        result.entries.forEach((row) => {
+          const existing = existingByCode.get(row.code);
+          if (existing) {
+            const updatedMaterial: Material = {
+              ...existing,
+              id: existing.id,
+              name: row.name,
+              unit: row.unit,
+            };
+            const idx = indexById.get(existing.id);
+            if (typeof idx === "number") {
+              nextMaterials[idx] = updatedMaterial;
+            } else {
+              nextMaterials.push(updatedMaterial);
+            }
+            updated += 1;
+          } else {
+            nextMaterials.push({
+              id: row.code,
+              name: row.name,
+              unit: row.unit,
+            });
+            created += 1;
+          }
+        });
+        setMaterialsMaster(nextMaterials);
+        return { created, updated };
+      },
+      buildNote: (result, summary) =>
+        `原料マスタを${summary.created + summary.updated}件取り込みました。` +
+        ` (新規:${summary.created}件/更新:${summary.updated}件)` +
+        (result.duplicateCodes ? ` (重複コード:${result.duplicateCodes}件)` : "") +
+        (result.invalidRows ? ` (無効行:${result.invalidRows}件)` : ""),
+      setNote: setMaterialMasterImportNote,
+      setError: setMaterialMasterImportError,
+      setInputKey: setMaterialMasterInputKey,
+      fallbackErrorMessage: "原料マスタの取り込みに失敗しました。",
+    });
   };
 
   useEffect(() => {
@@ -3334,7 +3626,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       <div className="space-y-1">
         <div className="text-2xl font-semibold tracking-tight">Excel取り込み</div>
         <div className="text-sm text-muted-foreground">
-          日別在庫と受注一覧をExcelから取り込みます。
+          日別在庫・受注一覧・各マスタをExcelから取り込みます。
         </div>
       </div>
       <Card className="rounded-2xl shadow-sm">
@@ -3350,12 +3642,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             onChange={async (e) => {
               const file = e.target.files?.[0];
               if (!file) return;
-              try {
-                await handleDailyStockImport(file);
-              } catch (error) {
-                const message = error instanceof Error ? error.message : "日別在庫の取り込みに失敗しました。";
-                setDailyStockImportError(message);
-              }
+              await handleDailyStockImport(file);
             }}
           />
           <div className="rounded-lg border bg-muted/10 p-3 text-xs">
@@ -3456,12 +3743,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             onChange={async (e) => {
               const file = e.target.files?.[0];
               if (!file) return;
-              try {
-                await handleOrderImport(file);
-              } catch (error) {
-                const message = error instanceof Error ? error.message : "受注一覧の取り込みに失敗しました。";
-                setOrderImportError(message);
-              }
+              await handleOrderImport(file);
             }}
           />
           <div className="rounded-lg border bg-muted/10 p-3 text-xs">
@@ -3561,6 +3843,66 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           {orderImportError ? (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
               {orderImportError}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+      <Card className="rounded-2xl shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium">品目マスタ</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <div className="text-xs text-muted-foreground">
+            必須列: 品目コード / 品目名。任意列: 単位 / 計画方針 / 安全在庫 / 賞味期限日数 / 製造効率 / 備考
+          </div>
+          <div className="text-xs text-muted-foreground">品目コードをキーに上書き・追加します。</div>
+          <Input
+            key={`item-master-${itemMasterInputKey}`}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              await handleItemMasterImport(file);
+            }}
+          />
+          {itemMasterImportNote ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+              {itemMasterImportNote}
+            </div>
+          ) : null}
+          {itemMasterImportError ? (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+              {itemMasterImportError}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+      <Card className="rounded-2xl shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium">原料マスタ</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <div className="text-xs text-muted-foreground">必須列: 原料コード / 原料名。任意列: 単位</div>
+          <div className="text-xs text-muted-foreground">原料コードをキーに上書き・追加します。</div>
+          <Input
+            key={`material-master-${materialMasterInputKey}`}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              await handleMaterialMasterImport(file);
+            }}
+          />
+          {materialMasterImportNote ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+              {materialMasterImportNote}
+            </div>
+          ) : null}
+          {materialMasterImportError ? (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+              {materialMasterImportError}
             </div>
           ) : null}
         </CardContent>
