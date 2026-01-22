@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { SearchableCombobox } from "@/components/ui/searchable-combobox";
 import manualAdmin from "../data/manual-admin.md?raw";
 import manualUser from "../data/manual-user.md?raw";
 
@@ -38,9 +39,14 @@ import manualUser from "../data/manual-user.md?raw";
 
 type Density = "hour" | "2hour" | "day";
 
-type RecipeUnit = "kg" | "g";
+const ITEM_UNITS = ["ピース", "ケース", "セット", "kg", "袋", "枚", "個", "箱"] as const;
 
-type ItemUnit = "cs" | "kg";
+type ItemUnit = (typeof ITEM_UNITS)[number];
+
+type RecipeUnit = ItemUnit;
+
+const DEFAULT_ITEM_UNIT: ItemUnit = ITEM_UNITS[0];
+const DEFAULT_MATERIAL_UNIT: RecipeUnit = "kg";
 
 type PlanningPolicy = "make_to_order" | "make_to_stock";
 
@@ -288,7 +294,7 @@ const SAMPLE_ITEMS: Item[] = [
   {
     id: "A",
     name: "Item A",
-    unit: "cs",
+    unit: "ケース",
     planningPolicy: "make_to_stock",
     safetyStock: 20,
     shelfLifeDays: 30,
@@ -302,7 +308,7 @@ const SAMPLE_ITEMS: Item[] = [
   {
     id: "B",
     name: "Item B",
-    unit: "cs",
+    unit: "ケース",
     planningPolicy: "make_to_order",
     safetyStock: 10,
     shelfLifeDays: 7,
@@ -460,7 +466,12 @@ function asBoolean(value: unknown, fallback = false): boolean {
 }
 
 function asItemUnit(value: unknown): ItemUnit {
-  return value === "kg" ? "kg" : "cs";
+  if (typeof value !== "string") return DEFAULT_ITEM_UNIT;
+  if (ITEM_UNITS.includes(value as ItemUnit)) return value as ItemUnit;
+  if (value === "cs" || value === "case") return "ケース";
+  if (value === "piece" || value === "pcs") return "ピース";
+  if (value === "set") return "セット";
+  return DEFAULT_ITEM_UNIT;
 }
 
 function asPlanningPolicy(value: unknown): PlanningPolicy {
@@ -468,7 +479,10 @@ function asPlanningPolicy(value: unknown): PlanningPolicy {
 }
 
 function asRecipeUnit(value: unknown): RecipeUnit {
-  return value === "g" ? "g" : "kg";
+  if (typeof value !== "string") return DEFAULT_MATERIAL_UNIT;
+  if (ITEM_UNITS.includes(value as RecipeUnit)) return value as RecipeUnit;
+  if (value === "g") return "kg";
+  return DEFAULT_MATERIAL_UNIT;
 }
 
 function asDensity(value: unknown): Density {
@@ -1093,7 +1107,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [importHeaderSaveBusy, setImportHeaderSaveBusy] = useState(false);
   const [itemNameDraft, setItemNameDraft] = useState("");
   const [itemPublicIdDraft, setItemPublicIdDraft] = useState("");
-  const [itemUnitDraft, setItemUnitDraft] = useState<ItemUnit>("cs");
+  const [itemUnitDraft, setItemUnitDraft] = useState<ItemUnit>(DEFAULT_ITEM_UNIT);
   const [itemPlanningPolicyDraft, setItemPlanningPolicyDraft] = useState<PlanningPolicy>("make_to_stock");
   const [itemSafetyStockDraft, setItemSafetyStockDraft] = useState("0");
   const [itemShelfLifeDaysDraft, setItemShelfLifeDaysDraft] = useState("0");
@@ -1103,7 +1117,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editingItemName, setEditingItemName] = useState("");
   const [editingItemPublicId, setEditingItemPublicId] = useState("");
-  const [editingItemUnit, setEditingItemUnit] = useState<ItemUnit>("cs");
+  const [editingItemUnit, setEditingItemUnit] = useState<ItemUnit>(DEFAULT_ITEM_UNIT);
   const [editingItemPlanningPolicy, setEditingItemPlanningPolicy] = useState<PlanningPolicy>("make_to_stock");
   const [editingItemSafetyStock, setEditingItemSafetyStock] = useState("0");
   const [editingItemShelfLifeDays, setEditingItemShelfLifeDays] = useState("0");
@@ -1205,11 +1219,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [activeRecipeItemId, setActiveRecipeItemId] = useState<string | null>(null);
   const [recipeDraft, setRecipeDraft] = useState<RecipeLine[]>([]);
   const [materialNameDraft, setMaterialNameDraft] = useState("");
-  const [materialUnitDraft, setMaterialUnitDraft] = useState<RecipeUnit>("kg");
+  const [materialUnitDraft, setMaterialUnitDraft] = useState<RecipeUnit>(DEFAULT_MATERIAL_UNIT);
   const [materialFormError, setMaterialFormError] = useState<string | null>(null);
   const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null);
   const [editingMaterialName, setEditingMaterialName] = useState("");
-  const [editingMaterialUnit, setEditingMaterialUnit] = useState<RecipeUnit>("kg");
+  const [editingMaterialUnit, setEditingMaterialUnit] = useState<RecipeUnit>(DEFAULT_MATERIAL_UNIT);
   const [isMaterialModalOpen, setIsMaterialModalOpen] = useState(false);
   const [materialModalMode, setMaterialModalMode] = useState<"create" | "edit">("create");
 
@@ -1241,6 +1255,31 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const itemMap = useMemo(() => {
     return new Map(items.map((item) => [item.id, item]));
   }, [items]);
+
+  const itemOptions = useMemo(
+    () =>
+      items.map((item) => {
+        const label = item.publicId ? `${item.name} (${item.publicId})` : item.name;
+        return {
+          value: item.id,
+          label,
+          description: item.unit,
+          keywords: `${item.name} ${item.publicId ?? ""} ${item.id}`,
+        };
+      }),
+    [items]
+  );
+
+  const materialOptions = useMemo(
+    () =>
+      materialsMaster.map((material) => ({
+        value: material.id,
+        label: `${material.name} (${material.id})`,
+        description: material.unit,
+        keywords: `${material.name} ${material.id}`,
+      })),
+    [materialsMaster]
+  );
 
   const itemKeyMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -1455,7 +1494,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         return;
       }
       seen.add(code);
-      const unit = unitIndex >= 0 ? asItemUnit(row[unitIndex]) : "cs";
+      const unit = unitIndex >= 0 ? asItemUnit(row[unitIndex]) : DEFAULT_ITEM_UNIT;
       const planningPolicy = policyIndex >= 0 ? asPlanningPolicy(row[policyIndex]) : "make_to_stock";
       const safetyStock = Math.max(0, normalizeNumberInput(row[safetyStockIndex]) ?? 0);
       const shelfLifeDays = Math.max(0, normalizeNumberInput(row[shelfLifeIndex]) ?? 0);
@@ -1547,7 +1586,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         return;
       }
       seen.add(code);
-      const unit = unitIndex >= 0 ? asRecipeUnit(row[unitIndex]) : "kg";
+      const unit = unitIndex >= 0 ? asRecipeUnit(row[unitIndex]) : DEFAULT_MATERIAL_UNIT;
       next.push({ code, name, unit });
     });
 
@@ -1780,6 +1819,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
         const parsedWeekStart = new Date(payload.weekStartISO);
         const effectiveWeekStart = Number.isNaN(parsedWeekStart.getTime()) ? getDefaultWeekStart() : parsedWeekStart;
+        const currentWeekStart = getDefaultWeekStart();
         effectiveWeekStart.setHours(0, 0, 0, 0);
         const nextCalendarDays = payload.calendarDays.length
           ? payload.calendarDays
@@ -1788,7 +1828,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         if (!Number.isNaN(normalizedWeekStart.getTime())) {
           normalizedWeekStart.setHours(0, 0, 0, 0);
           setPlanWeekStart(normalizedWeekStart);
-          setViewWeekStart(normalizedWeekStart);
+          setViewWeekStart(currentWeekStart);
         }
         setPlanDensity(payload.density);
         setViewDensity(payload.density);
@@ -2595,7 +2635,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 .map((r) => ({
                   materialId: (r.materialId ?? "").trim(),
                   perUnit: Number.isFinite(Number(r.perUnit)) ? Number(r.perUnit) : 0,
-                  unit: r.unit === "g" ? "g" : "kg",
+                  unit: asRecipeUnit(r.unit),
                 }))
                 .filter((r) => r.materialId.length > 0 && validMaterialIds.has(r.materialId)),
             }
@@ -2608,7 +2648,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const resetItemDrafts = () => {
     setItemNameDraft("");
     setItemPublicIdDraft("");
-    setItemUnitDraft("cs");
+    setItemUnitDraft(DEFAULT_ITEM_UNIT);
     setItemPlanningPolicyDraft("make_to_stock");
     setItemSafetyStockDraft("0");
     setItemShelfLifeDaysDraft("0");
@@ -2676,7 +2716,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setEditingItemId(null);
     setEditingItemName("");
     setEditingItemPublicId("");
-    setEditingItemUnit("cs");
+    setEditingItemUnit(DEFAULT_ITEM_UNIT);
     setEditingItemPlanningPolicy("make_to_stock");
     setEditingItemSafetyStock("0");
     setEditingItemShelfLifeDays("0");
@@ -2758,7 +2798,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const resetMaterialDrafts = () => {
     setMaterialNameDraft("");
-    setMaterialUnitDraft("kg");
+    setMaterialUnitDraft(DEFAULT_MATERIAL_UNIT);
   };
 
   const openCreateMaterialModal = () => {
@@ -2799,7 +2839,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const onCancelEditMaterial = () => {
     setEditingMaterialId(null);
     setEditingMaterialName("");
-    setEditingMaterialUnit("kg");
+    setEditingMaterialUnit(DEFAULT_MATERIAL_UNIT);
     setMaterialFormError(null);
   };
 
@@ -2979,6 +3019,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const isItemEditMode = itemModalMode === "edit";
   const isMaterialEditMode = materialModalMode === "edit";
+  const itemEfficiencyUnit = isItemEditMode ? editingItemUnit : itemUnitDraft;
 
   const handleItemModalSave = () => {
     const didSave = isItemEditMode ? onSaveEditItem() : onCreateItem();
@@ -3266,7 +3307,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     void sendChatMessage();
                   }
                 }}
-                placeholder="例：品目コード A を 9/12 10:00から2時間、40cs 追加して"
+                placeholder="例：品目コード A を 9/12 10:00から2時間、40ケース 追加して"
                 rows={3}
               />
               <div className="flex items-center justify-between">
@@ -3309,7 +3350,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   value={constraintsDraft}
                   onChange={(e) => setConstraintsDraft(e.target.value)}
                   className="min-h-[220px]"
-                  placeholder="例：設備Xは午前のみ稼働、残業は不可、最小ロットは50cs など"
+                placeholder="例：設備Xは午前のみ稼働、残業は不可、最小ロットは50ケース など"
                 />
                 {constraintsError ? (
                   <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
@@ -3354,24 +3395,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
                 <div className="col-span-4 text-sm text-muted-foreground">品目</div>
                 <div className="col-span-8">
-                  <Select value={formItemId} onValueChange={(value) => setFormItemId(value)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="品目を選択" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {items.length ? (
-                        items.map((item) => (
-                          <SelectItem key={item.id} value={item.id}>
-                            {item.publicId ? `${item.name} (${item.publicId})` : item.name}
-                          </SelectItem>
-                        ))
-                      ) : (
-                        <SelectItem value="__none__" disabled>
-                          品目が未登録です
-                        </SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
+                  <SearchableCombobox
+                    value={formItemId}
+                    options={itemOptions}
+                    onChange={(value) => setFormItemId(value)}
+                    placeholder="品目を検索"
+                    emptyLabel={items.length ? "該当する品目がありません" : "品目が未登録です"}
+                    disabled={!items.length}
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
@@ -3581,7 +3612,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         </td>
                         <td className="px-3 py-2 text-right text-muted-foreground">{item.safetyStock}</td>
                         <td className="px-3 py-2 text-right text-muted-foreground">{item.shelfLifeDays}</td>
-                        <td className="px-3 py-2 text-right text-muted-foreground">{item.productionEfficiency}</td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">
+                          <span>{item.productionEfficiency}</span>
+                          <span className="ml-1 text-xs text-slate-500">{item.unit}/人時</span>
+                        </td>
                         <td className="px-3 py-2 text-muted-foreground">
                           <div className="max-w-[200px] truncate">{item.notes || "-"}</div>
                         </td>
@@ -4188,8 +4222,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       <SelectValue placeholder="単位" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="cs">cs</SelectItem>
-                      <SelectItem value="kg">kg</SelectItem>
+                      {ITEM_UNITS.map((unit) => (
+                        <SelectItem key={unit} value={unit}>
+                          {unit}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <div className="text-sm font-medium text-muted-foreground">計画方針</div>
@@ -4243,20 +4280,24 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     placeholder="賞味期限（日数）"
                   />
                   <div className="text-sm font-medium text-muted-foreground">製造効率</div>
-                  <Input
-                    inputMode="decimal"
-                    value={isItemEditMode ? editingItemProductionEfficiency : itemProductionEfficiencyDraft}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (isItemEditMode) {
-                        setEditingItemProductionEfficiency(next);
-                      } else {
-                        setItemProductionEfficiencyDraft(next);
-                      }
-                      setItemFormError(null);
-                    }}
-                    placeholder="1人1時間あたりの製造数量"
-                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      className="flex-1"
+                      inputMode="decimal"
+                      value={isItemEditMode ? editingItemProductionEfficiency : itemProductionEfficiencyDraft}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (isItemEditMode) {
+                          setEditingItemProductionEfficiency(next);
+                        } else {
+                          setItemProductionEfficiencyDraft(next);
+                        }
+                        setItemFormError(null);
+                      }}
+                      placeholder="1人1時間あたりの製造数量"
+                    />
+                    <span className="text-xs text-muted-foreground">{itemEfficiencyUnit}/人時</span>
+                  </div>
                   <div className="text-sm font-medium text-muted-foreground">備考</div>
                   <Textarea
                     value={isItemEditMode ? editingItemNotes : itemNotesDraft}
@@ -4341,8 +4382,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       <SelectValue placeholder="単位" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="kg">kg</SelectItem>
-                      <SelectItem value="g">g</SelectItem>
+                      {ITEM_UNITS.map((unit) => (
+                        <SelectItem key={unit} value={unit}>
+                          {unit}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -4403,9 +4447,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     {recipeDraft.map((r, idx) => (
                       <div key={`${r.materialId}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
                         <div className="col-span-6">
-                          <Select
+                          <SearchableCombobox
                             value={r.materialId}
-                            onValueChange={(value) => {
+                            options={materialOptions}
+                            onChange={(value) => {
                               const selected = materialMap.get(value);
                               setRecipeDraft((prev) =>
                                 prev.map((x, i) =>
@@ -4419,24 +4464,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                                 )
                               );
                             }}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="原料を選択" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {materialsMaster.length ? (
-                                materialsMaster.map((m) => (
-                                  <SelectItem key={m.id} value={m.id}>
-                                    {m.name}
-                                  </SelectItem>
-                                ))
-                              ) : (
-                                <SelectItem value="__none__" disabled>
-                                  原料が未登録です
-                                </SelectItem>
-                              )}
-                            </SelectContent>
-                          </Select>
+                            placeholder="原料を検索"
+                            emptyLabel={materialsMaster.length ? "該当する原料がありません" : "原料が未登録です"}
+                            disabled={!materialsMaster.length}
+                          />
                         </div>
                         <div className="col-span-3">
                           <Input
@@ -4454,7 +4485,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                           <Select
                             value={r.unit}
                             onValueChange={(v) => {
-                              const unit = v === "g" ? "g" : "kg";
+                              const unit = asRecipeUnit(v);
                               setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
                             }}
                           >
@@ -4462,8 +4493,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                               <SelectValue placeholder="単位" />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="kg">kg</SelectItem>
-                              <SelectItem value="g">g</SelectItem>
+                              {ITEM_UNITS.map((unit) => (
+                                <SelectItem key={unit} value={unit}>
+                                  {unit}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </div>
@@ -4488,7 +4522,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                             {
                               materialId: fallbackMaterial?.id ?? "",
                               perUnit: 0,
-                              unit: fallbackMaterial?.unit ?? "kg",
+                              unit: fallbackMaterial?.unit ?? DEFAULT_MATERIAL_UNIT,
                             },
                           ]);
                         }}
