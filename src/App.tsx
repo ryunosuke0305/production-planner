@@ -2253,11 +2253,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       "既存ブロックの更新/削除ではblockIdを優先してください。",
       "承認済みのブロックは編集・削除できません。",
       "ユーザーが「空いてるところ」「空き枠」「この日までに」などの曖昧な指示を出した場合は、blocksの重複を避けつつ、条件に合う最も早いスロットを選んでstartSlotを必ず指定してください。",
+      "ブロックを作成または移動する場合は、なぜそのスロットを選んだかの根拠をmemoに必ず記載してください。",
     ].join("\n");
 
     const planContext = buildPlanContext();
     const constraintsNote = constraintsText.trim() ? `\n\nユーザー制約条件:\n${constraintsText.trim()}` : "";
-    const messageWithContext = `${trimmed}${constraintsNote}\n\n現在の計画データ(JSON):\n${planContext}`;
+    const messageWithContext = `現在の計画データ(JSON):\n${planContext}\n\nユーザー入力:\n${trimmed}${constraintsNote}`;
     const chatHistoryCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const recentChatMessages = chatMessages.filter((message) => {
       if (!message.createdAt) return false;
