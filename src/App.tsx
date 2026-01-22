@@ -1037,6 +1037,7 @@ type DragState = {
   blockId: string;
   originStart: number;
   originLen: number;
+  pointerOffset: number;
   laneRect: { left: number; width: number };
   dayIndex: number;
   moved: boolean;
@@ -2459,6 +2460,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const rect = laneEl.getBoundingClientRect();
     const block = blocks.find((b) => b.id === p.blockId);
     if (!block) return;
+    const slot = xToSlot(p.clientX, { left: rect.left, width: rect.width }, slotsPerDay);
+    const workingSlot = clampToWorkingSlot(p.dayIndex, slot, viewCalendar.rawHoursByDay);
+    if (workingSlot === null) return;
+    const absoluteSlot = (viewStartOffsetDays + p.dayIndex) * slotsPerDay + workingSlot;
+    const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
+    const pointerOffset = clamp(planSlot - block.start, 0, Math.max(0, block.len - 1));
 
     suppressClickRef.current = true;
 
@@ -2467,6 +2474,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       blockId: p.blockId,
       originStart: block.start,
       originLen: block.len,
+      pointerOffset,
       laneRect: { left: rect.left, width: rect.width },
       dayIndex: p.dayIndex,
       moved: false,
@@ -2483,6 +2491,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const absoluteSlot = (viewStartOffsetDays + s.dayIndex) * slotsPerDay + workingSlot;
     const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
     const planSlotEnd = clamp(convertSlotIndex(absoluteSlot + 1, viewDensity, planDensity, "ceil"), 1, planSlotCount);
+    const planDayIndex = viewStartOffsetDays + s.dayIndex;
+    const daySlots = planCalendar.rawHoursByDay[planDayIndex]?.length ?? 0;
+    if (!daySlots) return;
+    const dayStart = planDayIndex * planSlotsPerDay;
+    const dayEnd = dayStart + daySlots;
     s.moved = true;
 
     setBlocks((prev) => {
@@ -2490,19 +2503,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         if (b.id !== s.blockId) return b;
 
         if (s.kind === "move") {
-          const start = clamp(planSlot, 0, planSlotCount - 1);
+          const maxStart = Math.max(dayStart, dayEnd - s.originLen);
+          const start = clamp(planSlot - s.pointerOffset, dayStart, maxStart);
           const len = clamp(s.originLen, 1, planSlotCount - start);
           return resolveOverlap({ ...b, start, len }, prev);
         }
 
         if (s.kind === "resizeL") {
           const end = s.originStart + s.originLen;
-          const newStart = clamp(planSlot, 0, end - 1);
+          const newStart = clamp(planSlot, dayStart, end - 1);
           const newLen = clamp(end - newStart, 1, planSlotCount - newStart);
           return resolveOverlap({ ...b, start: newStart, len: newLen }, prev);
         }
 
-        const newEnd = clamp(planSlotEnd, b.start + 1, planSlotCount);
+        const newEnd = clamp(planSlotEnd, b.start + 1, dayEnd);
         const newLen = clamp(newEnd - b.start, 1, planSlotCount - b.start);
         return resolveOverlap({ ...b, len: newLen }, prev);
       });
@@ -2526,7 +2540,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       window.removeEventListener("pointerup", endPointer);
       window.removeEventListener("pointercancel", endPointer);
     };
-  }, [planDensity, planSlotCount, slotsPerDay, viewCalendar, viewDensity]);
+  }, [
+    planCalendar.rawHoursByDay,
+    planDensity,
+    planSlotCount,
+    planSlotsPerDay,
+    slotsPerDay,
+    viewCalendar,
+    viewDensity,
+    viewStartOffsetDays,
+  ]);
 
   const openRecipeEdit = (itemId: string) => {
     const it = items.find((x) => x.id === itemId);
