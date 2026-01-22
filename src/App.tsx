@@ -2481,17 +2481,41 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     };
   };
 
+  const resolveLaneAtPointer = (clientY: number) => {
+    for (let i = 0; i < weekDates.length; i += 1) {
+      const laneEl = laneRefs.current[String(i)];
+      if (!laneEl) continue;
+      const rect = laneEl.getBoundingClientRect();
+      if (clientY >= rect.top && clientY <= rect.bottom) {
+        return { dayIndex: i, rect };
+      }
+    }
+    return null;
+  };
+
   const onPointerMove = (e: PointerEvent) => {
     const s = dragStateRef.current;
     if (!s) return;
 
-    const slot = xToSlot(e.clientX, s.laneRect, slotsPerDay);
-    const workingSlot = clampToWorkingSlot(s.dayIndex, slot, viewCalendar.rawHoursByDay);
+    let activeDayIndex = s.dayIndex;
+    let laneRect = s.laneRect;
+    if (s.kind === "move") {
+      const lane = resolveLaneAtPointer(e.clientY);
+      if (lane) {
+        activeDayIndex = lane.dayIndex;
+        laneRect = lane.rect;
+        s.dayIndex = lane.dayIndex;
+        s.laneRect = lane.rect;
+      }
+    }
+
+    const slot = xToSlot(e.clientX, laneRect, slotsPerDay);
+    const workingSlot = clampToWorkingSlot(activeDayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
-    const absoluteSlot = (viewStartOffsetDays + s.dayIndex) * slotsPerDay + workingSlot;
+    const absoluteSlot = (viewStartOffsetDays + activeDayIndex) * slotsPerDay + workingSlot;
     const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
     const planSlotEnd = clamp(convertSlotIndex(absoluteSlot + 1, viewDensity, planDensity, "ceil"), 1, planSlotCount);
-    const planDayIndex = viewStartOffsetDays + s.dayIndex;
+    const planDayIndex = viewStartOffsetDays + activeDayIndex;
     const daySlots = planCalendar.rawHoursByDay[planDayIndex]?.length ?? 0;
     if (!daySlots) return;
     const dayStart = planDayIndex * planSlotsPerDay;
