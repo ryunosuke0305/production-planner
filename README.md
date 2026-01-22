@@ -181,6 +181,7 @@ Gemini API との通信をサーバー側で中継し、クライアントに AP
 ### Gemini API
 
 チャット更新はサーバー側の `/api/gemini` ミドルウェアを経由して `@google/genai` SDK で Gemini API を呼び出し、返却された JSON から更新アクションを抽出します。API キーはサーバー環境変数（`GEMINI_API_KEY`）で管理し、クライアントには公開しません。
+送信するメッセージは「現在の計画データ(JSON) → ユーザー入力 → ユーザー制約条件」の順で構成し、ブロックの作成・移動時には割り当て理由を `memo` に残すよう指示しています。
 
 ## ディレクトリ構成
 
@@ -322,6 +323,7 @@ orders(delivery_date TEXT, ship_date TEXT, item_id TEXT, item_code TEXT, quantit
 ### チャット更新アクション
 
 Gemini API には以下の形式で更新指示を返すように指示しています。
+ブロックを作成・移動する場合は、割り当ての根拠を `memo` に残します。
 
 ```json
 {
