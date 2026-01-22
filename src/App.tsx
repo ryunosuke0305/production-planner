@@ -2500,7 +2500,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (!laneEl) return;
     const rect = laneEl.getBoundingClientRect();
     const block = blocks.find((b) => b.id === p.blockId);
-    if (!block) return;
+    if (!block || block.approved) return;
     const slot = xToSlot(p.clientX, { left: rect.left, width: rect.width }, slotsPerDay);
     const workingSlot = clampToWorkingSlot(p.dayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
@@ -3162,6 +3162,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                           ? " border-sky-400 bg-sky-200"
                           : " border-sky-200 bg-sky-100 hover:bg-sky-200";
 
+                      const isApproved = block.approved;
                       return (
                         <motion.div
                           key={block.id}
@@ -3175,29 +3176,36 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                             openPlanEdit(block);
                           }}
                         >
-                          <div
-                            className="absolute left-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-l-xl touch-none"
-                            onPointerDown={(ev) => {
-                              ev.preventDefault();
-                              ev.stopPropagation();
-                              beginPointer({ kind: "resizeL", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
-                            }}
-                            title="幅調整（左）"
-                          />
+                          {isApproved ? null : (
+                            <div
+                              className="absolute left-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-l-xl touch-none"
+                              onPointerDown={(ev) => {
+                                ev.preventDefault();
+                                ev.stopPropagation();
+                                beginPointer({ kind: "resizeL", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
+                              }}
+                              title="幅調整（左）"
+                            />
+                          )}
+
+                          {isApproved ? null : (
+                            <div
+                              className="absolute right-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-r-xl touch-none"
+                              onPointerDown={(ev) => {
+                                ev.preventDefault();
+                                ev.stopPropagation();
+                                beginPointer({ kind: "resizeR", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
+                              }}
+                              title="幅調整（右）"
+                            />
+                          )}
 
                           <div
-                            className="absolute right-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-r-xl touch-none"
+                            className={`absolute inset-0 z-10 select-none rounded-xl p-2 touch-none ${
+                              isApproved ? "cursor-default" : "cursor-grab"
+                            }`}
                             onPointerDown={(ev) => {
-                              ev.preventDefault();
-                              ev.stopPropagation();
-                              beginPointer({ kind: "resizeR", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
-                            }}
-                            title="幅調整（右）"
-                          />
-
-                          <div
-                            className="absolute inset-0 z-10 cursor-grab select-none rounded-xl p-2 touch-none"
-                            onPointerDown={(ev) => {
+                              if (isApproved) return;
                               const r = ev.currentTarget.getBoundingClientRect();
                               const x = ev.clientX - r.left;
                               if (x <= 8 || x >= r.width - 8) return;
