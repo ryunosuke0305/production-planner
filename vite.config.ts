@@ -1,7 +1,9 @@
 import { defineConfig, loadEnv } from "vite";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import react from "@vitejs/plugin-react";
 import { GoogleGenAI } from "@google/genai";
 import {
@@ -19,6 +21,7 @@ import {
 type MiddlewareRequest = {
   method?: string;
   url?: string;
+  headers?: Record<string, string | string[] | undefined>;
   on: (event: string, handler: (chunk: any) => void) => void;
 };
 
@@ -27,6 +30,8 @@ type MiddlewareResponse = {
   setHeader: (name: string, value: string) => void;
   end: (body?: string) => void;
 };
+
+type MiddlewareNext = (error?: unknown) => void;
 
 type GeminiRequestPayload = {
   systemInstruction?: { role: "system"; parts: Array<{ text: string }> };
@@ -41,8 +46,30 @@ type ChatHistoryMessage = {
   createdAt?: string;
 };
 
+type AuthRole = "admin" | "viewer";
+
+type AuthUser = {
+  id: string;
+  name: string;
+  role: AuthRole;
+  passwordHash: string;
+};
+
+type AuthSession = {
+  token: string;
+  userId: string;
+  name: string;
+  role: AuthRole;
+  createdAt: string;
+  lastSeenAt: string;
+};
+
 const CONSTRAINTS_PATH = fileURLToPath(new URL("./data/gemini-constraints.json", import.meta.url));
 const CHAT_HISTORY_PATH = fileURLToPath(new URL("./data/gemini-chat.json", import.meta.url));
+const AUTH_USERS_PATH = fileURLToPath(new URL("./data/auth-users.json", import.meta.url));
+const AUTH_SESSIONS_PATH = fileURLToPath(new URL("./data/auth-sessions.json", import.meta.url));
+
+const scryptAsync = promisify(crypto.scrypt);
 
 const readConstraintsText = async () => {
   try {
@@ -81,6 +108,105 @@ const writeChatHistory = async (messages: ChatHistoryMessage[]) => {
   const payload = JSON.stringify({ messages }, null, 2);
   await fs.writeFile(CHAT_HISTORY_PATH, payload, "utf-8");
 };
+
+const readAuthUsers = async (): Promise<AuthUser[]> => {
+  try {
+    const raw = await fs.readFile(AUTH_USERS_PATH, "utf-8");
+    const parsed = JSON.parse(raw) as { users?: AuthUser[] };
+    return Array.isArray(parsed.users) ? parsed.users : [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+};
+
+const readAuthSessions = async (): Promise<AuthSession[]> => {
+  try {
+    const raw = await fs.readFile(AUTH_SESSIONS_PATH, "utf-8");
+    const parsed = JSON.parse(raw) as { sessions?: AuthSession[] };
+    return Array.isArray(parsed.sessions) ? parsed.sessions : [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+};
+
+const writeAuthSessions = async (sessions: AuthSession[]) => {
+  await fs.mkdir(path.dirname(AUTH_SESSIONS_PATH), { recursive: true });
+  const payload = JSON.stringify({ sessions }, null, 2);
+  await fs.writeFile(AUTH_SESSIONS_PATH, payload, "utf-8");
+};
+
+const parseCookies = (cookieHeader?: string) => {
+  if (!cookieHeader) return {};
+  return cookieHeader.split(";").reduce<Record<string, string>>((acc, chunk) => {
+    const [rawKey, ...rest] = chunk.trim().split("=");
+    if (!rawKey) return acc;
+    acc[rawKey] = decodeURIComponent(rest.join("="));
+    return acc;
+  }, {});
+};
+
+const serializeCookie = (name: string, value: string, options: { maxAge?: number; secure?: boolean } = {}) => {
+  const attrs = ["Path=/", "HttpOnly", "SameSite=Lax"];
+  if (typeof options.maxAge === "number") {
+    attrs.push(`Max-Age=${options.maxAge}`);
+  }
+  if (options.secure) {
+    attrs.push("Secure");
+  }
+  return `${name}=${encodeURIComponent(value)}; ${attrs.join("; ")}`;
+};
+
+const getRequestCookie = (req: MiddlewareRequest, name: string) => {
+  const cookieHeader = req.headers?.cookie;
+  if (Array.isArray(cookieHeader)) {
+    return parseCookies(cookieHeader.join("; "))[name];
+  }
+  return parseCookies(cookieHeader)[name];
+};
+
+const verifyPassword = async (password: string, hash: string) => {
+  const [scheme, saltB64, digestB64] = hash.split("$");
+  if (scheme !== "scrypt" || !saltB64 || !digestB64) return false;
+  const salt = Buffer.from(saltB64, "base64");
+  const digest = Buffer.from(digestB64, "base64");
+  const derived = (await scryptAsync(password, salt, digest.length)) as Buffer;
+  return crypto.timingSafeEqual(digest, derived);
+};
+
+const getAuthSession = async (req: MiddlewareRequest) => {
+  const token = getRequestCookie(req, "auth_session");
+  if (!token) return null;
+  const sessions = await readAuthSessions();
+  const session = sessions.find((entry) => entry.token === token);
+  if (!session) return null;
+  session.lastSeenAt = new Date().toISOString();
+  await writeAuthSessions(sessions);
+  return session;
+};
+
+const ensureAuthSession = async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+  const session = await getAuthSession(req);
+  if (!session) {
+    res.statusCode = 401;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ error: "Unauthorized" }));
+    return null;
+  }
+  return session;
+};
+
+const isWriteMethod = (method?: string) => {
+  const normalized = method?.toUpperCase();
+  return normalized && normalized !== "GET" && normalized !== "HEAD";
+};
+
+const isProductionCookie = () => process.env.NODE_ENV === "production";
 
 const createConstraintsApiMiddleware = () => {
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
@@ -202,6 +328,130 @@ const createChatHistoryApiMiddleware = () => {
 
     res.statusCode = 405;
     res.end("Method Not Allowed");
+  };
+};
+
+const createAuthApiMiddleware = () => {
+  return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    if (req.method === "GET") {
+      const session = await getAuthSession(req);
+      if (!session) {
+        res.statusCode = 401;
+        res.end();
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          user: {
+            id: session.userId,
+            name: session.name,
+            role: session.role,
+          },
+        })
+      );
+      return;
+    }
+
+    if (req.method === "POST") {
+      if ((req.url ?? "").endsWith("/logout")) {
+        const token = getRequestCookie(req, "auth_session");
+        if (token) {
+          const sessions = await readAuthSessions();
+          const filtered = sessions.filter((session) => session.token !== token);
+          await writeAuthSessions(filtered);
+        }
+        res.statusCode = 204;
+        res.setHeader("Set-Cookie", serializeCookie("auth_session", "", { maxAge: 0, secure: isProductionCookie() }));
+        res.end();
+        return;
+      }
+
+      let body = "";
+      req.on("data", (chunk: any) => {
+        body += chunk.toString("utf-8");
+      });
+      req.on("end", async () => {
+        let parsed: { username?: string; password?: string };
+        try {
+          parsed = JSON.parse(body || "{}") as { username?: string; password?: string };
+        } catch {
+          res.statusCode = 400;
+          res.end("Invalid JSON payload.");
+          return;
+        }
+        const username = typeof parsed.username === "string" ? parsed.username.trim() : "";
+        const password = typeof parsed.password === "string" ? parsed.password : "";
+        if (!username || !password) {
+          res.statusCode = 400;
+          res.end("Invalid login payload.");
+          return;
+        }
+        const users = await readAuthUsers();
+        if (!users.length) {
+          res.statusCode = 500;
+          res.end("No auth users configured.");
+          return;
+        }
+        const user = users.find((entry) => entry.id === username);
+        if (!user || !(await verifyPassword(password, user.passwordHash))) {
+          res.statusCode = 401;
+          res.end("Invalid credentials.");
+          return;
+        }
+        const token = crypto.randomBytes(32).toString("hex");
+        const sessions = await readAuthSessions();
+        const now = new Date().toISOString();
+        sessions.push({
+          token,
+          userId: user.id,
+          name: user.name,
+          role: user.role,
+          createdAt: now,
+          lastSeenAt: now,
+        });
+        await writeAuthSessions(sessions);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.setHeader("Set-Cookie", serializeCookie("auth_session", token, { secure: isProductionCookie() }));
+        res.end(
+          JSON.stringify({
+            user: {
+              id: user.id,
+              name: user.name,
+              role: user.role,
+            },
+          })
+        );
+      });
+      return;
+    }
+
+    res.statusCode = 405;
+    res.end("Method Not Allowed");
+  };
+};
+
+const createAuthGuardMiddleware = () => {
+  return async (req: MiddlewareRequest, res: MiddlewareResponse, next: MiddlewareNext) => {
+    if (!req.url?.startsWith("/api/")) {
+      next();
+      return;
+    }
+    if (req.url.startsWith("/api/auth")) {
+      next();
+      return;
+    }
+    const session = await ensureAuthSession(req, res);
+    if (!session) return;
+    if (isWriteMethod(req.method) && session.role !== "admin") {
+      res.statusCode = 403;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "Forbidden" }));
+      return;
+    }
+    next();
   };
 };
 
@@ -536,6 +786,8 @@ export default defineConfig(({ mode }) => {
       {
         name: "plan-and-gemini-api",
         configureServer(server) {
+          server.middlewares.use(createAuthGuardMiddleware());
+          server.middlewares.use("/api/auth", createAuthApiMiddleware());
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
           server.middlewares.use("/api/orders", createOrdersApiMiddleware());
@@ -545,6 +797,8 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
         },
         configurePreviewServer(server) {
+          server.middlewares.use(createAuthGuardMiddleware());
+          server.middlewares.use("/api/auth", createAuthApiMiddleware());
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
           server.middlewares.use("/api/orders", createOrdersApiMiddleware());
