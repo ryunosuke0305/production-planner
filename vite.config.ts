@@ -1,7 +1,9 @@
 import { defineConfig, loadEnv } from "vite";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import react from "@vitejs/plugin-react";
 import { GoogleGenAI } from "@google/genai";
 import {
@@ -19,6 +21,7 @@ import {
 type MiddlewareRequest = {
   method?: string;
   url?: string;
+  headers?: Record<string, string | string[] | undefined>;
   on: (event: string, handler: (chunk: any) => void) => void;
 };
 
@@ -27,6 +30,8 @@ type MiddlewareResponse = {
   setHeader: (name: string, value: string) => void;
   end: (body?: string) => void;
 };
+
+type MiddlewareNext = (error?: unknown) => void;
 
 type GeminiRequestPayload = {
   systemInstruction?: { role: "system"; parts: Array<{ text: string }> };
@@ -41,8 +46,30 @@ type ChatHistoryMessage = {
   createdAt?: string;
 };
 
+type AuthRole = "admin" | "viewer";
+
+type AuthUser = {
+  id: string;
+  name: string;
+  role: AuthRole;
+  passwordHash: string;
+};
+
+type AuthSession = {
+  token: string;
+  userId: string;
+  name: string;
+  role: AuthRole;
+  createdAt: string;
+  lastSeenAt: string;
+};
+
 const CONSTRAINTS_PATH = fileURLToPath(new URL("./data/gemini-constraints.json", import.meta.url));
 const CHAT_HISTORY_PATH = fileURLToPath(new URL("./data/gemini-chat.json", import.meta.url));
+const AUTH_USERS_PATH = fileURLToPath(new URL("./data/auth-users.json", import.meta.url));
+const AUTH_SESSIONS_PATH = fileURLToPath(new URL("./data/auth-sessions.json", import.meta.url));
+
+const scryptAsync = promisify(crypto.scrypt);
 
 const readConstraintsText = async () => {
   try {
@@ -81,6 +108,117 @@ const writeChatHistory = async (messages: ChatHistoryMessage[]) => {
   const payload = JSON.stringify({ messages }, null, 2);
   await fs.writeFile(CHAT_HISTORY_PATH, payload, "utf-8");
 };
+
+const readAuthUsers = async (): Promise<AuthUser[]> => {
+  try {
+    const raw = await fs.readFile(AUTH_USERS_PATH, "utf-8");
+    const parsed = JSON.parse(raw) as { users?: AuthUser[] };
+    return Array.isArray(parsed.users) ? parsed.users : [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+};
+
+const writeAuthUsers = async (users: AuthUser[]) => {
+  await fs.mkdir(path.dirname(AUTH_USERS_PATH), { recursive: true });
+  const payload = JSON.stringify({ users }, null, 2);
+  await fs.writeFile(AUTH_USERS_PATH, payload, "utf-8");
+};
+
+const readAuthSessions = async (): Promise<AuthSession[]> => {
+  try {
+    const raw = await fs.readFile(AUTH_SESSIONS_PATH, "utf-8");
+    const parsed = JSON.parse(raw) as { sessions?: AuthSession[] };
+    return Array.isArray(parsed.sessions) ? parsed.sessions : [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+};
+
+const writeAuthSessions = async (sessions: AuthSession[]) => {
+  await fs.mkdir(path.dirname(AUTH_SESSIONS_PATH), { recursive: true });
+  const payload = JSON.stringify({ sessions }, null, 2);
+  await fs.writeFile(AUTH_SESSIONS_PATH, payload, "utf-8");
+};
+
+const parseCookies = (cookieHeader?: string) => {
+  if (!cookieHeader) return {};
+  return cookieHeader.split(";").reduce<Record<string, string>>((acc, chunk) => {
+    const [rawKey, ...rest] = chunk.trim().split("=");
+    if (!rawKey) return acc;
+    acc[rawKey] = decodeURIComponent(rest.join("="));
+    return acc;
+  }, {});
+};
+
+const serializeCookie = (name: string, value: string, options: { maxAge?: number; secure?: boolean } = {}) => {
+  const attrs = ["Path=/", "HttpOnly", "SameSite=Lax"];
+  if (typeof options.maxAge === "number") {
+    attrs.push(`Max-Age=${options.maxAge}`);
+  }
+  if (options.secure) {
+    attrs.push("Secure");
+  }
+  return `${name}=${encodeURIComponent(value)}; ${attrs.join("; ")}`;
+};
+
+const getRequestCookie = (req: MiddlewareRequest, name: string) => {
+  const cookieHeader = req.headers?.cookie;
+  if (Array.isArray(cookieHeader)) {
+    return parseCookies(cookieHeader.join("; "))[name];
+  }
+  return parseCookies(cookieHeader)[name];
+};
+
+const verifyPassword = async (password: string, hash: string) => {
+  const [scheme, saltB64, digestB64] = hash.split("$");
+  if (scheme !== "scrypt" || !saltB64 || !digestB64) return false;
+  const salt = Buffer.from(saltB64, "base64");
+  const digest = Buffer.from(digestB64, "base64");
+  const derived = (await scryptAsync(password, salt, digest.length)) as Buffer;
+  return crypto.timingSafeEqual(digest, derived);
+};
+
+const hashPassword = async (password: string) => {
+  const salt = crypto.randomBytes(16);
+  const derived = (await scryptAsync(password, salt, 64)) as Buffer;
+  return ["scrypt", salt.toString("base64"), derived.toString("base64")].join("$");
+};
+
+const getAuthSession = async (req: MiddlewareRequest) => {
+  const token = getRequestCookie(req, "auth_session");
+  if (!token) return null;
+  const sessions = await readAuthSessions();
+  const session = sessions.find((entry) => entry.token === token);
+  if (!session) return null;
+  session.lastSeenAt = new Date().toISOString();
+  await writeAuthSessions(sessions);
+  return session;
+};
+
+const ensureAuthSession = async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+  const session = await getAuthSession(req);
+  if (!session) {
+    res.statusCode = 401;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ error: "Unauthorized" }));
+    return null;
+  }
+  return session;
+};
+
+const isWriteMethod = (method?: string) => {
+  const normalized = method?.toUpperCase();
+  return normalized && normalized !== "GET" && normalized !== "HEAD";
+};
+
+const isProductionCookie = () => process.env.NODE_ENV === "production";
 
 const createConstraintsApiMiddleware = () => {
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
@@ -202,6 +340,292 @@ const createChatHistoryApiMiddleware = () => {
 
     res.statusCode = 405;
     res.end("Method Not Allowed");
+  };
+};
+
+const createAuthApiMiddleware = () => {
+  return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    if (req.method === "GET") {
+      const session = await getAuthSession(req);
+      if (!session) {
+        res.statusCode = 401;
+        res.end();
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          user: {
+            id: session.userId,
+            name: session.name,
+            role: session.role,
+          },
+        })
+      );
+      return;
+    }
+
+    if (req.method === "POST") {
+      if ((req.url ?? "").endsWith("/logout")) {
+        const token = getRequestCookie(req, "auth_session");
+        if (token) {
+          const sessions = await readAuthSessions();
+          const filtered = sessions.filter((session) => session.token !== token);
+          await writeAuthSessions(filtered);
+        }
+        res.statusCode = 204;
+        res.setHeader("Set-Cookie", serializeCookie("auth_session", "", { maxAge: 0, secure: isProductionCookie() }));
+        res.end();
+        return;
+      }
+
+      let body = "";
+      req.on("data", (chunk: any) => {
+        body += chunk.toString("utf-8");
+      });
+      req.on("end", async () => {
+        let parsed: { username?: string; password?: string };
+        try {
+          parsed = JSON.parse(body || "{}") as { username?: string; password?: string };
+        } catch {
+          res.statusCode = 400;
+          res.end("Invalid JSON payload.");
+          return;
+        }
+        const username = typeof parsed.username === "string" ? parsed.username.trim() : "";
+        const password = typeof parsed.password === "string" ? parsed.password : "";
+        if (!username || !password) {
+          res.statusCode = 400;
+          res.end("Invalid login payload.");
+          return;
+        }
+        const users = await readAuthUsers();
+        if (!users.length) {
+          res.statusCode = 500;
+          res.end("No auth users configured.");
+          return;
+        }
+        const user = users.find((entry) => entry.id === username);
+        if (!user || !(await verifyPassword(password, user.passwordHash))) {
+          res.statusCode = 401;
+          res.end("Invalid credentials.");
+          return;
+        }
+        const token = crypto.randomBytes(32).toString("hex");
+        const sessions = await readAuthSessions();
+        const now = new Date().toISOString();
+        sessions.push({
+          token,
+          userId: user.id,
+          name: user.name,
+          role: user.role,
+          createdAt: now,
+          lastSeenAt: now,
+        });
+        await writeAuthSessions(sessions);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.setHeader("Set-Cookie", serializeCookie("auth_session", token, { secure: isProductionCookie() }));
+        res.end(
+          JSON.stringify({
+            user: {
+              id: user.id,
+              name: user.name,
+              role: user.role,
+            },
+          })
+        );
+      });
+      return;
+    }
+
+    res.statusCode = 405;
+    res.end("Method Not Allowed");
+  };
+};
+
+const createAuthUsersApiMiddleware = () => {
+  const ensureAdmin = async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    const session = await ensureAuthSession(req, res);
+    if (!session) return null;
+    if (session.role !== "admin") {
+      res.statusCode = 403;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "Forbidden" }));
+      return null;
+    }
+    return session;
+  };
+
+  return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    const session = await ensureAdmin(req, res);
+    if (!session) return;
+
+    const url = new URL(req.url ?? "", "http://localhost");
+    const basePath = "/api/auth-users";
+    const idParam = url.pathname.startsWith(`${basePath}/`) ? url.pathname.slice(basePath.length + 1) : "";
+    if (req.method === "GET") {
+      try {
+        const users = await readAuthUsers();
+        const payload = users.map((user) => ({
+          id: user.id,
+          name: user.name,
+          role: user.role,
+        }));
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ users: payload }));
+      } catch (error) {
+        console.error("Failed to read auth users:", error);
+        res.statusCode = 500;
+        res.end("Failed to read auth users.");
+      }
+      return;
+    }
+
+    if (req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk: any) => {
+        body += chunk.toString("utf-8");
+      });
+      req.on("end", async () => {
+        let parsed: { id?: string; name?: string; role?: AuthRole; password?: string };
+        try {
+          parsed = JSON.parse(body || "{}") as { id?: string; name?: string; role?: AuthRole; password?: string };
+        } catch {
+          res.statusCode = 400;
+          res.end("Invalid JSON payload.");
+          return;
+        }
+        const id = typeof parsed.id === "string" ? parsed.id.trim() : "";
+        const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
+        const role = parsed.role === "admin" || parsed.role === "viewer" ? parsed.role : null;
+        const password = typeof parsed.password === "string" ? parsed.password : "";
+        if (!id || !name || !role || !password) {
+          res.statusCode = 400;
+          res.end("Invalid user payload.");
+          return;
+        }
+        try {
+          const users = await readAuthUsers();
+          if (users.some((user) => user.id === id)) {
+            res.statusCode = 409;
+            res.end("User already exists.");
+            return;
+          }
+          const passwordHash = await hashPassword(password);
+          users.push({ id, name, role, passwordHash });
+          await writeAuthUsers(users);
+          res.statusCode = 201;
+          res.end();
+        } catch (error) {
+          console.error("Failed to create auth user:", error);
+          res.statusCode = 500;
+          res.end("Failed to create auth user.");
+        }
+      });
+      return;
+    }
+
+    if (req.method === "PUT") {
+      let body = "";
+      req.on("data", (chunk: any) => {
+        body += chunk.toString("utf-8");
+      });
+      req.on("end", async () => {
+        let parsed: { name?: string; role?: AuthRole; password?: string };
+        try {
+          parsed = JSON.parse(body || "{}") as { name?: string; role?: AuthRole; password?: string };
+        } catch {
+          res.statusCode = 400;
+          res.end("Invalid JSON payload.");
+          return;
+        }
+        const id = typeof idParam === "string" ? idParam.trim() : "";
+        const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
+        const role = parsed.role === "admin" || parsed.role === "viewer" ? parsed.role : null;
+        const password = typeof parsed.password === "string" ? parsed.password : "";
+        if (!id || !name || !role) {
+          res.statusCode = 400;
+          res.end("Invalid user payload.");
+          return;
+        }
+        try {
+          const users = await readAuthUsers();
+          const target = users.find((user) => user.id === id);
+          if (!target) {
+            res.statusCode = 404;
+            res.end("User not found.");
+            return;
+          }
+          target.name = name;
+          target.role = role;
+          if (password) {
+            target.passwordHash = await hashPassword(password);
+          }
+          await writeAuthUsers(users);
+          res.statusCode = 204;
+          res.end();
+        } catch (error) {
+          console.error("Failed to update auth user:", error);
+          res.statusCode = 500;
+          res.end("Failed to update auth user.");
+        }
+      });
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      const id = typeof idParam === "string" ? idParam.trim() : "";
+      if (!id) {
+        res.statusCode = 400;
+        res.end("Invalid user id.");
+        return;
+      }
+      try {
+        const users = await readAuthUsers();
+        const nextUsers = users.filter((user) => user.id !== id);
+        if (nextUsers.length === users.length) {
+          res.statusCode = 404;
+          res.end("User not found.");
+          return;
+        }
+        await writeAuthUsers(nextUsers);
+        res.statusCode = 204;
+        res.end();
+      } catch (error) {
+        console.error("Failed to delete auth user:", error);
+        res.statusCode = 500;
+        res.end("Failed to delete auth user.");
+      }
+      return;
+    }
+
+    res.statusCode = 405;
+    res.end("Method Not Allowed");
+  };
+};
+
+const createAuthGuardMiddleware = () => {
+  return async (req: MiddlewareRequest, res: MiddlewareResponse, next: MiddlewareNext) => {
+    if (!req.url?.startsWith("/api/")) {
+      next();
+      return;
+    }
+    if (req.url.startsWith("/api/auth")) {
+      next();
+      return;
+    }
+    const session = await ensureAuthSession(req, res);
+    if (!session) return;
+    if (isWriteMethod(req.method) && session.role !== "admin") {
+      res.statusCode = 403;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "Forbidden" }));
+      return;
+    }
+    next();
   };
 };
 
@@ -536,6 +960,9 @@ export default defineConfig(({ mode }) => {
       {
         name: "plan-and-gemini-api",
         configureServer(server) {
+          server.middlewares.use(createAuthGuardMiddleware());
+          server.middlewares.use("/api/auth", createAuthApiMiddleware());
+          server.middlewares.use("/api/auth-users", createAuthUsersApiMiddleware());
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
           server.middlewares.use("/api/orders", createOrdersApiMiddleware());
@@ -545,6 +972,9 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
         },
         configurePreviewServer(server) {
+          server.middlewares.use(createAuthGuardMiddleware());
+          server.middlewares.use("/api/auth", createAuthApiMiddleware());
+          server.middlewares.use("/api/auth-users", createAuthUsersApiMiddleware());
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
           server.middlewares.use("/api/orders", createOrdersApiMiddleware());

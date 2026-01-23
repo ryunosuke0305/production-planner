@@ -181,6 +181,19 @@ type ChatResponsePayload = {
   actions?: ChatAction[];
 };
 
+type AuthRole = "admin" | "viewer";
+
+type AuthUser = {
+  id: string;
+  name: string;
+  role: AuthRole;
+};
+
+const AUTH_ROLE_LABELS: Record<AuthRole, string> = {
+  admin: "管理者",
+  viewer: "閲覧者",
+};
+
 type PlanPayload = {
   version: 1;
   weekStartISO: string;
@@ -1060,7 +1073,7 @@ type DragState = {
 export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [navOpen, setNavOpen] = useState(false);
   const [activeView, setActiveView] = useState<"schedule" | "master" | "import" | "manual">("schedule");
-  const [masterSection, setMasterSection] = useState<"home" | "items" | "materials">("home");
+  const [masterSection, setMasterSection] = useState<"home" | "items" | "materials" | "users">("home");
   const [manualAudience, setManualAudience] = useState<"user" | "admin">("user");
   const [planWeekStart, setPlanWeekStart] = useState<Date>(() => getDefaultWeekStart());
   const [viewWeekStart, setViewWeekStart] = useState<Date>(() => getDefaultWeekStart());
@@ -1073,6 +1086,26 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   // 実運用ではユーザー設定から取得する想定
   const timezone = "Asia/Tokyo";
+
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [loginId, setLoginId] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [authUsers, setAuthUsers] = useState<AuthUser[]>([]);
+  const [authUsersLoading, setAuthUsersLoading] = useState(false);
+  const [authUsersError, setAuthUsersError] = useState<string | null>(null);
+  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [userModalMode, setUserModalMode] = useState<"create" | "edit">("create");
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [userIdDraft, setUserIdDraft] = useState("");
+  const [userNameDraft, setUserNameDraft] = useState("");
+  const [userRoleDraft, setUserRoleDraft] = useState<AuthRole>("viewer");
+  const [userPasswordDraft, setUserPasswordDraft] = useState("");
+  const [userFormError, setUserFormError] = useState<string | null>(null);
+  const [userActionBusy, setUserActionBusy] = useState(false);
 
   const [materialsMaster, setMaterialsMaster] = useState<Material[]>(SAMPLE_MATERIALS);
   const [items, setItems] = useState<Item[]>(SAMPLE_ITEMS);
@@ -1220,6 +1253,213 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [recipeDraft, setRecipeDraft] = useState<RecipeLine[]>([]);
   const [materialNameDraft, setMaterialNameDraft] = useState("");
   const [materialUnitDraft, setMaterialUnitDraft] = useState<RecipeUnit>(DEFAULT_MATERIAL_UNIT);
+
+  const canEdit = authUser?.role === "admin";
+  const authRoleLabel = authUser?.role === "admin" ? "管理者" : authUser ? "閲覧者" : "";
+  const readOnlyMessage = "閲覧専用ユーザーのため操作できません。";
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadAuthUser = async () => {
+      try {
+        const response = await fetch("/api/auth/me");
+        if (!response.ok) {
+          if (!cancelled) {
+            setAuthUser(null);
+          }
+          return;
+        }
+        const payload = (await response.json()) as { user?: AuthUser };
+        if (!cancelled) {
+          setAuthUser(payload.user ?? null);
+        }
+      } catch {
+        if (!cancelled) {
+          setAuthError("認証情報の取得に失敗しました。");
+          setAuthUser(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setAuthLoading(false);
+        }
+      }
+    };
+    void loadAuthUser();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleLogin = async () => {
+    setLoginBusy(true);
+    setLoginError(null);
+    setAuthError(null);
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginId, password: loginPassword }),
+      });
+      if (!response.ok) {
+        const message = await response.text();
+        setLoginError(message || "ログインに失敗しました。");
+        return;
+      }
+      const payload = (await response.json()) as { user?: AuthUser };
+      setAuthUser(payload.user ?? null);
+      setLoginId("");
+      setLoginPassword("");
+    } catch {
+      setLoginError("ログインに失敗しました。");
+    } finally {
+      setLoginBusy(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      setAuthUser(null);
+      setActiveView("schedule");
+    }
+  };
+
+  useEffect(() => {
+    if (!authUser || !canEdit || masterSection !== "users") return;
+    let cancelled = false;
+    const loadAuthUsers = async () => {
+      setAuthUsersLoading(true);
+      setAuthUsersError(null);
+      try {
+        const response = await fetch("/api/auth-users");
+        if (!response.ok) {
+          throw new Error("ユーザー一覧の取得に失敗しました。");
+        }
+        const payload = (await response.json()) as { users?: AuthUser[] };
+        if (!cancelled) {
+          setAuthUsers(Array.isArray(payload.users) ? payload.users : []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : "ユーザー一覧の取得に失敗しました。";
+          setAuthUsersError(message);
+        }
+      } finally {
+        if (!cancelled) {
+          setAuthUsersLoading(false);
+        }
+      }
+    };
+    void loadAuthUsers();
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser, canEdit, masterSection]);
+
+  const openCreateUserModal = () => {
+    setUserModalMode("create");
+    setEditingUserId(null);
+    setUserIdDraft("");
+    setUserNameDraft("");
+    setUserRoleDraft("viewer");
+    setUserPasswordDraft("");
+    setUserFormError(null);
+    setIsUserModalOpen(true);
+  };
+
+  const openEditUserModal = (user: AuthUser) => {
+    setUserModalMode("edit");
+    setEditingUserId(user.id);
+    setUserIdDraft(user.id);
+    setUserNameDraft(user.name);
+    setUserRoleDraft(user.role);
+    setUserPasswordDraft("");
+    setUserFormError(null);
+    setIsUserModalOpen(true);
+  };
+
+  const handleUserModalSave = async () => {
+    if (!canEdit) return;
+    const trimmedId = userIdDraft.trim();
+    const trimmedName = userNameDraft.trim();
+    if (!trimmedId || !trimmedName) {
+      setUserFormError("ユーザーIDと表示名は必須です。");
+      return;
+    }
+    if (userModalMode === "create" && !userPasswordDraft) {
+      setUserFormError("作成時はパスワードが必須です。");
+      return;
+    }
+    setUserActionBusy(true);
+    setUserFormError(null);
+    try {
+      if (userModalMode === "create") {
+        const response = await fetch("/api/auth-users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: trimmedId,
+            name: trimmedName,
+            role: userRoleDraft,
+            password: userPasswordDraft,
+          }),
+        });
+        if (response.status === 409) {
+          setUserFormError("同じユーザーIDが既に存在します。");
+          return;
+        }
+        if (!response.ok) {
+          throw new Error("ユーザーの追加に失敗しました。");
+        }
+      } else {
+        const targetId = editingUserId ?? trimmedId;
+        const response = await fetch(`/api/auth-users/${encodeURIComponent(targetId)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: trimmedName,
+            role: userRoleDraft,
+            password: userPasswordDraft,
+          }),
+        });
+        if (!response.ok) {
+          throw new Error("ユーザーの更新に失敗しました。");
+        }
+      }
+      const refreshed = await fetch("/api/auth-users");
+      if (refreshed.ok) {
+        const payload = (await refreshed.json()) as { users?: AuthUser[] };
+        setAuthUsers(Array.isArray(payload.users) ? payload.users : []);
+      }
+      setIsUserModalOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "ユーザーの保存に失敗しました。";
+      setUserFormError(message);
+    } finally {
+      setUserActionBusy(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    if (!canEdit) return;
+    const confirmed = window.confirm(`ユーザー「${userId}」を削除しますか？`);
+    if (!confirmed) return;
+    setUserActionBusy(true);
+    setAuthUsersError(null);
+    try {
+      const response = await fetch(`/api/auth-users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error("ユーザーの削除に失敗しました。");
+      }
+      setAuthUsers((prev) => prev.filter((user) => user.id !== userId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "ユーザーの削除に失敗しました。";
+      setAuthUsersError(message);
+    } finally {
+      setUserActionBusy(false);
+    }
+  };
   const [materialFormError, setMaterialFormError] = useState<string | null>(null);
   const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null);
   const [editingMaterialName, setEditingMaterialName] = useState("");
@@ -1622,6 +1862,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const saveImportHeaderOverrides = async (target: "daily" | "order") => {
+    if (!canEdit) {
+      setImportHeaderSaveError((prev) => ({ ...prev, [target]: readOnlyMessage }));
+      return;
+    }
     setImportHeaderSaveBusy(true);
     setImportHeaderSaveNote((prev) => ({ ...prev, [target]: null }));
     setImportHeaderSaveError((prev) => ({ ...prev, [target]: null }));
@@ -1646,6 +1890,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const handleDailyStockImport = async (file: File) => {
+    if (!canEdit) {
+      setDailyStockImportError(readOnlyMessage);
+      return;
+    }
     await runExcelImportWithFeedback({
       file,
       parseRows: parseDailyStockRows,
@@ -1665,6 +1913,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const handleOrderImport = async (file: File) => {
+    if (!canEdit) {
+      setOrderImportError(readOnlyMessage);
+      return;
+    }
     await runExcelImportWithFeedback({
       file,
       parseRows: parseOrderRows,
@@ -1684,6 +1936,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const handleItemMasterImport = async (file: File) => {
+    if (!canEdit) {
+      setItemMasterImportError(readOnlyMessage);
+      return;
+    }
     await runExcelImportWithFeedback({
       file,
       parseRows: parseItemMasterRows,
@@ -1746,6 +2002,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const handleMaterialMasterImport = async (file: File) => {
+    if (!canEdit) {
+      setMaterialMasterImportError(readOnlyMessage);
+      return;
+    }
     await runExcelImportWithFeedback({
       file,
       parseRows: parseMaterialMasterRows,
@@ -1808,6 +2068,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }, [planSlotCount]);
 
   useEffect(() => {
+    if (!authUser) return;
     let cancelled = false;
     const loadPlan = async () => {
       try {
@@ -1878,9 +2139,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authUser]);
 
   useEffect(() => {
+    if (!authUser) return;
     let cancelled = false;
     const loadImportedData = async () => {
       try {
@@ -1901,9 +2163,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authUser]);
 
   useEffect(() => {
+    if (!authUser) return;
     let cancelled = false;
     const loadImportHeaders = async () => {
       try {
@@ -1922,10 +2185,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authUser]);
 
   useEffect(() => {
-    if (!isPlanLoaded) return;
+    if (!isPlanLoaded || !canEdit) return;
     const controller = new AbortController();
     const savePlan = async () => {
       try {
@@ -1972,6 +2235,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     };
   }, [
     blocks,
+    canEdit,
     isPlanLoaded,
     items,
     materialsMaster,
@@ -1987,6 +2251,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }, [chatMessages, chatBusy]);
 
   useEffect(() => {
+    if (!authUser) return;
     let cancelled = false;
     const loadChatHistory = async () => {
       try {
@@ -2004,9 +2269,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authUser]);
 
   useEffect(() => {
+    if (!authUser) return;
     let cancelled = false;
     const loadConstraints = async () => {
       try {
@@ -2024,9 +2290,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authUser]);
 
   const appendChatHistory = async (messages: ChatMessage[]) => {
+    if (!canEdit) return;
     if (!messages.length) return;
     try {
       await fetch("/api/chat", {
@@ -2216,6 +2483,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const sendChatMessage = async () => {
+    if (!canEdit) {
+      setChatError(readOnlyMessage);
+      return;
+    }
     const trimmed = chatInput.trim();
     if (!trimmed || chatBusy) return;
     const userMessageId = uid("chat");
@@ -2372,6 +2643,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const saveConstraints = async () => {
+    if (!canEdit) {
+      setConstraintsError(readOnlyMessage);
+      return;
+    }
     if (constraintsBusy) return;
     setConstraintsBusy(true);
     setConstraintsError(null);
@@ -2408,6 +2683,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const onPlanSave = () => {
+    if (!canEdit) return;
     if (!activeBlockId) return;
     const amount = Math.max(0, safeNumber(formAmount));
     setBlocks((prev) =>
@@ -3276,6 +3552,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   setConstraintsError(null);
                   setConstraintsOpen(true);
                 }}
+                disabled={!canEdit}
               >
                 条件設定
               </Button>
@@ -3318,10 +3595,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 }}
                 placeholder="例：品目コード A を 9/12 10:00から2時間、40ケース 追加して"
                 rows={3}
+                disabled={!canEdit}
               />
               <div className="flex items-center justify-between">
                 <div className="text-xs text-muted-foreground">Ctrl+Enter / Cmd+Enter で送信</div>
-                <Button onClick={() => void sendChatMessage()} disabled={chatBusy}>
+                <Button onClick={() => void sendChatMessage()} disabled={chatBusy || !canEdit}>
                   送信
                 </Button>
               </div>
@@ -3348,6 +3626,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       value={geminiHorizonDaysDraft}
                       onChange={(e) => setGeminiHorizonDaysDraft(e.target.value)}
                       className="w-28"
+                      disabled={!canEdit}
                     />
                     <span className="text-sm text-muted-foreground">日先まで</span>
                   </div>
@@ -3359,7 +3638,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   value={constraintsDraft}
                   onChange={(e) => setConstraintsDraft(e.target.value)}
                   className="min-h-[220px]"
-                placeholder="例：設備Xは午前のみ稼働、残業は不可、最小ロットは50ケース など"
+                  placeholder="例：設備Xは午前のみ稼働、残業は不可、最小ロットは50ケース など"
+                  disabled={!canEdit}
                 />
                 {constraintsError ? (
                   <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
@@ -3372,7 +3652,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               <Button variant="outline" onClick={() => setConstraintsOpen(false)} disabled={constraintsBusy}>
                 キャンセル
               </Button>
-              <Button onClick={() => void saveConstraints()} disabled={constraintsBusy}>
+              <Button onClick={() => void saveConstraints()} disabled={constraintsBusy || !canEdit}>
                 保存
               </Button>
             </DialogFooter>
@@ -3533,16 +3813,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     </div>
   );
 
-  const masterSectionLabelMap: Record<"home" | "items" | "materials", string> = {
+  const masterSectionLabelMap: Record<"home" | "items" | "materials" | "users", string> = {
     home: "マスタ管理",
     items: "品目一覧",
     materials: "原料一覧",
+    users: "ユーザー管理",
   };
 
-  const masterSectionDescriptionMap: Record<"home" | "items" | "materials", string> = {
+  const masterSectionDescriptionMap: Record<"home" | "items" | "materials" | "users", string> = {
     home: "品目・原料マスタの登録・編集・削除を行います。",
     items: "品目の計画方針・安全在庫・賞味期限・製造効率などを管理します。",
     materials: "原料の単位と名称を管理します。",
+    users: "ログインユーザーの追加・変更・削除を行います。",
   };
 
   const masterView = (
@@ -3560,7 +3842,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       </div>
 
       {masterSection === "home" ? (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-3">
           <Card className="rounded-2xl">
             <CardHeader className="space-y-2 pb-2">
               <CardTitle className="text-base font-medium">品目一覧</CardTitle>
@@ -3584,12 +3866,30 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               <Button onClick={() => setMasterSection("materials")}>原料一覧を開く</Button>
             </CardContent>
           </Card>
+
+          <Card className="rounded-2xl">
+            <CardHeader className="space-y-2 pb-2">
+              <CardTitle className="text-base font-medium">ユーザー管理</CardTitle>
+              <div className="text-sm text-muted-foreground">
+                ログインユーザーの追加・変更・削除を行います。
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm">
+              <div className="text-muted-foreground">登録件数: {authUsers.length}件</div>
+              <Button onClick={() => setMasterSection("users")} disabled={!canEdit}>
+                ユーザー管理を開く
+              </Button>
+              {!canEdit ? <div className="text-xs text-muted-foreground">管理者のみ操作可能</div> : null}
+            </CardContent>
+          </Card>
         </div>
       ) : masterSection === "items" ? (
         <Card className="rounded-2xl">
           <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
             <CardTitle className="text-base font-medium">品目一覧</CardTitle>
-            <Button onClick={openCreateItemModal}>品目を追加</Button>
+            <Button onClick={openCreateItemModal} disabled={!canEdit}>
+              品目を追加
+            </Button>
           </CardHeader>
           <CardContent className="space-y-2">
             {items.length ? (
@@ -3630,10 +3930,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex justify-end gap-2">
-                            <Button variant="outline" onClick={() => openRecipeEdit(item.id)}>
+                            <Button variant="outline" onClick={() => openRecipeEdit(item.id)} disabled={!canEdit}>
                               レシピ {item.recipe.length}件
                             </Button>
-                            <Button variant="outline" onClick={() => openEditItemModal(item)}>
+                            <Button variant="outline" onClick={() => openEditItemModal(item)} disabled={!canEdit}>
                               編集
                             </Button>
                           </div>
@@ -3650,11 +3950,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             )}
           </CardContent>
         </Card>
-      ) : (
+      ) : masterSection === "materials" ? (
         <Card className="rounded-2xl">
           <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
             <CardTitle className="text-base font-medium">原料一覧</CardTitle>
-            <Button onClick={openCreateMaterialModal}>原料を追加</Button>
+            <Button onClick={openCreateMaterialModal} disabled={!canEdit}>
+              原料を追加
+            </Button>
           </CardHeader>
           <CardContent className="space-y-2">
             {materialsMaster.length ? (
@@ -3676,7 +3978,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         <td className="px-3 py-2 text-muted-foreground">{material.unit}</td>
                         <td className="px-3 py-2">
                           <div className="flex justify-end gap-2">
-                            <Button variant="outline" onClick={() => openEditMaterialModal(material)}>
+                            <Button variant="outline" onClick={() => openEditMaterialModal(material)} disabled={!canEdit}>
                               編集
                             </Button>
                           </div>
@@ -3689,6 +3991,79 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             ) : (
               <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
                 原料マスタが未登録です。右上の「原料を追加」ボタンから追加してください。
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="rounded-2xl">
+          <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
+            <div>
+              <CardTitle className="text-base font-medium">ユーザー管理</CardTitle>
+              <div className="text-xs text-muted-foreground">パスワードは表示されません。</div>
+            </div>
+            <Button onClick={openCreateUserModal} disabled={!canEdit || userActionBusy}>
+              ユーザーを追加
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {!canEdit ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                管理者のみユーザー管理を操作できます。
+              </div>
+            ) : null}
+            {authUsersError ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {authUsersError}
+              </div>
+            ) : null}
+            {authUsersLoading ? (
+              <div className="text-sm text-muted-foreground">読み込み中...</div>
+            ) : authUsers.length ? (
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/30 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">ユーザーID</th>
+                      <th className="px-3 py-2 text-left font-medium">表示名</th>
+                      <th className="px-3 py-2 text-left font-medium">権限</th>
+                      <th className="px-3 py-2 text-right font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {authUsers.map((user) => (
+                      <tr key={user.id}>
+                        <td className="px-3 py-2 font-medium">{user.id}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{user.name}</td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {AUTH_ROLE_LABELS[user.role] ?? user.role}
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              onClick={() => openEditUserModal(user)}
+                              disabled={!canEdit || userActionBusy}
+                            >
+                              編集
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              onClick={() => void handleDeleteUser(user.id)}
+                              disabled={!canEdit || userActionBusy}
+                            >
+                              削除
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                ユーザーが未登録です。右上の「ユーザーを追加」から登録してください。
               </div>
             )}
           </CardContent>
@@ -3729,6 +4104,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             key={`daily-stock-${dailyStockInputKey}`}
             type="file"
             accept=".xlsx,.xls,.csv"
+            disabled={!canEdit}
             onChange={async (e) => {
               const file = e.target.files?.[0];
               if (!file) return;
@@ -3743,7 +4119,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   カンマ区切りで列名候補を追加できます。入力した候補を優先的に検索します。
                 </div>
               </div>
-              <Button size="sm" onClick={() => void saveImportHeaderOverrides("daily")} disabled={importHeaderSaveBusy}>
+              <Button
+                size="sm"
+                onClick={() => void saveImportHeaderOverrides("daily")}
+                disabled={importHeaderSaveBusy || !canEdit}
+              >
                 設定を保存
               </Button>
             </div>
@@ -3830,6 +4210,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             key={`orders-${orderInputKey}`}
             type="file"
             accept=".xlsx,.xls,.csv"
+            disabled={!canEdit}
             onChange={async (e) => {
               const file = e.target.files?.[0];
               if (!file) return;
@@ -3844,7 +4225,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   カンマ区切りで列名候補を追加できます。入力した候補を優先的に検索します。
                 </div>
               </div>
-              <Button size="sm" onClick={() => void saveImportHeaderOverrides("order")} disabled={importHeaderSaveBusy}>
+              <Button
+                size="sm"
+                onClick={() => void saveImportHeaderOverrides("order")}
+                disabled={importHeaderSaveBusy || !canEdit}
+              >
                 設定を保存
               </Button>
             </div>
@@ -3950,6 +4335,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             key={`item-master-${itemMasterInputKey}`}
             type="file"
             accept=".xlsx,.xls,.csv"
+            disabled={!canEdit}
             onChange={async (e) => {
               const file = e.target.files?.[0];
               if (!file) return;
@@ -3979,6 +4365,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             key={`material-master-${materialMasterInputKey}`}
             type="file"
             accept=".xlsx,.xls,.csv"
+            disabled={!canEdit}
             onChange={async (e) => {
               const file = e.target.files?.[0];
               if (!file) return;
@@ -4056,6 +4443,54 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     </div>
   );
 
+  const loginView = (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+      <Card className="w-full max-w-md rounded-2xl shadow-sm">
+        <CardHeader className="space-y-2 pb-2">
+          <CardTitle className="text-lg">ログイン</CardTitle>
+          <div className="text-sm text-muted-foreground">
+            ユーザーIDとパスワードを入力してアクセスしてください。
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <Input
+            value={loginId}
+            placeholder="ユーザーID"
+            onChange={(e) => setLoginId(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                void handleLogin();
+              }
+            }}
+          />
+          <Input
+            type="password"
+            value={loginPassword}
+            placeholder="パスワード"
+            onChange={(e) => setLoginPassword(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                void handleLogin();
+              }
+            }}
+          />
+          {(loginError || authError) && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {loginError || authError}
+            </div>
+          )}
+          <Button
+            className="w-full"
+            onClick={() => void handleLogin()}
+            disabled={loginBusy || !loginId || !loginPassword}
+          >
+            {loginBusy ? "ログイン中..." : "ログイン"}
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+
   const viewLabelMap: Record<"schedule" | "master" | "import" | "manual", string> = {
     schedule: "スケジュール",
     master: "マスタ管理",
@@ -4063,13 +4498,26 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     manual: "マニュアル",
   };
 
-  const masterViewLabelMap: Record<"home" | "items" | "materials", string> = {
+  const masterViewLabelMap: Record<"home" | "items" | "materials" | "users", string> = {
     home: "マスタ管理",
     items: "マスタ管理 / 品目一覧",
     materials: "マスタ管理 / 原料一覧",
+    users: "マスタ管理 / ユーザー管理",
   };
 
   const viewLabel = activeView === "master" ? masterViewLabelMap[masterSection] : viewLabelMap[activeView];
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        認証情報を確認しています...
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return loginView;
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -4165,9 +4613,22 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             <div className="text-sm text-muted-foreground">画面</div>
             <div className="text-base font-semibold">{viewLabel}</div>
           </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="text-sm text-foreground">{authUser.name}</span>
+            <span>({authRoleLabel})</span>
+            {!canEdit ? <Badge variant="outline">閲覧専用</Badge> : null}
+            <Button variant="outline" size="sm" onClick={() => void handleLogout()}>
+              ログアウト
+            </Button>
+          </div>
         </header>
 
         <main className="p-4">
+          {!canEdit ? (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              閲覧専用ユーザーのため、編集内容は保存されません。
+            </div>
+          ) : null}
           {activeView === "schedule"
             ? scheduleView
             : activeView === "master"
@@ -4341,11 +4802,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         setIsItemModalOpen(false);
                       }
                     }}
+                    disabled={!canEdit}
                   >
                     削除
                   </Button>
                 ) : null}
-                <Button onClick={handleItemModalSave}>{isItemEditMode ? "保存" : "追加"}</Button>
+                <Button onClick={handleItemModalSave} disabled={!canEdit}>
+                  {isItemEditMode ? "保存" : "追加"}
+                </Button>
               </div>
             </DialogFooter>
           </DialogContent>
@@ -4418,12 +4882,88 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         setIsMaterialModalOpen(false);
                       }
                     }}
+                    disabled={!canEdit}
                   >
                     削除
                   </Button>
                 ) : null}
-                <Button onClick={handleMaterialModalSave}>{isMaterialEditMode ? "保存" : "追加"}</Button>
+                <Button onClick={handleMaterialModalSave} disabled={!canEdit}>
+                  {isMaterialEditMode ? "保存" : "追加"}
+                </Button>
               </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ユーザー管理モーダル */}
+        <Dialog open={isUserModalOpen} onOpenChange={setIsUserModalOpen}>
+          <DialogContent className={modalWideClassName}>
+            <DialogHeader>
+              <DialogTitle>{userModalMode === "create" ? "ユーザーを追加" : "ユーザーを編集"}</DialogTitle>
+            </DialogHeader>
+
+            <div className={modalBodyClassName}>
+              <div className="rounded-xl border bg-white p-4 shadow-sm">
+                <div className="grid gap-3 md:grid-cols-[180px_1fr] md:items-center">
+                  <div className="text-sm font-medium text-muted-foreground">ユーザーID</div>
+                  <Input
+                    value={userIdDraft}
+                    onChange={(e) => {
+                      setUserIdDraft(e.target.value);
+                      setUserFormError(null);
+                    }}
+                    placeholder="ユーザーID"
+                    disabled={userModalMode === "edit"}
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">表示名</div>
+                  <Input
+                    value={userNameDraft}
+                    onChange={(e) => {
+                      setUserNameDraft(e.target.value);
+                      setUserFormError(null);
+                    }}
+                    placeholder="表示名"
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">権限</div>
+                  <Select
+                    value={userRoleDraft}
+                    onValueChange={(value) => {
+                      setUserRoleDraft(value as AuthRole);
+                      setUserFormError(null);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="権限" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="admin">管理者</SelectItem>
+                      <SelectItem value="viewer">閲覧者</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <div className="text-sm font-medium text-muted-foreground">
+                    {userModalMode === "create" ? "パスワード" : "新しいパスワード"}
+                  </div>
+                  <Input
+                    type="password"
+                    value={userPasswordDraft}
+                    onChange={(e) => {
+                      setUserPasswordDraft(e.target.value);
+                      setUserFormError(null);
+                    }}
+                    placeholder={userModalMode === "create" ? "パスワード" : "変更する場合のみ入力"}
+                  />
+                </div>
+                {userFormError ? <div className="mt-4 text-sm text-destructive">{userFormError}</div> : null}
+              </div>
+            </div>
+
+            <DialogFooter className="flex flex-wrap items-center justify-between gap-2">
+              <Button variant="outline" onClick={() => setIsUserModalOpen(false)} disabled={userActionBusy}>
+                キャンセル
+              </Button>
+              <Button onClick={() => void handleUserModalSave()} disabled={userActionBusy || !canEdit}>
+                {userModalMode === "create" ? "追加" : "保存"}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -4535,6 +5075,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                             },
                           ]);
                         }}
+                        disabled={!canEdit}
                       >
                         追加
                       </Button>
@@ -4548,7 +5089,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               <Button variant="outline" onClick={() => setOpenRecipe(false)}>
                 キャンセル
               </Button>
-              <Button onClick={onRecipeSave}>保存</Button>
+              <Button onClick={onRecipeSave} disabled={!canEdit}>
+                保存
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

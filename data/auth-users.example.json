@@ -1,0 +1,16 @@
+{
+  "users": [
+    {
+      "id": "admin",
+      "name": "管理者",
+      "role": "admin",
+      "passwordHash": "scrypt$YNXJQF66QHmcaEEBIuZs9Q==$SyXDE3ob2B//5zMakmphIowrvpZ9095o2CewY2wVgllGf8O7MbXOQ1TZVVKxbvnD8XqvNsb5XYG+gMHTmVKBWQ=="
+    },
+    {
+      "id": "viewer",
+      "name": "閲覧者",
+      "role": "viewer",
+      "passwordHash": "scrypt$Hp7YhsvYnuEl8b6xgadHGw==$RZvHNKQ6f/g0kNVOuvXvAntXvBWFPjSSe6C5i91eudZ8H0SBjpTf4XY/D0PNtSDOJb+N0f3Ncfmj+aYydb7cDA=="
+    }
+  ]
+}
