@@ -2767,6 +2767,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const onPlanDelete = () => {
+    if (!canEdit) return;
     if (!activeBlockId) return;
     setBlocks((prev) => prev.filter((b) => b.id !== activeBlockId));
     setPendingBlockId(null);
@@ -2775,6 +2776,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const toggleBlockApproval = () => {
+    if (!canEdit) return;
     if (!activeBlockId) return;
     setFormApproved((prev) => !prev);
   };
@@ -2793,6 +2795,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const createBlockAt = (dayIndex: number, slot: number) => {
+    if (!canEdit) return;
     if (!isPlanWeekView) return;
     const workingSlot = clampToWorkingSlot(dayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
@@ -2834,6 +2837,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const beginPointer = (p: { kind: DragKind; blockId: string; dayIndex: number; clientX: number }) => {
+    if (!canEdit) return;
     if (!isPlanWeekView) return;
     const laneEl = laneRefs.current[String(p.dayIndex)];
     if (!laneEl) return;
@@ -3323,6 +3327,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   // JSONエクスポート
   const exportPlanAsJson = () => {
+    if (!canEdit) return;
     const payload = buildExportPayload({
       weekStart: planWeekStart,
       timezone,
@@ -3382,7 +3387,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" onClick={exportPlanAsJson}>
+        <Button variant="outline" onClick={exportPlanAsJson} disabled={!canEdit}>
           JSONエクスポート
         </Button>
         <Button variant="outline" onClick={() => shiftWeek(-7)}>
@@ -3478,6 +3483,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       laneRefs.current[String(dayIdx)] = el;
                     }}
                     onClick={(e) => {
+                      if (!canEdit) return;
                       if (suppressClickRef.current) return;
                       if (e.defaultPrevented) return;
 
@@ -3519,6 +3525,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                             <div
                               className="absolute left-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-l-xl touch-none"
                               onPointerDown={(ev) => {
+                                if (!canEdit) return;
                                 ev.preventDefault();
                                 ev.stopPropagation();
                                 beginPointer({ kind: "resizeL", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
@@ -3531,6 +3538,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                             <div
                               className="absolute right-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-r-xl touch-none"
                               onPointerDown={(ev) => {
+                                if (!canEdit) return;
                                 ev.preventDefault();
                                 ev.stopPropagation();
                                 beginPointer({ kind: "resizeR", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
@@ -3544,7 +3552,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                               isApproved ? "cursor-default" : "cursor-grab"
                             }`}
                             onPointerDown={(ev) => {
-                              if (isApproved) return;
+                              if (!canEdit || isApproved) return;
                               const r = ev.currentTarget.getBoundingClientRect();
                               const x = ev.clientX - r.left;
                               if (x <= 8 || x >= r.width - 8) return;
@@ -3753,7 +3761,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     onChange={(value) => setFormItemId(value)}
                     placeholder="品目を検索"
                     emptyLabel={items.length ? "該当する品目がありません" : "品目が未登録です"}
-                    disabled={!items.length}
+                    disabled={!items.length || !canEdit}
                   />
                 </div>
               </div>
@@ -3765,6 +3773,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     value={formAmount}
                     onChange={(e) => setFormAmount(e.target.value)}
                     placeholder="0"
+                    disabled={!canEdit}
                   />
                 </div>
                 <div className="col-span-2 text-sm text-muted-foreground">{activeItem?.unit ?? ""}</div>
@@ -3813,6 +3822,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   value={formMemo}
                   onChange={(e) => setFormMemo(e.target.value)}
                   placeholder="段取り・注意点・引当メモなど"
+                  disabled={!canEdit}
                 />
               </div>
 
@@ -3833,7 +3843,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         >
                           {formApproved ? "承認済み" : "未承認"}
                         </Badge>
-                        <Button variant="outline" size="sm" onClick={toggleBlockApproval}>
+                        <Button variant="outline" size="sm" onClick={toggleBlockApproval} disabled={!canEdit}>
                           {formApproved ? "未承認に戻す" : "承認する"}
                         </Button>
                       </div>
@@ -3866,10 +3876,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             <Button variant="outline" onClick={() => handlePlanOpenChange(false)}>
               キャンセル
             </Button>
-            <Button variant="destructive" onClick={onPlanDelete}>
+            <Button variant="destructive" onClick={onPlanDelete} disabled={!canEdit}>
               削除
             </Button>
-            <Button onClick={onPlanSave}>保存</Button>
+            <Button onClick={onPlanSave} disabled={!canEdit}>
+              保存
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
