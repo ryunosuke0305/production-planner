@@ -122,6 +122,12 @@ const readAuthUsers = async (): Promise<AuthUser[]> => {
   }
 };
 
+const writeAuthUsers = async (users: AuthUser[]) => {
+  await fs.mkdir(path.dirname(AUTH_USERS_PATH), { recursive: true });
+  const payload = JSON.stringify({ users }, null, 2);
+  await fs.writeFile(AUTH_USERS_PATH, payload, "utf-8");
+};
+
 const readAuthSessions = async (): Promise<AuthSession[]> => {
   try {
     const raw = await fs.readFile(AUTH_SESSIONS_PATH, "utf-8");
@@ -178,6 +184,24 @@ const verifyPassword = async (password: string, hash: string) => {
   const derived = (await scryptAsync(password, salt, digest.length)) as Buffer;
   return crypto.timingSafeEqual(digest, derived);
 };
+
+const hashPassword = async (password: string) => {
+  const salt = crypto.randomBytes(16);
+  const digest = (await scryptAsync(password, salt, 64)) as Buffer;
+  return `scrypt$${salt.toString("base64")}$${digest.toString("base64")}`;
+};
+
+const isAuthRole = (value: string): value is AuthRole => value === "admin" || value === "viewer";
+
+const readRequestBody = (req: MiddlewareRequest) =>
+  new Promise<string>((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk: any) => {
+      body += chunk.toString("utf-8");
+    });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
 
 const getAuthSession = async (req: MiddlewareRequest) => {
   const token = getRequestCookie(req, "auth_session");
@@ -425,6 +449,167 @@ const createAuthApiMiddleware = () => {
           })
         );
       });
+      return;
+    }
+
+    res.statusCode = 405;
+    res.end("Method Not Allowed");
+  };
+};
+
+const createAdminUsersApiMiddleware = () => {
+  return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    const session = await ensureAuthSession(req, res);
+    if (!session) return;
+    if (session.role !== "admin") {
+      res.statusCode = 403;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "Forbidden" }));
+      return;
+    }
+
+    if (req.method === "GET") {
+      try {
+        const users = await readAuthUsers();
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ users: users.map(({ id, name, role }) => ({ id, name, role })) }));
+      } catch (error) {
+        console.error("Failed to read auth users:", error);
+        res.statusCode = 500;
+        res.end("Failed to read auth users.");
+      }
+      return;
+    }
+
+    if (req.method === "POST") {
+      try {
+        const body = await readRequestBody(req);
+        const parsed = JSON.parse(body || "{}") as { id?: string; name?: string; role?: string; password?: string };
+        const id = typeof parsed.id === "string" ? parsed.id.trim() : "";
+        const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
+        const role = typeof parsed.role === "string" ? parsed.role.trim() : "";
+        const password = typeof parsed.password === "string" ? parsed.password : "";
+        if (!id || !name || !role || !password || !isAuthRole(role)) {
+          res.statusCode = 400;
+          res.end("Invalid user payload.");
+          return;
+        }
+        const users = await readAuthUsers();
+        if (users.some((user) => user.id === id)) {
+          res.statusCode = 409;
+          res.end("User ID already exists.");
+          return;
+        }
+        const passwordHash = await hashPassword(password);
+        users.push({ id, name, role, passwordHash });
+        await writeAuthUsers(users);
+        res.statusCode = 201;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ user: { id, name, role } }));
+      } catch (error) {
+        console.error("Failed to create auth user:", error);
+        res.statusCode = 400;
+        res.end("Invalid JSON payload.");
+      }
+      return;
+    }
+
+    if (req.method === "PUT") {
+      try {
+        const body = await readRequestBody(req);
+        const parsed = JSON.parse(body || "{}") as {
+          id?: string;
+          name?: string;
+          role?: string;
+          password?: string;
+        };
+        const id = typeof parsed.id === "string" ? parsed.id.trim() : "";
+        const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
+        const role = typeof parsed.role === "string" ? parsed.role.trim() : "";
+        const password = typeof parsed.password === "string" ? parsed.password : "";
+        if (!id || !name || !role || !isAuthRole(role)) {
+          res.statusCode = 400;
+          res.end("Invalid user payload.");
+          return;
+        }
+        const users = await readAuthUsers();
+        const target = users.find((user) => user.id === id);
+        if (!target) {
+          res.statusCode = 404;
+          res.end("User not found.");
+          return;
+        }
+        target.name = name;
+        target.role = role;
+        if (password) {
+          target.passwordHash = await hashPassword(password);
+        }
+        await writeAuthUsers(users);
+        const sessions = await readAuthSessions();
+        let updatedSessions = sessions;
+        if (sessions.length) {
+          updatedSessions = sessions.map((entry) =>
+            entry.userId === id
+              ? {
+                  ...entry,
+                  name,
+                  role,
+                }
+              : entry
+          );
+          await writeAuthSessions(updatedSessions);
+        }
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ user: { id, name, role } }));
+      } catch (error) {
+        console.error("Failed to update auth user:", error);
+        res.statusCode = 400;
+        res.end("Invalid JSON payload.");
+      }
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      try {
+        const body = await readRequestBody(req);
+        const parsed = JSON.parse(body || "{}") as { id?: string };
+        const id = typeof parsed.id === "string" ? parsed.id.trim() : "";
+        if (!id) {
+          res.statusCode = 400;
+          res.end("Invalid user payload.");
+          return;
+        }
+        const users = await readAuthUsers();
+        const target = users.find((user) => user.id === id);
+        if (!target) {
+          res.statusCode = 404;
+          res.end("User not found.");
+          return;
+        }
+        if (target.role === "admin") {
+          const remainingAdmins = users.filter((user) => user.role === "admin" && user.id !== id);
+          if (!remainingAdmins.length) {
+            res.statusCode = 409;
+            res.end("At least one admin user is required.");
+            return;
+          }
+        }
+        const updatedUsers = users.filter((user) => user.id !== id);
+        await writeAuthUsers(updatedUsers);
+        const sessions = await readAuthSessions();
+        const updatedSessions = sessions.filter((entry) => entry.userId !== id);
+        if (updatedSessions.length !== sessions.length) {
+          await writeAuthSessions(updatedSessions);
+        }
+        res.statusCode = 204;
+        res.end();
+      } catch (error) {
+        console.error("Failed to delete auth user:", error);
+        res.statusCode = 400;
+        res.end("Invalid JSON payload.");
+      }
       return;
     }
 
@@ -788,6 +973,7 @@ export default defineConfig(({ mode }) => {
         configureServer(server) {
           server.middlewares.use(createAuthGuardMiddleware());
           server.middlewares.use("/api/auth", createAuthApiMiddleware());
+          server.middlewares.use("/api/admin/users", createAdminUsersApiMiddleware());
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
           server.middlewares.use("/api/orders", createOrdersApiMiddleware());
@@ -799,6 +985,7 @@ export default defineConfig(({ mode }) => {
         configurePreviewServer(server) {
           server.middlewares.use(createAuthGuardMiddleware());
           server.middlewares.use("/api/auth", createAuthApiMiddleware());
+          server.middlewares.use("/api/admin/users", createAdminUsersApiMiddleware());
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
           server.middlewares.use("/api/orders", createOrdersApiMiddleware());
