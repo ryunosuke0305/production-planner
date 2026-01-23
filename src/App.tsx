@@ -4708,71 +4708,75 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             }
           }}
         >
-          <DialogContent className="max-w-2xl">
+          <DialogContent className={modalWideClassName}>
             <DialogHeader>
               <DialogTitle>{userModalMode === "create" ? "ユーザーを追加" : "ユーザーを編集"}</DialogTitle>
             </DialogHeader>
-            <div className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-[160px_1fr] md:items-center">
-                <div className="text-sm font-medium text-muted-foreground">ユーザーID</div>
-                <Input
-                  value={userModalMode === "create" ? newUserId : editingUser?.id ?? ""}
-                  onChange={(e) => setNewUserId(e.target.value)}
-                  placeholder="例: admin2"
-                  disabled={userModalMode === "edit"}
-                />
-                <div className="text-sm font-medium text-muted-foreground">表示名</div>
-                <Input
-                  value={userModalMode === "create" ? newUserName : editUserName}
-                  onChange={(e) =>
-                    userModalMode === "create" ? setNewUserName(e.target.value) : setEditUserName(e.target.value)
-                  }
-                  placeholder="表示名"
-                />
-                <div className="text-sm font-medium text-muted-foreground">権限</div>
-                <Select
-                  value={userModalMode === "create" ? newUserRole : editUserRole}
-                  onValueChange={(value) =>
-                    userModalMode === "create" ? setNewUserRole(value as AuthRole) : setEditUserRole(value as AuthRole)
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="権限を選択" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="admin">管理者</SelectItem>
-                    <SelectItem value="viewer">閲覧者</SelectItem>
-                  </SelectContent>
-                </Select>
-                <div className="text-sm font-medium text-muted-foreground">パスワード</div>
-                <Input
-                  type="password"
-                  value={userModalMode === "create" ? newUserPassword : editUserPassword}
-                  onChange={(e) =>
-                    userModalMode === "create"
-                      ? setNewUserPassword(e.target.value)
-                      : setEditUserPassword(e.target.value)
-                  }
-                  placeholder={userModalMode === "create" ? "パスワード" : "変更する場合のみ入力"}
-                />
-                <div className="text-sm font-medium text-muted-foreground">パスワード（確認）</div>
-                <Input
-                  type="password"
-                  value={userModalMode === "create" ? newUserPasswordConfirm : editUserPasswordConfirm}
-                  onChange={(e) =>
-                    userModalMode === "create"
-                      ? setNewUserPasswordConfirm(e.target.value)
-                      : setEditUserPasswordConfirm(e.target.value)
-                  }
-                  placeholder={userModalMode === "create" ? "パスワードを再入力" : "パスワードを再入力"}
-                />
+            <div className={modalBodyClassName}>
+              <div className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-[160px_1fr] md:items-center">
+                  <div className="text-sm font-medium text-muted-foreground">ユーザーID</div>
+                  <Input
+                    value={userModalMode === "create" ? newUserId : editingUser?.id ?? ""}
+                    onChange={(e) => setNewUserId(e.target.value)}
+                    placeholder="例: admin2"
+                    disabled={userModalMode === "edit"}
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">表示名</div>
+                  <Input
+                    value={userModalMode === "create" ? newUserName : editUserName}
+                    onChange={(e) =>
+                      userModalMode === "create" ? setNewUserName(e.target.value) : setEditUserName(e.target.value)
+                    }
+                    placeholder="表示名"
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">権限</div>
+                  <Select
+                    value={userModalMode === "create" ? newUserRole : editUserRole}
+                    onValueChange={(value) =>
+                      userModalMode === "create"
+                        ? setNewUserRole(value as AuthRole)
+                        : setEditUserRole(value as AuthRole)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="権限を選択" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="admin">管理者</SelectItem>
+                      <SelectItem value="viewer">閲覧者</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <div className="text-sm font-medium text-muted-foreground">パスワード</div>
+                  <Input
+                    type="password"
+                    value={userModalMode === "create" ? newUserPassword : editUserPassword}
+                    onChange={(e) =>
+                      userModalMode === "create"
+                        ? setNewUserPassword(e.target.value)
+                        : setEditUserPassword(e.target.value)
+                    }
+                    placeholder={userModalMode === "create" ? "パスワード" : "変更する場合のみ入力"}
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">パスワード（確認）</div>
+                  <Input
+                    type="password"
+                    value={userModalMode === "create" ? newUserPasswordConfirm : editUserPasswordConfirm}
+                    onChange={(e) =>
+                      userModalMode === "create"
+                        ? setNewUserPasswordConfirm(e.target.value)
+                        : setEditUserPasswordConfirm(e.target.value)
+                    }
+                    placeholder={userModalMode === "create" ? "パスワードを再入力" : "パスワードを再入力"}
+                  />
+                </div>
+                {userModalMode === "create" && userCreateError ? (
+                  <div className="text-sm text-destructive">{userCreateError}</div>
+                ) : null}
+                {userModalMode === "edit" && userEditError ? (
+                  <div className="text-sm text-destructive">{userEditError}</div>
+                ) : null}
               </div>
-              {userModalMode === "create" && userCreateError ? (
-                <div className="text-sm text-destructive">{userCreateError}</div>
-              ) : null}
-              {userModalMode === "edit" && userEditError ? (
-                <div className="text-sm text-destructive">{userEditError}</div>
-              ) : null}
             </div>
             <DialogFooter className="gap-2">
               <Button variant="outline" onClick={() => setIsUserModalOpen(false)}>
