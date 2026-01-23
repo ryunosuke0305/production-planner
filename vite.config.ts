@@ -56,18 +56,23 @@ type AuthUser = {
 };
 
 type AuthSession = {
-  token: string;
   userId: string;
   name: string;
   role: AuthRole;
-  createdAt: string;
-  lastSeenAt: string;
+};
+
+type AuthJwtPayload = {
+  sub: string;
+  name: string;
+  role: AuthRole;
+  iat: number;
+  exp: number;
 };
 
 const CONSTRAINTS_PATH = fileURLToPath(new URL("./data/gemini-constraints.json", import.meta.url));
 const CHAT_HISTORY_PATH = fileURLToPath(new URL("./data/gemini-chat.json", import.meta.url));
 const AUTH_USERS_PATH = fileURLToPath(new URL("./data/auth-users.json", import.meta.url));
-const AUTH_SESSIONS_PATH = fileURLToPath(new URL("./data/auth-sessions.json", import.meta.url));
+const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 12;
 
 const scryptAsync = promisify(crypto.scrypt);
 
@@ -128,25 +133,6 @@ const writeAuthUsers = async (users: AuthUser[]) => {
   await fs.writeFile(AUTH_USERS_PATH, payload, "utf-8");
 };
 
-const readAuthSessions = async (): Promise<AuthSession[]> => {
-  try {
-    const raw = await fs.readFile(AUTH_SESSIONS_PATH, "utf-8");
-    const parsed = JSON.parse(raw) as { sessions?: AuthSession[] };
-    return Array.isArray(parsed.sessions) ? parsed.sessions : [];
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-};
-
-const writeAuthSessions = async (sessions: AuthSession[]) => {
-  await fs.mkdir(path.dirname(AUTH_SESSIONS_PATH), { recursive: true });
-  const payload = JSON.stringify({ sessions }, null, 2);
-  await fs.writeFile(AUTH_SESSIONS_PATH, payload, "utf-8");
-};
-
 const parseCookies = (cookieHeader?: string) => {
   if (!cookieHeader) return {};
   return cookieHeader.split(";").reduce<Record<string, string>>((acc, chunk) => {
@@ -193,6 +179,51 @@ const hashPassword = async (password: string) => {
 
 const isAuthRole = (value: string): value is AuthRole => value === "admin" || value === "viewer";
 
+const base64UrlEncode = (value: string | Buffer) => Buffer.from(value).toString("base64url");
+
+const base64UrlDecode = (value: string) => Buffer.from(value, "base64url").toString("utf-8");
+
+const signJwt = (payload: AuthJwtPayload, secret: string) => {
+  const header = { alg: "HS256", typ: "JWT" };
+  const headerSegment = base64UrlEncode(JSON.stringify(header));
+  const payloadSegment = base64UrlEncode(JSON.stringify(payload));
+  const signingInput = `${headerSegment}.${payloadSegment}`;
+  const signature = crypto.createHmac("sha256", secret).update(signingInput).digest("base64url");
+  return `${signingInput}.${signature}`;
+};
+
+const verifyJwt = (token: string, secret: string): AuthJwtPayload | null => {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [headerSegment, payloadSegment, signature] = parts;
+  try {
+    const header = JSON.parse(base64UrlDecode(headerSegment)) as { alg?: string; typ?: string };
+    if (header.alg !== "HS256") return null;
+    const signingInput = `${headerSegment}.${payloadSegment}`;
+    const expectedSignature = crypto.createHmac("sha256", secret).update(signingInput).digest("base64url");
+    const signatureBuffer = Buffer.from(signature);
+    const expectedBuffer = Buffer.from(expectedSignature);
+    if (signatureBuffer.length !== expectedBuffer.length) return null;
+    if (!crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) return null;
+    const payload = JSON.parse(base64UrlDecode(payloadSegment)) as Partial<AuthJwtPayload>;
+    if (
+      typeof payload.sub !== "string" ||
+      typeof payload.name !== "string" ||
+      typeof payload.role !== "string" ||
+      !isAuthRole(payload.role) ||
+      typeof payload.iat !== "number" ||
+      typeof payload.exp !== "number"
+    ) {
+      return null;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp <= now) return null;
+    return payload as AuthJwtPayload;
+  } catch {
+    return null;
+  }
+};
+
 const readRequestBody = (req: MiddlewareRequest) =>
   new Promise<string>((resolve, reject) => {
     let body = "";
@@ -203,19 +234,20 @@ const readRequestBody = (req: MiddlewareRequest) =>
     req.on("error", reject);
   });
 
-const getAuthSession = async (req: MiddlewareRequest) => {
+const getAuthSession = async (req: MiddlewareRequest, jwtSecret: string) => {
   const token = getRequestCookie(req, "auth_session");
   if (!token) return null;
-  const sessions = await readAuthSessions();
-  const session = sessions.find((entry) => entry.token === token);
-  if (!session) return null;
-  session.lastSeenAt = new Date().toISOString();
-  await writeAuthSessions(sessions);
-  return session;
+  const payload = verifyJwt(token, jwtSecret);
+  if (!payload) return null;
+  return {
+    userId: payload.sub,
+    name: payload.name,
+    role: payload.role,
+  };
 };
 
-const ensureAuthSession = async (req: MiddlewareRequest, res: MiddlewareResponse) => {
-  const session = await getAuthSession(req);
+const ensureAuthSession = async (req: MiddlewareRequest, res: MiddlewareResponse, jwtSecret: string) => {
+  const session = await getAuthSession(req, jwtSecret);
   if (!session) {
     res.statusCode = 401;
     res.setHeader("Content-Type", "application/json");
@@ -231,6 +263,15 @@ const isWriteMethod = (method?: string) => {
 };
 
 const isProductionCookie = () => process.env.NODE_ENV === "production";
+
+const resolveAuthJwtSecret = (env: Record<string, string | undefined>) => {
+  const secret = (env.AUTH_JWT_SECRET ?? process.env.AUTH_JWT_SECRET ?? "").trim();
+  if (!secret) {
+    console.warn("AUTH_JWT_SECRET is not configured. Falling back to an insecure default for development.");
+    return "dev-insecure-auth-secret";
+  }
+  return secret;
+};
 
 const createConstraintsApiMiddleware = () => {
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
@@ -355,10 +396,10 @@ const createChatHistoryApiMiddleware = () => {
   };
 };
 
-const createAuthApiMiddleware = () => {
+const createAuthApiMiddleware = (jwtSecret: string) => {
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
     if (req.method === "GET") {
-      const session = await getAuthSession(req);
+      const session = await getAuthSession(req, jwtSecret);
       if (!session) {
         res.statusCode = 401;
         res.end();
@@ -380,12 +421,6 @@ const createAuthApiMiddleware = () => {
 
     if (req.method === "POST") {
       if ((req.url ?? "").endsWith("/logout")) {
-        const token = getRequestCookie(req, "auth_session");
-        if (token) {
-          const sessions = await readAuthSessions();
-          const filtered = sessions.filter((session) => session.token !== token);
-          await writeAuthSessions(filtered);
-        }
         res.statusCode = 204;
         res.setHeader("Set-Cookie", serializeCookie("auth_session", "", { maxAge: 0, secure: isProductionCookie() }));
         res.end();
@@ -424,21 +459,26 @@ const createAuthApiMiddleware = () => {
           res.end("Invalid credentials.");
           return;
         }
-        const token = crypto.randomBytes(32).toString("hex");
-        const sessions = await readAuthSessions();
-        const now = new Date().toISOString();
-        sessions.push({
-          token,
-          userId: user.id,
-          name: user.name,
-          role: user.role,
-          createdAt: now,
-          lastSeenAt: now,
-        });
-        await writeAuthSessions(sessions);
+        const now = Math.floor(Date.now() / 1000);
+        const token = signJwt(
+          {
+            sub: user.id,
+            name: user.name,
+            role: user.role,
+            iat: now,
+            exp: now + AUTH_SESSION_TTL_SECONDS,
+          },
+          jwtSecret
+        );
         res.statusCode = 200;
         res.setHeader("Content-Type", "application/json");
-        res.setHeader("Set-Cookie", serializeCookie("auth_session", token, { secure: isProductionCookie() }));
+        res.setHeader(
+          "Set-Cookie",
+          serializeCookie("auth_session", token, {
+            secure: isProductionCookie(),
+            maxAge: AUTH_SESSION_TTL_SECONDS,
+          })
+        );
         res.end(
           JSON.stringify({
             user: {
@@ -457,9 +497,9 @@ const createAuthApiMiddleware = () => {
   };
 };
 
-const createAdminUsersApiMiddleware = () => {
+const createAdminUsersApiMiddleware = (jwtSecret: string) => {
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
-    const session = await ensureAuthSession(req, res);
+    const session = await ensureAuthSession(req, res, jwtSecret);
     if (!session) return;
     if (session.role !== "admin") {
       res.statusCode = 403;
@@ -546,20 +586,6 @@ const createAdminUsersApiMiddleware = () => {
           target.passwordHash = await hashPassword(password);
         }
         await writeAuthUsers(users);
-        const sessions = await readAuthSessions();
-        let updatedSessions = sessions;
-        if (sessions.length) {
-          updatedSessions = sessions.map((entry) =>
-            entry.userId === id
-              ? {
-                  ...entry,
-                  name,
-                  role,
-                }
-              : entry
-          );
-          await writeAuthSessions(updatedSessions);
-        }
         res.statusCode = 200;
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify({ user: { id, name, role } }));
@@ -598,11 +624,6 @@ const createAdminUsersApiMiddleware = () => {
         }
         const updatedUsers = users.filter((user) => user.id !== id);
         await writeAuthUsers(updatedUsers);
-        const sessions = await readAuthSessions();
-        const updatedSessions = sessions.filter((entry) => entry.userId !== id);
-        if (updatedSessions.length !== sessions.length) {
-          await writeAuthSessions(updatedSessions);
-        }
         res.statusCode = 204;
         res.end();
       } catch (error) {
@@ -618,7 +639,7 @@ const createAdminUsersApiMiddleware = () => {
   };
 };
 
-const createAuthGuardMiddleware = () => {
+const createAuthGuardMiddleware = (jwtSecret: string) => {
   return async (req: MiddlewareRequest, res: MiddlewareResponse, next: MiddlewareNext) => {
     if (!req.url?.startsWith("/api/")) {
       next();
@@ -628,7 +649,7 @@ const createAuthGuardMiddleware = () => {
       next();
       return;
     }
-    const session = await ensureAuthSession(req, res);
+    const session = await ensureAuthSession(req, res, jwtSecret);
     if (!session) return;
     if (isWriteMethod(req.method) && session.role !== "admin") {
       res.statusCode = 403;
@@ -964,6 +985,7 @@ const createGeminiProxyMiddleware = (env: { GEMINI_API_KEY?: string; GEMINI_MODE
 export default defineConfig(({ mode }) => {
   const envDir = "data";
   const env = loadEnv(mode, envDir, "");
+  const authJwtSecret = resolveAuthJwtSecret(env);
   return {
     envDir,
     plugins: [
@@ -971,9 +993,9 @@ export default defineConfig(({ mode }) => {
       {
         name: "plan-and-gemini-api",
         configureServer(server) {
-          server.middlewares.use(createAuthGuardMiddleware());
-          server.middlewares.use("/api/auth", createAuthApiMiddleware());
-          server.middlewares.use("/api/admin/users", createAdminUsersApiMiddleware());
+          server.middlewares.use(createAuthGuardMiddleware(authJwtSecret));
+          server.middlewares.use("/api/auth", createAuthApiMiddleware(authJwtSecret));
+          server.middlewares.use("/api/admin/users", createAdminUsersApiMiddleware(authJwtSecret));
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
           server.middlewares.use("/api/orders", createOrdersApiMiddleware());
@@ -983,9 +1005,9 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
         },
         configurePreviewServer(server) {
-          server.middlewares.use(createAuthGuardMiddleware());
-          server.middlewares.use("/api/auth", createAuthApiMiddleware());
-          server.middlewares.use("/api/admin/users", createAdminUsersApiMiddleware());
+          server.middlewares.use(createAuthGuardMiddleware(authJwtSecret));
+          server.middlewares.use("/api/auth", createAuthApiMiddleware(authJwtSecret));
+          server.middlewares.use("/api/admin/users", createAdminUsersApiMiddleware(authJwtSecret));
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
           server.middlewares.use("/api/orders", createOrdersApiMiddleware());

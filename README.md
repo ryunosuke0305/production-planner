@@ -84,7 +84,8 @@ cp data/auth-users.example.json data/auth-users.json
 ```
 
 - `role` は `admin`（編集可）または `viewer`（閲覧専用）。
-- ログイン後のセッションは `data/auth-sessions.json` に保存されます。
+- ログイン後のセッションは `auth_session` Cookie に署名付きJWTとして保存されます（期限付き）。
+- JWT の署名鍵は `AUTH_JWT_SECRET`（例: `data/.env`）で設定してください。
 - 管理者は「マスタ管理 → ユーザー管理」からユーザーの追加・更新・削除が行えます（変更内容は `data/auth-users.json` に保存されます）。
 - ユーザー管理画面から追加・更新するパスワードはサーバー側で scrypt ハッシュ化されます。
 
