@@ -61,6 +61,39 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 - `.env` は `data/` ディレクトリにまとめて配置してください（例: `data/.env`）。
 - `GEMINI_API_KEY` を設定するとチャット機能が利用できます。モデルを変えたい場合は `GEMINI_MODEL` または `VITE_GEMINI_MODEL` を設定してください。
 
+## 認証設定（ID/パスワード）
+
+Cloud Run など社外アクセスが必要な運用を想定し、ID/パスワードによる基本認証とロール管理を追加しています。
+
+- 認証ユーザーは `data/auth-users.json` に定義します。
+- ひな形は `data/auth-users.example.json` にあります。コピーして編集してください。
+
+```bash
+cp data/auth-users.example.json data/auth-users.json
+```
+
+### ユーザー定義の例
+
+```json
+{
+  "users": [
+    { "id": "admin", "name": "管理者", "role": "admin", "passwordHash": "scrypt$..." },
+    { "id": "viewer", "name": "閲覧者", "role": "viewer", "passwordHash": "scrypt$..." }
+  ]
+}
+```
+
+- `role` は `admin`（編集可）または `viewer`（閲覧専用）。
+- ログイン後のセッションは `data/auth-sessions.json` に保存されます。
+
+### パスワードハッシュの作成
+
+`passwordHash` は scrypt で作成します。以下のコマンドで生成できます。
+
+```bash
+node -e "const crypto=require('crypto');const hash=(pw)=>{const salt=crypto.randomBytes(16);const key=crypto.scryptSync(pw,salt,64);return ['scrypt',salt.toString('base64'),key.toString('base64')].join('$');};console.log(hash('your_password'));"
+```
+
 ## 長期運用（10年）に向けた設計方針
 
 - 週移動で表示範囲が変わった際、計画カレンダーの日付範囲を前後に自動拡張します（将来週の入力を阻害しない設計）。  
