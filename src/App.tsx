@@ -189,6 +189,12 @@ type AuthUser = {
   role: AuthRole;
 };
 
+type ManagedUser = {
+  id: string;
+  name: string;
+  role: AuthRole;
+};
+
 type PlanPayload = {
   version: 1;
   weekStartISO: string;
@@ -1068,7 +1074,7 @@ type DragState = {
 export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [navOpen, setNavOpen] = useState(false);
   const [activeView, setActiveView] = useState<"schedule" | "master" | "import" | "manual">("schedule");
-  const [masterSection, setMasterSection] = useState<"home" | "items" | "materials">("home");
+  const [masterSection, setMasterSection] = useState<"home" | "items" | "materials" | "users">("home");
   const [manualAudience, setManualAudience] = useState<"user" | "admin">("user");
   const [planWeekStart, setPlanWeekStart] = useState<Date>(() => getDefaultWeekStart());
   const [viewWeekStart, setViewWeekStart] = useState<Date>(() => getDefaultWeekStart());
@@ -1089,6 +1095,26 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
+  const [managedUsersLoading, setManagedUsersLoading] = useState(false);
+  const [managedUsersError, setManagedUsersError] = useState<string | null>(null);
+  const [managedUsersNote, setManagedUsersNote] = useState<string | null>(null);
+  const [userModalMode, setUserModalMode] = useState<"create" | "edit">("create");
+  const [newUserId, setNewUserId] = useState("");
+  const [newUserName, setNewUserName] = useState("");
+  const [newUserRole, setNewUserRole] = useState<AuthRole>("viewer");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserPasswordConfirm, setNewUserPasswordConfirm] = useState("");
+  const [userCreateBusy, setUserCreateBusy] = useState(false);
+  const [userCreateError, setUserCreateError] = useState<string | null>(null);
+  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
+  const [editUserName, setEditUserName] = useState("");
+  const [editUserRole, setEditUserRole] = useState<AuthRole>("viewer");
+  const [editUserPassword, setEditUserPassword] = useState("");
+  const [editUserPasswordConfirm, setEditUserPasswordConfirm] = useState("");
+  const [userEditBusy, setUserEditBusy] = useState(false);
+  const [userEditError, setUserEditError] = useState<string | null>(null);
 
   const [materialsMaster, setMaterialsMaster] = useState<Material[]>(SAMPLE_MATERIALS);
   const [items, setItems] = useState<Item[]>(SAMPLE_ITEMS);
@@ -1296,6 +1322,196 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       setLoginError("ログインに失敗しました。");
     } finally {
       setLoginBusy(false);
+    }
+  };
+
+  const fetchManagedUsers = async () => {
+    if (!canEdit) return;
+    setManagedUsersLoading(true);
+    setManagedUsersError(null);
+    try {
+      const response = await fetch("/api/admin/users");
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || "ユーザー一覧の取得に失敗しました。");
+      }
+      const payload = (await response.json()) as { users?: ManagedUser[] };
+      setManagedUsers(payload.users ?? []);
+    } catch (error) {
+      console.error(error);
+      setManagedUsersError("ユーザー一覧の取得に失敗しました。");
+    } finally {
+      setManagedUsersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!authUser || !canEdit || masterSection !== "users") return;
+    let cancelled = false;
+    const load = async () => {
+      setManagedUsersLoading(true);
+      setManagedUsersError(null);
+      try {
+        const response = await fetch("/api/admin/users");
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "ユーザー一覧の取得に失敗しました。");
+        }
+        const payload = (await response.json()) as { users?: ManagedUser[] };
+        if (!cancelled) {
+          setManagedUsers(payload.users ?? []);
+        }
+      } catch (error) {
+        console.error(error);
+        if (!cancelled) {
+          setManagedUsersError("ユーザー一覧の取得に失敗しました。");
+        }
+      } finally {
+        if (!cancelled) {
+          setManagedUsersLoading(false);
+        }
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser, canEdit, masterSection]);
+
+  const handleCreateManagedUser = async () => {
+    if (!canEdit) return;
+    setUserCreateError(null);
+    setManagedUsersNote(null);
+    const trimmedId = newUserId.trim();
+    const trimmedName = newUserName.trim();
+    if (!trimmedId || !trimmedName) {
+      setUserCreateError("ユーザーIDと表示名を入力してください。");
+      return;
+    }
+    if (!newUserPassword) {
+      setUserCreateError("パスワードを入力してください。");
+      return;
+    }
+    if (newUserPassword !== newUserPasswordConfirm) {
+      setUserCreateError("パスワードが一致しません。");
+      return;
+    }
+    setUserCreateBusy(true);
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: trimmedId,
+          name: trimmedName,
+          role: newUserRole,
+          password: newUserPassword,
+        }),
+      });
+      if (!response.ok) {
+        const message = await response.text();
+        setUserCreateError(message || "ユーザーの追加に失敗しました。");
+        return;
+      }
+      setNewUserId("");
+      setNewUserName("");
+      setNewUserRole("viewer");
+      setNewUserPassword("");
+      setNewUserPasswordConfirm("");
+      setManagedUsersNote("ユーザーを追加しました。");
+      await fetchManagedUsers();
+    } catch (error) {
+      console.error(error);
+      setUserCreateError("ユーザーの追加に失敗しました。");
+    } finally {
+      setUserCreateBusy(false);
+    }
+  };
+
+  const openCreateManagedUserModal = () => {
+    setUserModalMode("create");
+    setNewUserId("");
+    setNewUserName("");
+    setNewUserRole("viewer");
+    setNewUserPassword("");
+    setNewUserPasswordConfirm("");
+    setUserCreateError(null);
+    setIsUserModalOpen(true);
+  };
+
+  const openEditManagedUserModal = (user: ManagedUser) => {
+    setUserModalMode("edit");
+    setEditingUser(user);
+    setEditUserName(user.name);
+    setEditUserRole(user.role);
+    setEditUserPassword("");
+    setEditUserPasswordConfirm("");
+    setUserEditError(null);
+    setIsUserModalOpen(true);
+  };
+
+  const handleUpdateManagedUser = async () => {
+    if (!canEdit || !editingUser) return;
+    setUserEditError(null);
+    setManagedUsersNote(null);
+    const trimmedName = editUserName.trim();
+    if (!trimmedName) {
+      setUserEditError("表示名を入力してください。");
+      return;
+    }
+    if (editUserPassword && editUserPassword !== editUserPasswordConfirm) {
+      setUserEditError("パスワードが一致しません。");
+      return;
+    }
+    setUserEditBusy(true);
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingUser.id,
+          name: trimmedName,
+          role: editUserRole,
+          password: editUserPassword || undefined,
+        }),
+      });
+      if (!response.ok) {
+        const message = await response.text();
+        setUserEditError(message || "ユーザーの更新に失敗しました。");
+        return;
+      }
+      setIsUserModalOpen(false);
+      setEditingUser(null);
+      setManagedUsersNote("ユーザー情報を更新しました。");
+      await fetchManagedUsers();
+    } catch (error) {
+      console.error(error);
+      setUserEditError("ユーザーの更新に失敗しました。");
+    } finally {
+      setUserEditBusy(false);
+    }
+  };
+
+  const handleDeleteManagedUser = async (user: ManagedUser) => {
+    if (!canEdit) return;
+    setManagedUsersNote(null);
+    if (!window.confirm(`ユーザー「${user.name}」を削除しますか？`)) return;
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: user.id }),
+      });
+      if (!response.ok) {
+        const message = await response.text();
+        setManagedUsersError(message || "ユーザーの削除に失敗しました。");
+        return;
+      }
+      setManagedUsersNote("ユーザーを削除しました。");
+      await fetchManagedUsers();
+    } catch (error) {
+      console.error(error);
+      setManagedUsersError("ユーザーの削除に失敗しました。");
     }
   };
 
@@ -3660,16 +3876,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     </div>
   );
 
-  const masterSectionLabelMap: Record<"home" | "items" | "materials", string> = {
+  const masterSectionLabelMap: Record<"home" | "items" | "materials" | "users", string> = {
     home: "マスタ管理",
     items: "品目一覧",
     materials: "原料一覧",
+    users: "ユーザー管理",
   };
 
-  const masterSectionDescriptionMap: Record<"home" | "items" | "materials", string> = {
+  const masterSectionDescriptionMap: Record<"home" | "items" | "materials" | "users", string> = {
     home: "品目・原料マスタの登録・編集・削除を行います。",
     items: "品目の計画方針・安全在庫・賞味期限・製造効率などを管理します。",
     materials: "原料の単位と名称を管理します。",
+    users: "ユーザーID・表示名・権限・パスワードを管理します。",
+  };
+
+  const userRoleLabelMap: Record<AuthRole, string> = {
+    admin: "管理者",
+    viewer: "閲覧者",
   };
 
   const masterView = (
@@ -3687,7 +3910,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       </div>
 
       {masterSection === "home" ? (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <Card className="rounded-2xl">
             <CardHeader className="space-y-2 pb-2">
               <CardTitle className="text-base font-medium">品目一覧</CardTitle>
@@ -3709,6 +3932,24 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             <CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm">
               <div className="text-muted-foreground">登録件数: {materialsMaster.length}件</div>
               <Button onClick={() => setMasterSection("materials")}>原料一覧を開く</Button>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl">
+            <CardHeader className="space-y-2 pb-2">
+              <CardTitle className="flex items-center gap-2 text-base font-medium">
+                ユーザー管理
+                {!canEdit ? <Badge variant="outline">管理者専用</Badge> : null}
+              </CardTitle>
+              <div className="text-sm text-muted-foreground">
+                ユーザーID・表示名・権限・パスワードを管理します。
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm">
+              <div className="text-muted-foreground">登録件数: {managedUsers.length}件</div>
+              <Button onClick={() => setMasterSection("users")} disabled={!canEdit}>
+                ユーザー管理を開く
+              </Button>
             </CardContent>
           </Card>
         </div>
@@ -3779,7 +4020,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             )}
           </CardContent>
         </Card>
-      ) : (
+      ) : masterSection === "materials" ? (
         <Card className="rounded-2xl">
           <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
             <CardTitle className="text-base font-medium">原料一覧</CardTitle>
@@ -3824,6 +4065,69 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             )}
           </CardContent>
         </Card>
+      ) : (
+        <div className="space-y-4">
+          <Card className="rounded-2xl">
+            <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
+              <CardTitle className="text-base font-medium">ユーザー管理</CardTitle>
+              <Button onClick={openCreateManagedUserModal} disabled={!canEdit}>
+                ユーザーを追加
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              {managedUsersNote ? (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                  {managedUsersNote}
+                </div>
+              ) : null}
+              {managedUsersLoading ? (
+                <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  読み込み中...
+                </div>
+              ) : managedUsersError ? (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  {managedUsersError}
+                </div>
+              ) : managedUsers.length ? (
+                <div className="overflow-x-auto rounded-lg border">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/30 text-xs text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium">ユーザーID</th>
+                        <th className="px-3 py-2 text-left font-medium">表示名</th>
+                        <th className="px-3 py-2 text-left font-medium">権限</th>
+                        <th className="px-3 py-2 text-right font-medium">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {managedUsers.map((user) => (
+                        <tr key={user.id}>
+                          <td className="px-3 py-2 font-medium">{user.id}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{user.name}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{userRoleLabelMap[user.role]}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="outline" onClick={() => openEditManagedUserModal(user)}>
+                                編集
+                              </Button>
+                              <Button variant="destructive" onClick={() => void handleDeleteManagedUser(user)}>
+                                削除
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  ユーザーが登録されていません。
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );
@@ -4254,10 +4558,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     manual: "マニュアル",
   };
 
-  const masterViewLabelMap: Record<"home" | "items" | "materials", string> = {
+  const masterViewLabelMap: Record<"home" | "items" | "materials" | "users", string> = {
     home: "マスタ管理",
     items: "マスタ管理 / 品目一覧",
     materials: "マスタ管理 / 原料一覧",
+    users: "マスタ管理 / ユーザー管理",
   };
 
   const viewLabel = activeView === "master" ? masterViewLabelMap[masterSection] : viewLabelMap[activeView];
@@ -4392,6 +4697,99 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 ? importView
                 : manualView}
         </main>
+
+        {/* ユーザー管理モーダル */}
+        <Dialog
+          open={isUserModalOpen}
+          onOpenChange={(open) => {
+            setIsUserModalOpen(open);
+            if (!open) {
+              setEditingUser(null);
+            }
+          }}
+        >
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{userModalMode === "create" ? "ユーザーを追加" : "ユーザーを編集"}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-[160px_1fr] md:items-center">
+                <div className="text-sm font-medium text-muted-foreground">ユーザーID</div>
+                <Input
+                  value={userModalMode === "create" ? newUserId : editingUser?.id ?? ""}
+                  onChange={(e) => setNewUserId(e.target.value)}
+                  placeholder="例: admin2"
+                  disabled={userModalMode === "edit"}
+                />
+                <div className="text-sm font-medium text-muted-foreground">表示名</div>
+                <Input
+                  value={userModalMode === "create" ? newUserName : editUserName}
+                  onChange={(e) =>
+                    userModalMode === "create" ? setNewUserName(e.target.value) : setEditUserName(e.target.value)
+                  }
+                  placeholder="表示名"
+                />
+                <div className="text-sm font-medium text-muted-foreground">権限</div>
+                <Select
+                  value={userModalMode === "create" ? newUserRole : editUserRole}
+                  onValueChange={(value) =>
+                    userModalMode === "create" ? setNewUserRole(value as AuthRole) : setEditUserRole(value as AuthRole)
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="権限を選択" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">管理者</SelectItem>
+                    <SelectItem value="viewer">閲覧者</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="text-sm font-medium text-muted-foreground">パスワード</div>
+                <Input
+                  type="password"
+                  value={userModalMode === "create" ? newUserPassword : editUserPassword}
+                  onChange={(e) =>
+                    userModalMode === "create"
+                      ? setNewUserPassword(e.target.value)
+                      : setEditUserPassword(e.target.value)
+                  }
+                  placeholder={userModalMode === "create" ? "パスワード" : "変更する場合のみ入力"}
+                />
+                <div className="text-sm font-medium text-muted-foreground">パスワード（確認）</div>
+                <Input
+                  type="password"
+                  value={userModalMode === "create" ? newUserPasswordConfirm : editUserPasswordConfirm}
+                  onChange={(e) =>
+                    userModalMode === "create"
+                      ? setNewUserPasswordConfirm(e.target.value)
+                      : setEditUserPasswordConfirm(e.target.value)
+                  }
+                  placeholder={userModalMode === "create" ? "パスワードを再入力" : "パスワードを再入力"}
+                />
+              </div>
+              {userModalMode === "create" && userCreateError ? (
+                <div className="text-sm text-destructive">{userCreateError}</div>
+              ) : null}
+              {userModalMode === "edit" && userEditError ? (
+                <div className="text-sm text-destructive">{userEditError}</div>
+              ) : null}
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setIsUserModalOpen(false)}>
+                キャンセル
+              </Button>
+              {userModalMode === "create" ? (
+                <Button onClick={() => void handleCreateManagedUser()} disabled={userCreateBusy}>
+                  {userCreateBusy ? "追加中..." : "追加"}
+                </Button>
+              ) : (
+                <Button onClick={() => void handleUpdateManagedUser()} disabled={userEditBusy}>
+                  {userEditBusy ? "保存中..." : "保存"}
+                </Button>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* 品目マスタモーダル */}
         <Dialog open={isItemModalOpen} onOpenChange={handleItemModalOpenChange}>

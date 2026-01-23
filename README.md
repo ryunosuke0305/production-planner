@@ -85,10 +85,12 @@ cp data/auth-users.example.json data/auth-users.json
 
 - `role` は `admin`（編集可）または `viewer`（閲覧専用）。
 - ログイン後のセッションは `data/auth-sessions.json` に保存されます。
+- 管理者は「マスタ管理 → ユーザー管理」からユーザーの追加・更新・削除が行えます（変更内容は `data/auth-users.json` に保存されます）。
+- ユーザー管理画面から追加・更新するパスワードはサーバー側で scrypt ハッシュ化されます。
 
 ### パスワードハッシュの作成
 
-`passwordHash` は scrypt で作成します。以下のコマンドで生成できます。
+`passwordHash` は scrypt で作成します。ユーザー管理画面を使わずに直接編集する場合は、以下のコマンドで生成できます。
 
 ```bash
 node -e "const crypto=require('crypto');const hash=(pw)=>{const salt=crypto.randomBytes(16);const key=crypto.scryptSync(pw,salt,64);return ['scrypt',salt.toString('base64'),key.toString('base64')].join('$');};console.log(hash('your_password'));"
