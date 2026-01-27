@@ -419,6 +419,16 @@ function buildDefaultCalendarDays(start: Date): CalendarDay[] {
   return buildCalendarDays(start, DAYS_IN_WEEK);
 }
 
+function extendCalendarDaysTo(calendarDays: CalendarDay[], targetEndISO: string): CalendarDay[] {
+  if (!calendarDays.length) return calendarDays;
+  const lastISO = calendarDays[calendarDays.length - 1]?.date;
+  if (!lastISO) return calendarDays;
+  const daysToAppend = diffDays(lastISO, targetEndISO);
+  if (daysToAppend <= 0) return calendarDays;
+  const appendStart = addDays(new Date(lastISO), 1);
+  return [...calendarDays, ...buildCalendarDays(appendStart, daysToAppend)];
+}
+
 function calcMaterials(
   item: Item,
   amount: number,
@@ -844,6 +854,31 @@ function slotLabelFromCalendar(p: {
   const hour = p.hoursByDay[dayIdx]?.[hourIdx];
   if (!day || hour === null || hour === undefined) return "";
   return p.density === "day" ? `${toMD(day.date)}` : `${toMD(day.date)} ${hour}:00`;
+}
+
+type PlanSnapshot = {
+  calendarDays: CalendarDay[];
+  calendarSlots: ReturnType<typeof buildCalendarSlots>;
+  slotIndexToLabel: string[];
+  slotCount: number;
+};
+
+function buildPlanSnapshot(calendarDays: CalendarDay[], density: Density): PlanSnapshot {
+  const calendarSlots = buildCalendarSlots(calendarDays, density);
+  const slotIndexToLabel = Array.from({ length: calendarSlots.slotCount }, (_, i) =>
+    slotLabelFromCalendar({
+      density,
+      calendarDays,
+      hoursByDay: calendarSlots.hoursByDay,
+      slotIndex: i,
+    })
+  );
+  return {
+    calendarDays,
+    calendarSlots,
+    slotIndexToLabel,
+    slotCount: calendarSlots.slotCount,
+  };
 }
 
 function buildSlotHeaderLabels(hoursByDay: Array<Array<number | null>>, density: Density): string[] {
@@ -2369,23 +2404,21 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
   };
 
-  const buildPlanContext = () => {
-    const horizonDays = Math.max(1, Math.floor(geminiHorizonDays));
-    const horizonEndISO = toISODate(addDays(new Date(), horizonDays));
-    const horizonEndIndex = planCalendarDays.findIndex((day) => day.date > horizonEndISO);
+  const buildPlanContext = (snapshot: PlanSnapshot, horizonEndISO: string) => {
+    const horizonEndIndex = snapshot.calendarDays.findIndex((day) => day.date > horizonEndISO);
     const horizonCalendarDays =
-      horizonEndIndex === -1 ? planCalendarDays : planCalendarDays.slice(0, horizonEndIndex);
+      horizonEndIndex === -1 ? snapshot.calendarDays : snapshot.calendarDays.slice(0, horizonEndIndex);
     const horizonWeekDates = horizonCalendarDays.map((day) => day.date);
-    const horizonSlotCount = horizonCalendarDays.length * planSlotsPerDay;
-    const horizonSlotIndexToLabel = planSlotIndexToLabel.slice(0, horizonSlotCount);
+    const horizonSlotCount = horizonCalendarDays.length * snapshot.calendarSlots.slotsPerDay;
+    const horizonSlotIndexToLabel = snapshot.slotIndexToLabel.slice(0, horizonSlotCount);
     const blockSummaries = blocks.map((b) => ({
       id: b.id,
       itemId: (itemMap.get(b.itemId)?.publicId ?? "").trim() || b.itemId,
       startSlot: b.start,
       startLabel: slotLabelFromCalendar({
         density: planDensity,
-        calendarDays: planCalendarDays,
-        hoursByDay: planCalendar.hoursByDay,
+        calendarDays: snapshot.calendarDays,
+        hoursByDay: snapshot.calendarSlots.hoursByDay,
         slotIndex: b.start,
       }),
       len: b.len,
@@ -2394,15 +2427,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       approved: b.approved,
       startAt: slotToDateTime(
         b.start,
-        planCalendarDays,
-        planCalendar.rawHoursByDay,
-        planCalendar.slotsPerDay
+        snapshot.calendarDays,
+        snapshot.calendarSlots.rawHoursByDay,
+        snapshot.calendarSlots.slotsPerDay
       )?.toISOString(),
       endAt: slotBoundaryToDateTime(
         b.start + b.len,
-        planCalendarDays,
-        planCalendar.rawHoursByDay,
-        planCalendar.slotsPerDay
+        snapshot.calendarDays,
+        snapshot.calendarSlots.rawHoursByDay,
+        snapshot.calendarSlots.slotsPerDay
       )?.toISOString(),
     }));
     const filteredBlocks = blockSummaries.filter((block) => {
@@ -2421,9 +2454,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
     return JSON.stringify(
       {
-        weekStartISO: horizonWeekDates[0] ?? planWeekDates[0],
+        weekStartISO: horizonWeekDates[0] ?? snapshot.calendarDays[0]?.date ?? planWeekDates[0],
         density: planDensity,
-        slotsPerDay: planSlotsPerDay,
+        slotsPerDay: snapshot.calendarSlots.slotsPerDay,
         slotCount: horizonSlotCount,
         slotIndexToLabel: horizonSlotIndexToLabel,
         calendarDays: horizonCalendarDays,
@@ -2460,42 +2493,62 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     );
   };
 
+  type SlotResolveContext = {
+    slotCount: number;
+    slotIndexToLabel: string[];
+    warnings: string[];
+  };
+
   const resolveItemId = (action: ChatAction) => {
     if (!action.itemId) return null;
     const trimmed = action.itemId.trim();
     return itemKeyMap.get(trimmed) ?? null;
   };
 
-  const resolveSlotIndex = (action: ChatAction) => {
+  const resolveSlotIndex = (action: ChatAction, context?: SlotResolveContext) => {
+    const slotCount = context?.slotCount ?? planSlotCount;
+    const slotIndexToLabel = context?.slotIndexToLabel ?? planSlotIndexToLabel;
     if (Number.isFinite(action.startSlot)) {
-      return clamp(Number(action.startSlot), 0, planSlotCount - 1);
+      const rawSlot = Number(action.startSlot);
+      if (rawSlot < 0 || rawSlot >= slotCount) {
+        context?.warnings.push(`startSlot ${rawSlot} は 0〜${slotCount - 1} の範囲外です。`);
+      } else {
+        return rawSlot;
+      }
     }
     if (action.startLabel) {
-      const idx = planSlotIndexToLabel.findIndex((label) => label === action.startLabel);
+      const idx = slotIndexToLabel.findIndex((label) => label === action.startLabel);
       if (idx >= 0) return idx;
     }
     return null;
   };
 
-  const resolveBlockId = (action: ChatAction, currentBlocks: Block[]) => {
+  const resolveBlockId = (action: ChatAction, currentBlocks: Block[], context?: SlotResolveContext) => {
     if (action.blockId && currentBlocks.some((b) => b.id === action.blockId)) return action.blockId;
     const itemId = resolveItemId(action);
-    const start = resolveSlotIndex(action);
+    const start = resolveSlotIndex(action, context);
     if (!itemId || start === null) return null;
     const found = currentBlocks.find((b) => b.itemId === itemId && b.start === start);
     return found?.id ?? null;
   };
 
-  const applyChatActions = (actions: ChatAction[]) => {
-    if (!actions.length) return;
+  const applyChatActions = (
+    actions: ChatAction[],
+    contextOverrides?: { slotCount?: number; slotIndexToLabel?: string[] }
+  ) => {
+    const warnings: string[] = [];
+    if (!actions.length) return warnings;
+    const slotCount = contextOverrides?.slotCount ?? planSlotCount;
+    const slotIndexToLabel = contextOverrides?.slotIndexToLabel ?? planSlotIndexToLabel;
+    const context: SlotResolveContext = { slotCount, slotIndexToLabel, warnings };
     setBlocks((prev) => {
       let next = [...prev];
       actions.forEach((action) => {
         if (action.type === "create_block") {
           const itemId = resolveItemId(action);
-          const start = resolveSlotIndex(action);
+          const start = resolveSlotIndex(action, context);
           if (!itemId || start === null) return;
-          const len = clamp(action.len ?? 1, 1, planSlotCount - start);
+          const len = clamp(action.len ?? 1, 1, slotCount - start);
           const candidate: Block = {
             id: uid("b"),
             itemId,
@@ -2509,15 +2562,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         }
 
         if (action.type === "update_block") {
-          const targetId = resolveBlockId(action, next);
+          const targetId = resolveBlockId(action, next, context);
           if (!targetId) return;
           const target = next.find((b) => b.id === targetId);
           if (!target || target.approved) return;
           next = next.map((b) => {
             if (b.id !== targetId) return b;
             const itemId = resolveItemId(action) ?? b.itemId;
-            const start = resolveSlotIndex(action) ?? b.start;
-            const len = clamp(action.len ?? b.len, 1, planSlotCount - start);
+            const start = resolveSlotIndex(action, context) ?? b.start;
+            const len = clamp(action.len ?? b.len, 1, slotCount - start);
             return resolveOverlap(
               {
                 ...b,
@@ -2534,7 +2587,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         }
 
         if (action.type === "delete_block") {
-          const targetId = resolveBlockId(action, next);
+          const targetId = resolveBlockId(action, next, context);
           if (!targetId) return;
           const target = next.find((b) => b.id === targetId);
           if (!target || target.approved) return;
@@ -2543,6 +2596,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       });
       return next;
     });
+    return warnings;
   };
 
   const sendChatMessage = async () => {
@@ -2563,6 +2617,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setChatInput("");
     setChatBusy(true);
     setChatError(null);
+
+    const horizonDays = Math.max(1, Math.floor(geminiHorizonDays));
+    const horizonEndISO = toISODate(addDays(new Date(), horizonDays));
+    const extendedCalendarDays = extendCalendarDaysTo(planCalendarDays, horizonEndISO);
+    if (extendedCalendarDays.length !== planCalendarDays.length) {
+      setPlanCalendarDays(extendedCalendarDays);
+    }
+    const planSnapshot = buildPlanSnapshot(extendedCalendarDays, planDensity);
 
     const systemInstruction = [
       "あなたは製造計画のアシスタントです。",
@@ -2590,7 +2652,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       "ブロックを作成または移動する場合は、なぜそのスロットを選んだかの根拠をmemoに必ず記載してください。",
     ].join("\n");
 
-    const planContext = buildPlanContext();
+    const planContext = buildPlanContext(planSnapshot, horizonEndISO);
     const constraintsNote = constraintsText.trim() ? `\n\nユーザー制約条件:\n${constraintsText.trim()}` : "";
     const messageWithContext = `現在の計画データ(JSON):\n${planContext}\n\nユーザー入力:\n${trimmed}${constraintsNote}`;
     const chatHistoryCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -2672,8 +2734,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         parsed = null;
       }
 
+      let actionWarnings: string[] = [];
       if (parsed?.actions) {
-        applyChatActions(parsed.actions);
+        actionWarnings = applyChatActions(parsed.actions, {
+          slotCount: planSnapshot.slotCount,
+          slotIndexToLabel: planSnapshot.slotIndexToLabel,
+        });
+        if (actionWarnings.length) {
+          setChatError(`警告:\n${actionWarnings.join("\n")}`);
+        }
       }
 
       const assistantContent =
