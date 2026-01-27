@@ -2404,8 +2404,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
   };
 
-  const buildPlanContext = (snapshot: PlanSnapshot, horizonEndISO: string) => {
-    const horizonEndIndex = snapshot.calendarDays.findIndex((day) => day.date > horizonEndISO);
+  const buildPlanContext = (
+    snapshot: PlanSnapshot,
+    rangeStartISO: string,
+    rangeEndISO: string,
+    executedAtISO: string
+  ) => {
+    const horizonEndIndex = snapshot.calendarDays.findIndex((day) => day.date > rangeEndISO);
     const horizonCalendarDays =
       horizonEndIndex === -1 ? snapshot.calendarDays : snapshot.calendarDays.slice(0, horizonEndIndex);
     const horizonWeekDates = horizonCalendarDays.map((day) => day.date);
@@ -2440,11 +2445,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }));
     const filteredBlocks = blockSummaries.filter((block) => {
       if (!block.startAt) return false;
-      return block.startAt.slice(0, 10) <= horizonEndISO;
+      const blockDate = block.startAt.slice(0, 10);
+      return blockDate >= rangeStartISO && blockDate <= rangeEndISO;
     });
-    const filteredDailyStocks = dailyStocks.filter((entry) => entry.date <= horizonEndISO);
+    const isDateInRange = (date: string) => date >= rangeStartISO && date <= rangeEndISO;
+    const filteredDailyStocks = dailyStocks.filter((entry) => isDateInRange(entry.date));
     const filteredOrders = orders.filter(
-      (entry) => entry.deliveryDate <= horizonEndISO || entry.shipDate <= horizonEndISO
+      (entry) => isDateInRange(entry.deliveryDate) || isDateInRange(entry.shipDate)
     );
     const eodStocks = items.map((item) => ({
       itemId: (item.publicId ?? "").trim() || item.id,
@@ -2454,6 +2461,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
     return JSON.stringify(
       {
+        executedAtISO,
+        rangeStartISO,
+        rangeEndISO,
         weekStartISO: horizonWeekDates[0] ?? snapshot.calendarDays[0]?.date ?? planWeekDates[0],
         density: planDensity,
         slotsPerDay: snapshot.calendarSlots.slotsPerDay,
@@ -2618,8 +2628,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setChatBusy(true);
     setChatError(null);
 
+    const executedAt = new Date();
     const horizonDays = Math.max(1, Math.floor(geminiHorizonDays));
-    const horizonEndISO = toISODate(addDays(new Date(), horizonDays));
+    const horizonStartISO = toISODate(addDays(executedAt, -7));
+    const horizonEndISO = toISODate(addDays(executedAt, horizonDays));
     const extendedCalendarDays = extendCalendarDaysTo(planCalendarDays, horizonEndISO);
     if (extendedCalendarDays.length !== planCalendarDays.length) {
       setPlanCalendarDays(extendedCalendarDays);
@@ -2650,9 +2662,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       "承認済みのブロックは編集・削除できません。",
       "ユーザーが「空いてるところ」「空き枠」「この日までに」などの曖昧な指示を出した場合は、blocksの重複を避けつつ、条件に合う最も早いスロットを選んでstartSlotを必ず指定してください。",
       "ブロックを作成または移動する場合は、なぜそのスロットを選んだかの根拠をmemoに必ず記載してください。",
+      "計画データの対象期間はrangeStartISO〜rangeEndISOです。範囲外の指示は避けてください。",
     ].join("\n");
 
-    const planContext = buildPlanContext(planSnapshot, horizonEndISO);
+    const planContext = buildPlanContext(planSnapshot, horizonStartISO, horizonEndISO, executedAt.toISOString());
     const constraintsNote = constraintsText.trim() ? `\n\nユーザー制約条件:\n${constraintsText.trim()}` : "";
     const messageWithContext = `現在の計画データ(JSON):\n${planContext}\n\nユーザー入力:\n${trimmed}${constraintsNote}`;
     const chatHistoryCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
