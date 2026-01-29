@@ -95,7 +95,7 @@ type Block = {
 };
 
 type ExportPayloadV1 = {
-  schemaVersion: "1.2.0";
+  schemaVersion: "1.2.1";
   meta: {
     exportedAtISO: string;
     timezone: string;
@@ -141,12 +141,6 @@ type ExportPayloadV1 = {
     date: string;
     itemCode: string;
     stock: number;
-  }>;
-  orders: Array<{
-    deliveryDate: string;
-    shipDate: string;
-    itemCode: string;
-    quantity: number;
   }>;
   eodStocks: Array<{
     itemCode: string;
@@ -212,22 +206,9 @@ type DailyStockEntry = {
   stock: number;
 };
 
-type OrderEntry = {
-  deliveryDate: string;
-  shipDate: string;
-  itemId: string;
-  itemCode: string;
-  quantity: number;
-};
-
 type DailyStocksResponse = {
   updatedAtISO: string | null;
   entries: DailyStockEntry[];
-};
-
-type OrdersResponse = {
-  updatedAtISO: string | null;
-  entries: OrderEntry[];
 };
 
 type ImportHeaderOverrides = {
@@ -235,12 +216,6 @@ type ImportHeaderOverrides = {
     date: string;
     itemCode: string;
     stock: string;
-  };
-  orders: {
-    deliveryDate: string;
-    shipDate: string;
-    itemCode: string;
-    quantity: string;
   };
 };
 
@@ -250,12 +225,6 @@ const DEFAULT_IMPORT_HEADER_OVERRIDES: ImportHeaderOverrides = {
     itemCode: "",
     stock: "",
   },
-  orders: {
-    deliveryDate: "",
-    shipDate: "",
-    itemCode: "",
-    quantity: "",
-  },
 };
 
 const normalizeImportHeaderOverrides = (payload?: Partial<ImportHeaderOverrides> | null): ImportHeaderOverrides => ({
@@ -263,12 +232,6 @@ const normalizeImportHeaderOverrides = (payload?: Partial<ImportHeaderOverrides>
     date: typeof payload?.dailyStock?.date === "string" ? payload.dailyStock.date : "",
     itemCode: typeof payload?.dailyStock?.itemCode === "string" ? payload.dailyStock.itemCode : "",
     stock: typeof payload?.dailyStock?.stock === "string" ? payload.dailyStock.stock : "",
-  },
-  orders: {
-    deliveryDate: typeof payload?.orders?.deliveryDate === "string" ? payload.orders.deliveryDate : "",
-    shipDate: typeof payload?.orders?.shipDate === "string" ? payload.orders.shipDate : "",
-    itemCode: typeof payload?.orders?.itemCode === "string" ? payload.orders.itemCode : "",
-    quantity: typeof payload?.orders?.quantity === "string" ? payload.orders.quantity : "",
   },
 });
 
@@ -570,13 +533,6 @@ const DAILY_STOCK_HEADERS = {
   date: ["日付", "年月日", "date", "stockdate", "inventorydate"],
   itemCode: ["品目コード", "品目", "itemcode", "item_code", "itemid", "item_id"],
   stock: ["在庫数", "在庫", "stock", "inventory", "qty"],
-};
-
-const ORDER_HEADERS = {
-  deliveryDate: ["納品日", "納品予定日", "deliverydate", "delivery_date"],
-  shipDate: ["出荷日", "出荷予定日", "shipdate", "ship_date", "shipmentdate"],
-  itemCode: ["品目コード", "品目", "itemcode", "item_code", "itemid", "item_id"],
-  quantity: ["受注数", "受注数量", "数量", "orderqty", "order_qty", "qty"],
 };
 
 const ITEM_HEADERS = {
@@ -1006,7 +962,6 @@ function buildExportPayload(p: {
   items: Item[];
   blocks: Block[];
   dailyStocks: DailyStockEntry[];
-  orders: OrderEntry[];
   eodStocks: Array<{ itemId: string; itemCode: string; dates: string[]; stocks: number[] }>;
 }): ExportPayloadV1 {
   const slotIndexToLabel = new Array(p.slotCount).fill("").map((_, i) =>
@@ -1021,7 +976,7 @@ function buildExportPayload(p: {
   const exportHours = p.hoursByDay[0]?.filter((hour): hour is number => hour !== null) ?? [];
 
   return {
-    schemaVersion: "1.2.0",
+    schemaVersion: "1.2.1",
     meta: {
       exportedAtISO: new Date().toISOString(),
       timezone: p.timezone,
@@ -1077,12 +1032,6 @@ function buildExportPayload(p: {
       date: entry.date,
       itemCode: entry.itemCode,
       stock: entry.stock,
-    })),
-    orders: p.orders.map((entry) => ({
-      deliveryDate: entry.deliveryDate,
-      shipDate: entry.shipDate,
-      itemCode: entry.itemCode,
-      quantity: entry.quantity,
     })),
     eodStocks: p.eodStocks.map((entry) => ({
       itemCode: entry.itemCode,
@@ -1154,33 +1103,21 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [materialsMaster, setMaterialsMaster] = useState<Material[]>(SAMPLE_MATERIALS);
   const [items, setItems] = useState<Item[]>(SAMPLE_ITEMS);
   const [dailyStocks, setDailyStocks] = useState<DailyStockEntry[]>([]);
-  const [orders, setOrders] = useState<OrderEntry[]>([]);
   const [dailyStockUpdatedAt, setDailyStockUpdatedAt] = useState<string | null>(null);
-  const [orderUpdatedAt, setOrderUpdatedAt] = useState<string | null>(null);
   const [dailyStockImportNote, setDailyStockImportNote] = useState<string | null>(null);
-  const [orderImportNote, setOrderImportNote] = useState<string | null>(null);
   const [itemMasterImportNote, setItemMasterImportNote] = useState<string | null>(null);
   const [materialMasterImportNote, setMaterialMasterImportNote] = useState<string | null>(null);
   const [dailyStockImportError, setDailyStockImportError] = useState<string | null>(null);
-  const [orderImportError, setOrderImportError] = useState<string | null>(null);
   const [itemMasterImportError, setItemMasterImportError] = useState<string | null>(null);
   const [materialMasterImportError, setMaterialMasterImportError] = useState<string | null>(null);
   const [dailyStockInputKey, setDailyStockInputKey] = useState(0);
-  const [orderInputKey, setOrderInputKey] = useState(0);
   const [itemMasterInputKey, setItemMasterInputKey] = useState(0);
   const [materialMasterInputKey, setMaterialMasterInputKey] = useState(0);
   const [dailyStockHeaderOverrides, setDailyStockHeaderOverrides] = useState(
     DEFAULT_IMPORT_HEADER_OVERRIDES.dailyStock
   );
-  const [orderHeaderOverrides, setOrderHeaderOverrides] = useState(DEFAULT_IMPORT_HEADER_OVERRIDES.orders);
-  const [importHeaderSaveNote, setImportHeaderSaveNote] = useState<{ daily: string | null; order: string | null }>({
-    daily: null,
-    order: null,
-  });
-  const [importHeaderSaveError, setImportHeaderSaveError] = useState<{ daily: string | null; order: string | null }>({
-    daily: null,
-    order: null,
-  });
+  const [importHeaderSaveNote, setImportHeaderSaveNote] = useState<string | null>(null);
+  const [importHeaderSaveError, setImportHeaderSaveError] = useState<string | null>(null);
   const [importHeaderSaveBusy, setImportHeaderSaveBusy] = useState(false);
   const [itemNameDraft, setItemNameDraft] = useState("");
   const [itemPublicIdDraft, setItemPublicIdDraft] = useState("");
@@ -1641,20 +1578,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return map;
   }, [dailyStocks]);
 
-  const ordersByShipDate = useMemo(() => {
-    const map = new Map<string, Map<string, number>>();
-    orders.forEach((entry) => {
-      if (!entry.itemId || !entry.shipDate) return;
-      if (!map.has(entry.itemId)) {
-        map.set(entry.itemId, new Map());
-      }
-      const itemMapEntry = map.get(entry.itemId);
-      const current = itemMapEntry?.get(entry.shipDate) ?? 0;
-      itemMapEntry?.set(entry.shipDate, current + entry.quantity);
-    });
-    return map;
-  }, [orders]);
-
   const activeBlock = useMemo(() => {
     if (!activeBlockId) return null;
     return blocks.find((b) => b.id === activeBlockId) ?? null;
@@ -1853,47 +1776,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return { entries: next, invalidRows, duplicateCodes };
   };
 
-  const parseOrderRows = (rows: unknown[][]) => {
-    if (!rows.length) {
-      throw new Error("シートが空です。");
-    }
-    const headers = rows[0] ?? [];
-    const deliveryIndex = findHeaderIndex(
-      headers,
-      mergeHeaderCandidates(ORDER_HEADERS.deliveryDate, orderHeaderOverrides.deliveryDate)
-    );
-    const shipIndex = findHeaderIndex(headers, mergeHeaderCandidates(ORDER_HEADERS.shipDate, orderHeaderOverrides.shipDate));
-    const itemIndex = findHeaderIndex(headers, mergeHeaderCandidates(ORDER_HEADERS.itemCode, orderHeaderOverrides.itemCode));
-    const qtyIndex = findHeaderIndex(headers, mergeHeaderCandidates(ORDER_HEADERS.quantity, orderHeaderOverrides.quantity));
-    if (deliveryIndex < 0 || shipIndex < 0 || itemIndex < 0 || qtyIndex < 0) {
-      throw new Error("受注一覧の必須列（納品日/出荷日/品目コード/受注数）が見つかりません。");
-    }
-
-    const next: OrderEntry[] = [];
-    let missingItem = 0;
-    let invalidRows = 0;
-
-    rows.slice(1).forEach((row) => {
-      if (!row || isEmptyRow(row)) return;
-      const deliveryDate = normalizeDateInput(row[deliveryIndex]);
-      const shipDate = normalizeDateInput(row[shipIndex]);
-      const itemCode = String(row[itemIndex] ?? "").trim();
-      const quantity = normalizeNumberInput(row[qtyIndex]);
-      if (!deliveryDate || !shipDate || !itemCode || quantity === null) {
-        invalidRows += 1;
-        return;
-      }
-      const itemId = itemKeyMap.get(itemCode);
-      if (!itemId) {
-        missingItem += 1;
-        return;
-      }
-      next.push({ deliveryDate, shipDate, itemId, itemCode, quantity });
-    });
-
-    return { entries: next, missingItem, invalidRows };
-  };
-
   const parseMaterialMasterRows = (rows: unknown[][]) => {
     if (!rows.length) {
       throw new Error("シートが空です。");
@@ -1945,43 +1827,28 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setDailyStockUpdatedAt(updatedAtISO);
   };
 
-  const saveOrdersToServer = async (entries: OrderEntry[]) => {
-    const response = await fetch("/api/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ entries }),
-    });
-    if (!response.ok) {
-      throw new Error("受注一覧の保存に失敗しました。");
-    }
-    const payload = (await response.json()) as Partial<OrdersResponse>;
-    const updatedAtISO = typeof payload.updatedAtISO === "string" ? payload.updatedAtISO : null;
-    setOrderUpdatedAt(updatedAtISO);
-  };
-
-  const saveImportHeaderOverrides = async (target: "daily" | "order") => {
+  const saveImportHeaderOverrides = async () => {
     if (!canEdit) {
-      setImportHeaderSaveError((prev) => ({ ...prev, [target]: readOnlyMessage }));
+      setImportHeaderSaveError(readOnlyMessage);
       return;
     }
     setImportHeaderSaveBusy(true);
-    setImportHeaderSaveNote((prev) => ({ ...prev, [target]: null }));
-    setImportHeaderSaveError((prev) => ({ ...prev, [target]: null }));
+    setImportHeaderSaveNote(null);
+    setImportHeaderSaveError(null);
     try {
       const response = await fetch("/api/import-headers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           dailyStock: dailyStockHeaderOverrides,
-          orders: orderHeaderOverrides,
         } satisfies ImportHeaderOverrides),
       });
       if (!response.ok) {
         throw new Error("ヘッダー指定の保存に失敗しました。");
       }
-      setImportHeaderSaveNote((prev) => ({ ...prev, [target]: "ヘッダー指定を保存しました。" }));
+      setImportHeaderSaveNote("ヘッダー指定を保存しました。");
     } catch {
-      setImportHeaderSaveError((prev) => ({ ...prev, [target]: "ヘッダー指定の保存に失敗しました。" }));
+      setImportHeaderSaveError("ヘッダー指定の保存に失敗しました。");
     } finally {
       setImportHeaderSaveBusy(false);
     }
@@ -2007,29 +1874,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       setError: setDailyStockImportError,
       setInputKey: setDailyStockInputKey,
       fallbackErrorMessage: "日別在庫の取り込みに失敗しました。",
-    });
-  };
-
-  const handleOrderImport = async (file: File) => {
-    if (!canEdit) {
-      setOrderImportError(readOnlyMessage);
-      return;
-    }
-    await runExcelImportWithFeedback({
-      file,
-      parseRows: parseOrderRows,
-      onSuccess: async (result) => {
-        await saveOrdersToServer(result.entries);
-        setOrders(result.entries);
-      },
-      buildNote: (result) =>
-        `受注一覧を${result.entries.length}件取り込みました。` +
-        (result.missingItem ? ` (品目未登録:${result.missingItem}件)` : "") +
-        (result.invalidRows ? ` (無効行:${result.invalidRows}件)` : ""),
-      setNote: setOrderImportNote,
-      setError: setOrderImportError,
-      setInputKey: setOrderInputKey,
-      fallbackErrorMessage: "受注一覧の取り込みに失敗しました。",
     });
   };
 
@@ -2244,15 +2088,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     let cancelled = false;
     const loadImportedData = async () => {
       try {
-        const [dailyResponse, orderResponse] = await Promise.all([fetch("/api/daily-stocks"), fetch("/api/orders")]);
-        if (!dailyResponse.ok || !orderResponse.ok) return;
+        const dailyResponse = await fetch("/api/daily-stocks");
+        if (!dailyResponse.ok) return;
         const dailyPayload = (await dailyResponse.json()) as Partial<DailyStocksResponse>;
-        const orderPayload = (await orderResponse.json()) as Partial<OrdersResponse>;
         if (cancelled) return;
         setDailyStocks(Array.isArray(dailyPayload.entries) ? dailyPayload.entries : []);
-        setOrders(Array.isArray(orderPayload.entries) ? orderPayload.entries : []);
         setDailyStockUpdatedAt(typeof dailyPayload.updatedAtISO === "string" ? dailyPayload.updatedAtISO : null);
-        setOrderUpdatedAt(typeof orderPayload.updatedAtISO === "string" ? orderPayload.updatedAtISO : null);
       } catch {
         // 読み込み失敗時は既定値を維持
       }
@@ -2274,7 +2115,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         if (cancelled) return;
         const normalized = normalizeImportHeaderOverrides(payload);
         setDailyStockHeaderOverrides(normalized.dailyStock);
-        setOrderHeaderOverrides(normalized.orders);
       } catch {
         // 読み込み失敗時は既定値を維持
       }
@@ -2450,9 +2290,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     });
     const isDateInRange = (date: string) => date >= rangeStartISO && date <= rangeEndISO;
     const filteredDailyStocks = dailyStocks.filter((entry) => isDateInRange(entry.date));
-    const filteredOrders = orders.filter(
-      (entry) => isDateInRange(entry.deliveryDate) || isDateInRange(entry.shipDate)
-    );
     const eodStocks = items.map((item) => ({
       itemId: (item.publicId ?? "").trim() || item.id,
       dates: horizonWeekDates,
@@ -2488,12 +2325,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           date: entry.date,
           itemCode: entry.itemCode,
           stock: entry.stock,
-        })),
-        orders: filteredOrders.map((entry) => ({
-          deliveryDate: entry.deliveryDate,
-          shipDate: entry.shipDate,
-          itemCode: entry.itemCode,
-          quantity: entry.quantity,
         })),
         eodStocks,
         blocks: filteredBlocks,
@@ -3372,15 +3203,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         if (override !== undefined) {
           cur = override;
         }
-        const shipped = ordersByShipDate.get(it.id)?.get(date ?? "") ?? 0;
-        cur += addByDay[d] - shipped;
+        cur += addByDay[d];
         eod[d] = cur;
       }
       out[it.id] = eod;
     }
 
     return out;
-  }, [blocks, dailyStockMap, isPlanWeekView, items, ordersByShipDate, planSlotsPerDay, viewStartOffsetDays, weekDates]);
+  }, [blocks, dailyStockMap, isPlanWeekView, items, planSlotsPerDay, viewStartOffsetDays, weekDates]);
 
   const eodSummaryByDay = useMemo(() => {
     const blocksForEod = isPlanWeekView ? blocks : [];
@@ -3422,7 +3252,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       items,
       blocks,
       dailyStocks,
-      orders,
       eodStocks: items.map((item) => ({
         itemId: item.id,
         itemCode: (item.publicId ?? "").trim() || item.id,
@@ -4232,12 +4061,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       itemCode: "在庫を紐づける品目コード。\n形式: 品目マスタの品目コードと一致する文字列",
       stock: "対象日の在庫数量。\n形式: 数値（小数可）",
     },
-    orders: {
-      deliveryDate: "受注の納品予定日。\n形式: yyyyMMdd または yyyy-MM-dd",
-      shipDate: "受注の出荷予定日。\n形式: yyyyMMdd または yyyy-MM-dd",
-      itemCode: "受注対象の品目コード。\n形式: 品目マスタの品目コードと一致する文字列",
-      quantity: "受注の数量。\n形式: 数値（小数可）",
-    },
   };
 
   const importView = (
@@ -4245,7 +4068,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       <div className="space-y-1">
         <div className="text-2xl font-semibold tracking-tight">Excel取り込み</div>
         <div className="text-sm text-muted-foreground">
-          日別在庫・受注一覧・各マスタをExcelから取り込みます。
+          日別在庫・各マスタをExcelから取り込みます。
         </div>
       </div>
       <Card className="rounded-2xl shadow-sm">
@@ -4275,7 +4098,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               </div>
               <Button
                 size="sm"
-                onClick={() => void saveImportHeaderOverrides("daily")}
+                onClick={() => void saveImportHeaderOverrides()}
                 disabled={importHeaderSaveBusy || !canEdit}
               >
                 設定を保存
@@ -4331,14 +4154,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 />
               </div>
             </div>
-            {importHeaderSaveNote.daily ? (
+            {importHeaderSaveNote ? (
               <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-                {importHeaderSaveNote.daily}
+                {importHeaderSaveNote}
               </div>
             ) : null}
-            {importHeaderSaveError.daily ? (
+            {importHeaderSaveError ? (
               <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                {importHeaderSaveError.daily}
+                {importHeaderSaveError}
               </div>
             ) : null}
           </div>
@@ -4350,128 +4173,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           {dailyStockImportError ? (
             <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
               {dailyStockImportError}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-      <Card className="rounded-2xl shadow-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">受注一覧（納品日 / 出荷日 / 品目コード / 受注数）</CardTitle>
-          <div className="text-xs text-muted-foreground">最終更新: {formatUpdatedAt(orderUpdatedAt)}</div>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm">
-          <Input
-            key={`orders-${orderInputKey}`}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            disabled={!canEdit}
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              await handleOrderImport(file);
-            }}
-          />
-          <div className="rounded-lg border bg-muted/10 p-3 text-xs">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="space-y-1">
-                <div className="font-semibold text-slate-700">ヘッダー指定（任意）</div>
-                <div className="text-muted-foreground">
-                  カンマ区切りで列名候補を追加できます。入力した候補を優先的に検索します。
-                </div>
-              </div>
-              <Button
-                size="sm"
-                onClick={() => void saveImportHeaderOverrides("order")}
-                disabled={importHeaderSaveBusy || !canEdit}
-              >
-                設定を保存
-              </Button>
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <div className="space-y-1">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
-                  納品日
-                  <InfoTooltip text={importHeaderTooltips.orders.deliveryDate} />
-                </div>
-                <Input
-                  value={orderHeaderOverrides.deliveryDate}
-                  placeholder="例: 納品予定, 納期"
-                  onChange={(e) =>
-                    setOrderHeaderOverrides((prev) => ({
-                      ...prev,
-                      deliveryDate: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
-                  出荷日
-                  <InfoTooltip text={importHeaderTooltips.orders.shipDate} />
-                </div>
-                <Input
-                  value={orderHeaderOverrides.shipDate}
-                  placeholder="例: 出荷予定, 発送日"
-                  onChange={(e) =>
-                    setOrderHeaderOverrides((prev) => ({
-                      ...prev,
-                      shipDate: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
-                  品目コード
-                  <InfoTooltip text={importHeaderTooltips.orders.itemCode} />
-                </div>
-                <Input
-                  value={orderHeaderOverrides.itemCode}
-                  placeholder="例: 商品コード, SKU"
-                  onChange={(e) =>
-                    setOrderHeaderOverrides((prev) => ({
-                      ...prev,
-                      itemCode: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
-                  受注数
-                  <InfoTooltip text={importHeaderTooltips.orders.quantity} />
-                </div>
-                <Input
-                  value={orderHeaderOverrides.quantity}
-                  placeholder="例: 注文数, 数量"
-                  onChange={(e) =>
-                    setOrderHeaderOverrides((prev) => ({
-                      ...prev,
-                      quantity: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-            </div>
-            {importHeaderSaveNote.order ? (
-              <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-                {importHeaderSaveNote.order}
-              </div>
-            ) : null}
-            {importHeaderSaveError.order ? (
-              <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                {importHeaderSaveError.order}
-              </div>
-            ) : null}
-          </div>
-          {orderImportNote ? (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-              {orderImportNote}
-            </div>
-          ) : null}
-          {orderImportError ? (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-              {orderImportError}
             </div>
           ) : null}
         </CardContent>

@@ -9,12 +9,10 @@ import { GoogleGenAI } from "@google/genai";
 import {
   loadDailyStocks,
   loadImportHeaderOverrides,
-  loadOrders,
   loadPlanPayload,
   openPlanDatabase,
   saveDailyStocks,
   saveImportHeaderOverrides,
-  saveOrders,
   savePlanPayload,
 } from "./scripts/plan-db.js";
 
@@ -782,69 +780,6 @@ const createDailyStocksApiMiddleware = () => {
   };
 };
 
-const createOrdersApiMiddleware = () => {
-  return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
-    if (req.method === "GET") {
-      let db;
-      try {
-        db = await openPlanDatabase();
-        const payload = loadOrders(db);
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify(payload));
-      } catch (error) {
-        console.error("Failed to read orders:", error);
-        res.statusCode = 500;
-        res.end("Failed to read orders.");
-      } finally {
-        db?.close();
-      }
-      return;
-    }
-
-    if (req.method === "POST") {
-      let body = "";
-      req.on("data", (chunk: any) => {
-        body += chunk.toString("utf-8");
-      });
-      req.on("end", async () => {
-        let parsed: { entries?: unknown };
-        try {
-          parsed = JSON.parse(body || "{}") as { entries?: unknown };
-        } catch {
-          res.statusCode = 400;
-          res.end("Invalid JSON payload.");
-          return;
-        }
-        const entries = Array.isArray(parsed.entries) ? parsed.entries : null;
-        if (!entries) {
-          res.statusCode = 400;
-          res.end("Invalid orders payload.");
-          return;
-        }
-        let db;
-        try {
-          db = await openPlanDatabase();
-          const updatedAtISO = saveOrders(db, entries);
-          res.statusCode = 200;
-          res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ updatedAtISO }));
-        } catch (error) {
-          console.error("Failed to save orders:", error);
-          res.statusCode = 500;
-          res.end("Failed to save orders.");
-        } finally {
-          db?.close();
-        }
-      });
-      return;
-    }
-
-    res.statusCode = 405;
-    res.end("Method Not Allowed");
-  };
-};
-
 const createImportHeadersApiMiddleware = () => {
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
     if (req.method === "GET") {
@@ -998,7 +933,6 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use("/api/admin/users", createAdminUsersApiMiddleware(authJwtSecret));
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
-          server.middlewares.use("/api/orders", createOrdersApiMiddleware());
           server.middlewares.use("/api/import-headers", createImportHeadersApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());
@@ -1010,7 +944,6 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use("/api/admin/users", createAdminUsersApiMiddleware(authJwtSecret));
           server.middlewares.use("/api/plan", createPlanApiMiddleware());
           server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
-          server.middlewares.use("/api/orders", createOrdersApiMiddleware());
           server.middlewares.use("/api/import-headers", createImportHeadersApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());

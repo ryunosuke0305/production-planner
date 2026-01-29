@@ -30,6 +30,7 @@ function normalizeDensity(value) {
 
 function ensureSchema(db) {
   db.exec(`
+    DROP TABLE IF EXISTS orders;
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -78,14 +79,6 @@ function ensureSchema(db) {
       stock REAL NOT NULL,
       PRIMARY KEY (date, item_id)
     );
-    CREATE TABLE IF NOT EXISTS orders (
-      delivery_date TEXT NOT NULL,
-      ship_date TEXT NOT NULL,
-      item_id TEXT NOT NULL,
-      item_code TEXT NOT NULL,
-      quantity REAL NOT NULL,
-      PRIMARY KEY (delivery_date, ship_date, item_id)
-    );
     CREATE TABLE IF NOT EXISTS calendar_days (
       date TEXT PRIMARY KEY,
       is_holiday INTEGER NOT NULL DEFAULT 0,
@@ -94,8 +87,6 @@ function ensureSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_daily_stocks_date ON daily_stocks(date);
     CREATE INDEX IF NOT EXISTS idx_daily_stocks_item ON daily_stocks(item_id);
-    CREATE INDEX IF NOT EXISTS idx_orders_delivery_date ON orders(delivery_date);
-    CREATE INDEX IF NOT EXISTS idx_orders_item ON orders(item_id);
     CREATE INDEX IF NOT EXISTS idx_blocks_start ON blocks(start);
     CREATE INDEX IF NOT EXISTS idx_blocks_item ON blocks(item_id);
     CREATE INDEX IF NOT EXISTS idx_blocks_item_start ON blocks(item_id, start);
@@ -169,12 +160,6 @@ const DEFAULT_IMPORT_HEADER_OVERRIDES = {
     itemCode: "",
     stock: "",
   },
-  orders: {
-    deliveryDate: "",
-    shipDate: "",
-    itemCode: "",
-    quantity: "",
-  },
 };
 
 function normalizeImportHeaderOverrides(payload) {
@@ -184,12 +169,6 @@ function normalizeImportHeaderOverrides(payload) {
       date: toText(payload?.dailyStock?.date),
       itemCode: toText(payload?.dailyStock?.itemCode),
       stock: toText(payload?.dailyStock?.stock),
-    },
-    orders: {
-      deliveryDate: toText(payload?.orders?.deliveryDate),
-      shipDate: toText(payload?.orders?.shipDate),
-      itemCode: toText(payload?.orders?.itemCode),
-      quantity: toText(payload?.orders?.quantity),
     },
   };
 }
@@ -344,25 +323,6 @@ export function loadDailyStocks(db) {
   };
 }
 
-export function loadOrders(db) {
-  const entries = db
-    .prepare(
-      "SELECT delivery_date, ship_date, item_id, item_code, quantity FROM orders ORDER BY delivery_date, ship_date, item_code"
-    )
-    .all()
-    .map((row) => ({
-      deliveryDate: row.delivery_date,
-      shipDate: row.ship_date,
-      itemId: row.item_id,
-      itemCode: row.item_code,
-      quantity: row.quantity,
-    }));
-  return {
-    updatedAtISO: loadMetaValue(db, "ordersUpdatedAtISO"),
-    entries,
-  };
-}
-
 export function loadImportHeaderOverrides(db) {
   const raw = loadMetaValue(db, "importHeaderOverrides");
   if (!raw) return DEFAULT_IMPORT_HEADER_OVERRIDES;
@@ -475,31 +435,6 @@ export function saveDailyStocks(db, entries = []) {
       insertDailyStock.run(entry.date, entry.itemId, entry.itemCode, entry.stock ?? 0);
     });
     insertMeta.run("dailyStocksUpdatedAtISO", updatedAtISO);
-  });
-  transaction();
-  return updatedAtISO;
-}
-
-export function saveOrders(db, entries = []) {
-  const insertMeta = db.prepare(
-    "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-  );
-  const insertOrder = db.prepare(
-    "INSERT INTO orders (delivery_date, ship_date, item_id, item_code, quantity) VALUES (?, ?, ?, ?, ?)"
-  );
-  const updatedAtISO = new Date().toISOString();
-  const transaction = db.transaction(() => {
-    db.exec("DELETE FROM orders");
-    entries.forEach((entry) => {
-      insertOrder.run(
-        entry.deliveryDate,
-        entry.shipDate,
-        entry.itemId,
-        entry.itemCode,
-        entry.quantity ?? 0
-      );
-    });
-    insertMeta.run("ordersUpdatedAtISO", updatedAtISO);
   });
   transaction();
   return updatedAtISO;
