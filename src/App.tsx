@@ -3509,26 +3509,25 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       }
       const eod = new Array(7).fill(0);
       const itemStockMap = dailyStockMap.get(it.id);
-      let latestStockDate = "";
-      let baseStock = 0;
-      if (itemStockMap) {
-        for (const [date, stock] of itemStockMap) {
-          if (date <= todayISO && date >= latestStockDate) {
-            latestStockDate = date;
-            baseStock = stock;
-          }
-        }
-      }
-      let cur = baseStock;
+      const stockEntries = itemStockMap
+        ? Array.from(itemStockMap.entries()).sort(([a], [b]) => a.localeCompare(b))
+        : [];
+      let stockIndex = 0;
+      let baseStockByDate = 0;
+      let plannedCumulative = 0;
       for (let d = 0; d < 7; d += 1) {
         const date = weekDatesForEod[d];
         if (!date) continue;
+        while (stockIndex < stockEntries.length && stockEntries[stockIndex][0] <= date) {
+          baseStockByDate = stockEntries[stockIndex][1];
+          stockIndex += 1;
+        }
         if (date < todayISO) {
           eod[d] = itemStockMap?.get(date) ?? 0;
           continue;
         }
-        cur += addByDay[d];
-        eod[d] = cur;
+        plannedCumulative += addByDay[d];
+        eod[d] = baseStockByDate + plannedCumulative;
       }
       out[it.id] = eod;
     }
