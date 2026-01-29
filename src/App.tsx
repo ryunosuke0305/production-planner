@@ -50,6 +50,9 @@ const DEFAULT_MATERIAL_UNIT: RecipeUnit = "kg";
 const DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS = 7;
 const DEFAULT_SAFETY_STOCK_COEFFICIENT = 1;
 const DEFAULT_PACKAGING_EFFICIENCY = 1;
+const DEFAULT_TIMEZONE = "Asia/Tokyo";
+const JST_OFFSET_MINUTES = 9 * 60;
+const MS_PER_MINUTE = 60 * 1000;
 
 type PlanningPolicy = "make_to_order" | "make_to_stock";
 
@@ -346,10 +349,7 @@ const PLANNING_POLICY_LABELS: Record<PlanningPolicy, string> = {
 };
 
 function toISODate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return formatDateInTimeZone(d, DEFAULT_TIMEZONE);
 }
 
 function formatISODateParts(y: number, m: number, d: number): string {
@@ -359,6 +359,31 @@ function formatISODateParts(y: number, m: number, d: number): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function formatDateInTimeZone(date: Date, timeZone: string): string {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
+}
+
+function parseISODateJST(isoDate: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  const utcMs = Date.UTC(year, month - 1, day, 0, 0, 0) - JST_OFFSET_MINUTES * MS_PER_MINUTE;
+  return new Date(utcMs);
+}
+
 function toMD(isoDate: string): string {
   const parts = isoDate.split("-").map((v) => Number(v));
   const m = parts[1];
@@ -366,11 +391,10 @@ function toMD(isoDate: string): string {
   return `${m}/${d}`;
 }
 
-const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
-
 function toWeekday(isoDate: string): string {
-  const date = new Date(isoDate);
-  return WEEKDAY_LABELS[date.getDay()] ?? "";
+  const date = parseISODateJST(isoDate);
+  if (!date) return "";
+  return new Intl.DateTimeFormat("ja-JP", { timeZone: DEFAULT_TIMEZONE, weekday: "short" }).format(date);
 }
 
 function formatQuantity(value: number): string {
@@ -393,8 +417,9 @@ function addDays(base: Date, delta: number): Date {
 }
 
 function diffDays(startISO: string, endISO: string): number {
-  const start = new Date(`${startISO}T00:00:00`);
-  const end = new Date(`${endISO}T00:00:00`);
+  const start = parseISODateJST(startISO);
+  const end = parseISODateJST(endISO);
+  if (!start || !end) return 0;
   return Math.round((end.getTime() - start.getTime()) / MS_PER_DAY);
 }
 
@@ -561,6 +586,14 @@ function normalizeDateInput(value: unknown): string | null {
   const asText = String(value).trim();
   if (/^\d{8}$/.test(asText)) {
     return `${asText.slice(0, 4)}-${asText.slice(4, 6)}-${asText.slice(6, 8)}`;
+  }
+  const parsedISO = parseISODateJST(asText);
+  if (parsedISO) {
+    return toISODate(parsedISO);
+  }
+  const slashMatch = /^(\d{4})[/.](\d{1,2})[/.](\d{1,2})$/.exec(asText);
+  if (slashMatch) {
+    return formatISODateParts(Number(slashMatch[1]), Number(slashMatch[2]), Number(slashMatch[3]));
   }
   const parsed = new Date(asText);
   if (!Number.isNaN(parsed.getTime())) {
@@ -1205,7 +1238,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   );
 
   // 実運用ではユーザー設定から取得する想定
-  const timezone = "Asia/Tokyo";
+  const timezone = DEFAULT_TIMEZONE;
 
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -3319,7 +3352,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       (latest, entry) => (entry.date > latest ? entry.date : latest),
       dailyForItem[0].date
     );
-    const startISO = toISODate(addDays(new Date(latestDate), -(lookbackDays - 1)));
+    const latestDateValue = parseISODateJST(latestDate);
+    if (!latestDateValue) return null;
+    const startISO = toISODate(addDays(latestDateValue, -(lookbackDays - 1)));
     const shippedTotal = dailyForItem.reduce((sum, entry) => {
       if (entry.date < startISO || entry.date > latestDate) return sum;
       return sum + (Number.isFinite(entry.shipped) ? entry.shipped : 0);

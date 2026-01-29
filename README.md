@@ -291,6 +291,7 @@ daily_stocks(date TEXT, item_id TEXT, item_code TEXT, stock REAL, shipped REAL, 
 ### JSON エクスポート（`ExportPayloadV1`）
 
 `JSONエクスポート` ボタンで出力される構造です。AI 連携や外部システム連携向けに、スロットラベル等のメタ情報を含めています。
+- ISO日付の計算は `meta.timezone`（既定は `Asia/Tokyo`）を基準に行われ、端末のローカルタイムゾーンに依存しません。
 
 ```json
 {
