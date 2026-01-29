@@ -3459,7 +3459,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const eodStockByItem = useMemo(() => {
-    const blocksForEod = isPlanWeekView ? blocks : [];
+    const blocksForEod = isPlanWeekView ? blocks.filter((block) => block.approved) : [];
     const out: Record<string, number[]> = {};
     const weekDatesForEod = weekDates;
 
@@ -3489,7 +3489,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }, [blocks, dailyStockMap, isPlanWeekView, items, planSlotsPerDay, viewStartOffsetDays, weekDates]);
 
   const eodSummaryByDay = useMemo(() => {
-    const blocksForEod = isPlanWeekView ? blocks : [];
+    const blocksForEod = isPlanWeekView ? blocks.filter((block) => block.approved) : [];
     const itemsByDay: Record<number, Set<string>> = {};
 
     for (const b of blocksForEod) {
