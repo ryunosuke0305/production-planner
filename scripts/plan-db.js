@@ -438,14 +438,18 @@ export function saveDailyStocks(db, entries = []) {
   const insertMeta = db.prepare(
     "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
   );
-  const insertDailyStock = db.prepare(
-    "INSERT INTO daily_stocks (date, item_id, item_code, stock, shipped) VALUES (?, ?, ?, ?, ?)"
+  const upsertDailyStock = db.prepare(
+    `INSERT INTO daily_stocks (date, item_id, item_code, stock, shipped)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(date, item_id) DO UPDATE SET
+       item_code = excluded.item_code,
+       stock = excluded.stock,
+       shipped = excluded.shipped`
   );
   const updatedAtISO = new Date().toISOString();
   const transaction = db.transaction(() => {
-    db.exec("DELETE FROM daily_stocks");
     entries.forEach((entry) => {
-      insertDailyStock.run(
+      upsertDailyStock.run(
         entry.date,
         entry.itemId,
         entry.itemCode,
