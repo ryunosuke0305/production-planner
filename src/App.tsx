@@ -95,7 +95,7 @@ type Block = {
 };
 
 type ExportPayloadV1 = {
-  schemaVersion: "1.2.1";
+  schemaVersion: "1.2.2";
   meta: {
     exportedAtISO: string;
     timezone: string;
@@ -141,6 +141,7 @@ type ExportPayloadV1 = {
     date: string;
     itemCode: string;
     stock: number;
+    shipped: number;
   }>;
   eodStocks: Array<{
     itemCode: string;
@@ -204,6 +205,7 @@ type DailyStockEntry = {
   itemId: string;
   itemCode: string;
   stock: number;
+  shipped: number;
 };
 
 type DailyStocksResponse = {
@@ -216,6 +218,7 @@ type ImportHeaderOverrides = {
     date: string;
     itemCode: string;
     stock: string;
+    shipped: string;
   };
 };
 
@@ -224,6 +227,7 @@ const DEFAULT_IMPORT_HEADER_OVERRIDES: ImportHeaderOverrides = {
     date: "",
     itemCode: "",
     stock: "",
+    shipped: "",
   },
 };
 
@@ -232,6 +236,7 @@ const normalizeImportHeaderOverrides = (payload?: Partial<ImportHeaderOverrides>
     date: typeof payload?.dailyStock?.date === "string" ? payload.dailyStock.date : "",
     itemCode: typeof payload?.dailyStock?.itemCode === "string" ? payload.dailyStock.itemCode : "",
     stock: typeof payload?.dailyStock?.stock === "string" ? payload.dailyStock.stock : "",
+    shipped: typeof payload?.dailyStock?.shipped === "string" ? payload.dailyStock.shipped : "",
   },
 });
 
@@ -533,6 +538,7 @@ const DAILY_STOCK_HEADERS = {
   date: ["日付", "年月日", "date", "stockdate", "inventorydate"],
   itemCode: ["品目コード", "品目", "itemcode", "item_code", "itemid", "item_id"],
   stock: ["在庫数", "在庫", "stock", "inventory", "qty"],
+  shipped: ["出荷数", "出荷", "shipped", "shipment", "shipqty", "ship_qty"],
 };
 
 const ITEM_HEADERS = {
@@ -976,7 +982,7 @@ function buildExportPayload(p: {
   const exportHours = p.hoursByDay[0]?.filter((hour): hour is number => hour !== null) ?? [];
 
   return {
-    schemaVersion: "1.2.1",
+    schemaVersion: "1.2.2",
     meta: {
       exportedAtISO: new Date().toISOString(),
       timezone: p.timezone,
@@ -1032,6 +1038,7 @@ function buildExportPayload(p: {
       date: entry.date,
       itemCode: entry.itemCode,
       stock: entry.stock,
+      shipped: entry.shipped,
     })),
     eodStocks: p.eodStocks.map((entry) => ({
       itemCode: entry.itemCode,
@@ -1692,6 +1699,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       headers,
       mergeHeaderCandidates(DAILY_STOCK_HEADERS.stock, dailyStockHeaderOverrides.stock)
     );
+    const shippedIndex = findHeaderIndex(
+      headers,
+      mergeHeaderCandidates(DAILY_STOCK_HEADERS.shipped, dailyStockHeaderOverrides.shipped)
+    );
     if (dateIndex < 0 || itemIndex < 0 || stockIndex < 0) {
       throw new Error("日別在庫の必須列（日付/品目コード/在庫数）が見つかりません。");
     }
@@ -1705,6 +1716,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       const date = normalizeDateInput(row[dateIndex]);
       const itemCode = String(row[itemIndex] ?? "").trim();
       const stock = normalizeNumberInput(row[stockIndex]);
+      const shipped = shippedIndex >= 0 ? normalizeNumberInput(row[shippedIndex]) ?? 0 : 0;
       if (!date || !itemCode || stock === null) {
         invalidRows += 1;
         return;
@@ -1714,7 +1726,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         missingItem += 1;
         return;
       }
-      next.push({ date, itemId, itemCode, stock });
+      next.push({ date, itemId, itemCode, stock, shipped });
     });
 
     return { entries: next, missingItem, invalidRows };
@@ -2092,7 +2104,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         if (!dailyResponse.ok) return;
         const dailyPayload = (await dailyResponse.json()) as Partial<DailyStocksResponse>;
         if (cancelled) return;
-        setDailyStocks(Array.isArray(dailyPayload.entries) ? dailyPayload.entries : []);
+        setDailyStocks(
+          Array.isArray(dailyPayload.entries)
+            ? dailyPayload.entries.map((entry) => ({
+                ...entry,
+                shipped: Number.isFinite(entry.shipped) ? entry.shipped : 0,
+              }))
+            : []
+        );
         setDailyStockUpdatedAt(typeof dailyPayload.updatedAtISO === "string" ? dailyPayload.updatedAtISO : null);
       } catch {
         // 読み込み失敗時は既定値を維持
@@ -2325,6 +2344,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           date: entry.date,
           itemCode: entry.itemCode,
           stock: entry.stock,
+          shipped: entry.shipped,
         })),
         eodStocks,
         blocks: filteredBlocks,
@@ -4060,6 +4080,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       date: "在庫を計上する対象日。\n形式: yyyyMMdd または yyyy-MM-dd",
       itemCode: "在庫を紐づける品目コード。\n形式: 品目マスタの品目コードと一致する文字列",
       stock: "対象日の在庫数量。\n形式: 数値（小数可）",
+      shipped: "対象日の出荷数量。\n形式: 数値（小数可）",
     },
   };
 
@@ -4073,7 +4094,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       </div>
       <Card className="rounded-2xl shadow-sm">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">日別在庫（yyyyMMdd / 品目コード / 在庫数）</CardTitle>
+          <CardTitle className="text-base font-medium">日別在庫（yyyyMMdd / 品目コード / 在庫数 / 出荷数）</CardTitle>
           <div className="text-xs text-muted-foreground">最終更新: {formatUpdatedAt(dailyStockUpdatedAt)}</div>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
@@ -4104,7 +4125,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 設定を保存
               </Button>
             </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <div className="mt-3 grid gap-2 sm:grid-cols-4">
               <div className="space-y-1">
                 <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
                   日付
@@ -4149,6 +4170,22 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     setDailyStockHeaderOverrides((prev) => ({
                       ...prev,
                       stock: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
+                  出荷数
+                  <InfoTooltip text={importHeaderTooltips.dailyStock.shipped} />
+                </div>
+                <Input
+                  value={dailyStockHeaderOverrides.shipped}
+                  placeholder="例: 出荷数量, 出庫数"
+                  onChange={(e) =>
+                    setDailyStockHeaderOverrides((prev) => ({
+                      ...prev,
+                      shipped: e.target.value,
                     }))
                   }
                 />

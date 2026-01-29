@@ -118,6 +118,7 @@ Excel取り込みタブから `.xlsx` / `.xls` / `.csv` をアップロードす
 - 在庫数（例: `在庫数`, `在庫`, `stock`, `inventory`, `qty`）
 
 取り込み時に品目マスタに存在しない品目コードはスキップされます。無効な行がある場合は件数が表示されます。
+任意で「出荷数（例: `出荷数`, `出荷`, `shipped`, `shipment`, `shipqty`, `ship_qty`）」も取り込めます。
 
 ### 品目マスタ（必要列）
 
@@ -185,6 +186,7 @@ GEMINI_API_KEY=your_api_key_here
 ### `/api/daily-stocks`（Vite ミドルウェア）
 
 Excel取り込みで更新する日別在庫の保存先です。アップロード時に全件上書きします。
+`entries` には在庫数に加えて出荷数（`shipped`）も含めます。
 
 | メソッド | 説明 | 入出力 |
 | --- | --- | --- |
@@ -273,7 +275,7 @@ materials(id TEXT PRIMARY KEY, name TEXT, unit TEXT)
 items(id TEXT PRIMARY KEY, public_id TEXT, name TEXT, unit TEXT, planning_policy TEXT, safety_stock REAL, shelf_life_days REAL, production_efficiency REAL, notes TEXT)
 item_recipes(item_id TEXT, material_id TEXT, per_unit REAL, unit TEXT, PRIMARY KEY(item_id, material_id))
 blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, amount REAL, memo TEXT)
-daily_stocks(date TEXT, item_id TEXT, item_code TEXT, stock REAL, PRIMARY KEY(date, item_id))
+daily_stocks(date TEXT, item_id TEXT, item_code TEXT, stock REAL, shipped REAL, PRIMARY KEY(date, item_id))
 ```
 
 #### インデックス方針
@@ -290,7 +292,7 @@ daily_stocks(date TEXT, item_id TEXT, item_code TEXT, stock REAL, PRIMARY KEY(da
 
 ```json
 {
-  "schemaVersion": "1.2.1",
+  "schemaVersion": "1.2.2",
   "meta": {
     "exportedAtISO": "2026-01-14T00:00:00.000Z",
     "timezone": "Asia/Tokyo",
