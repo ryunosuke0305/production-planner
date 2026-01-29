@@ -77,6 +77,7 @@ function ensureSchema(db) {
       item_id TEXT NOT NULL,
       item_code TEXT NOT NULL,
       stock REAL NOT NULL,
+      shipped REAL NOT NULL DEFAULT 0,
       PRIMARY KEY (date, item_id)
     );
     CREATE TABLE IF NOT EXISTS calendar_days (
@@ -137,6 +138,14 @@ function ensureItemsPlanningColumns(db) {
   }
 }
 
+function ensureDailyStocksShippedColumn(db) {
+  const columns = db.prepare("PRAGMA table_info(daily_stocks)").all();
+  const hasShipped = columns.some((column) => column.name === "shipped");
+  if (!hasShipped) {
+    db.exec("ALTER TABLE daily_stocks ADD COLUMN shipped REAL NOT NULL DEFAULT 0");
+  }
+}
+
 export async function openPlanDatabase() {
   await fs.mkdir(dataDir, { recursive: true });
   const db = new Database(PLAN_DB_PATH);
@@ -146,6 +155,7 @@ export async function openPlanDatabase() {
   ensureBlocksApprovedColumn(db);
   ensureBlocksDateColumns(db);
   ensureItemsPlanningColumns(db);
+  ensureDailyStocksShippedColumn(db);
   return db;
 }
 
@@ -159,6 +169,7 @@ const DEFAULT_IMPORT_HEADER_OVERRIDES = {
     date: "",
     itemCode: "",
     stock: "",
+    shipped: "",
   },
 };
 
@@ -169,6 +180,7 @@ function normalizeImportHeaderOverrides(payload) {
       date: toText(payload?.dailyStock?.date),
       itemCode: toText(payload?.dailyStock?.itemCode),
       stock: toText(payload?.dailyStock?.stock),
+      shipped: toText(payload?.dailyStock?.shipped),
     },
   };
 }
@@ -309,13 +321,14 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
 
 export function loadDailyStocks(db) {
   const entries = db
-    .prepare("SELECT date, item_id, item_code, stock FROM daily_stocks ORDER BY date, item_code")
+    .prepare("SELECT date, item_id, item_code, stock, shipped FROM daily_stocks ORDER BY date, item_code")
     .all()
     .map((row) => ({
       date: row.date,
       itemId: row.item_id,
       itemCode: row.item_code,
       stock: row.stock,
+      shipped: row.shipped ?? 0,
     }));
   return {
     updatedAtISO: loadMetaValue(db, "dailyStocksUpdatedAtISO"),
@@ -426,13 +439,19 @@ export function saveDailyStocks(db, entries = []) {
     "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
   );
   const insertDailyStock = db.prepare(
-    "INSERT INTO daily_stocks (date, item_id, item_code, stock) VALUES (?, ?, ?, ?)"
+    "INSERT INTO daily_stocks (date, item_id, item_code, stock, shipped) VALUES (?, ?, ?, ?, ?)"
   );
   const updatedAtISO = new Date().toISOString();
   const transaction = db.transaction(() => {
     db.exec("DELETE FROM daily_stocks");
     entries.forEach((entry) => {
-      insertDailyStock.run(entry.date, entry.itemId, entry.itemCode, entry.stock ?? 0);
+      insertDailyStock.run(
+        entry.date,
+        entry.itemId,
+        entry.itemCode,
+        entry.stock ?? 0,
+        entry.shipped ?? 0
+      );
     });
     insertMeta.run("dailyStocksUpdatedAtISO", updatedAtISO);
   });
