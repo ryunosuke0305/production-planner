@@ -665,6 +665,23 @@ const MATERIAL_HEADERS = {
   unit: ["単位", "unit"],
 };
 
+const DAILY_STOCK_EXPORT_HEADERS = ["日付", "品目コード", "在庫数", "出荷数"];
+const ITEM_MASTER_EXPORT_HEADERS = [
+  "品目コード",
+  "品目名",
+  "単位",
+  "計画方針",
+  "安全在庫",
+  "安全在庫自動計算",
+  "安全在庫参照日数",
+  "安全在庫係数",
+  "賞味期限日数",
+  "製造効率",
+  "包装効率",
+  "備考",
+];
+const MATERIAL_MASTER_EXPORT_HEADERS = ["原料コード", "原料名", "単位"];
+
 function mergeHeaderCandidates(defaults: string[], override: string): string[] {
   const extras = override
     .split(/[,、\n]/)
@@ -1104,6 +1121,29 @@ function downloadTextFile(filename: string, text: string, mime = "application/js
   URL.revokeObjectURL(url);
 }
 
+function escapeCsvValue(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  const text = String(value);
+  if (/["\n\r,]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function buildCsv(headers: string[], rows: Array<Array<string | number | null | undefined>>): string {
+  const lines = [headers, ...rows].map((row) => row.map(escapeCsvValue).join(","));
+  return lines.join("\r\n");
+}
+
+function downloadCsvFile(
+  filename: string,
+  headers: string[],
+  rows: Array<Array<string | number | null | undefined>>
+): void {
+  const csv = buildCsv(headers, rows);
+  downloadTextFile(filename, `\ufeff${csv}`, "text/csv");
+}
+
 function formatUpdatedAt(value: string | null): string {
   if (!value) return "未更新";
   const parsed = new Date(value);
@@ -1278,6 +1318,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [dailyStockImportError, setDailyStockImportError] = useState<string | null>(null);
   const [itemMasterImportError, setItemMasterImportError] = useState<string | null>(null);
   const [materialMasterImportError, setMaterialMasterImportError] = useState<string | null>(null);
+  const [dailyStockImportFile, setDailyStockImportFile] = useState<File | null>(null);
+  const [itemMasterImportFile, setItemMasterImportFile] = useState<File | null>(null);
+  const [materialMasterImportFile, setMaterialMasterImportFile] = useState<File | null>(null);
   const [dailyStockInputKey, setDailyStockInputKey] = useState(0);
   const [itemMasterInputKey, setItemMasterInputKey] = useState(0);
   const [materialMasterInputKey, setMaterialMasterInputKey] = useState(0);
@@ -1869,7 +1912,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setError: React.Dispatch<React.SetStateAction<string | null>>;
     setInputKey?: React.Dispatch<React.SetStateAction<number>>;
     fallbackErrorMessage: string;
-  }) => {
+  }): Promise<boolean> => {
     setError(null);
     setNote(null);
     try {
@@ -1880,9 +1923,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       if (setInputKey) {
         setInputKey((prev) => prev + 1);
       }
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : fallbackErrorMessage;
       setError(message);
+      return false;
     }
   };
 
@@ -2101,12 +2146,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
   };
 
-  const handleDailyStockImport = async (file: File) => {
+  const handleDailyStockImport = async (file: File): Promise<boolean> => {
     if (!canEdit) {
       setDailyStockImportError(readOnlyMessage);
-      return;
+      return false;
     }
-    await runExcelImportWithFeedback({
+    return await runExcelImportWithFeedback({
       file,
       parseRows: parseDailyStockRows,
       onSuccess: async (result) => {
@@ -2124,12 +2169,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     });
   };
 
-  const handleItemMasterImport = async (file: File) => {
+  const handleItemMasterImport = async (file: File): Promise<boolean> => {
     if (!canEdit) {
       setItemMasterImportError(readOnlyMessage);
-      return;
+      return false;
     }
-    await runExcelImportWithFeedback({
+    return await runExcelImportWithFeedback({
       file,
       parseRows: parseItemMasterRows,
       onSuccess: (result) => {
@@ -2198,12 +2243,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     });
   };
 
-  const handleMaterialMasterImport = async (file: File) => {
+  const handleMaterialMasterImport = async (file: File): Promise<boolean> => {
     if (!canEdit) {
       setMaterialMasterImportError(readOnlyMessage);
-      return;
+      return false;
     }
-    await runExcelImportWithFeedback({
+    return await runExcelImportWithFeedback({
       file,
       parseRows: parseMaterialMasterRows,
       onSuccess: (result) => {
@@ -2250,6 +2295,76 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       setInputKey: setMaterialMasterInputKey,
       fallbackErrorMessage: "原料マスタの取り込みに失敗しました。",
     });
+  };
+
+  const handleDailyStockImportClick = async () => {
+    if (!dailyStockImportFile) {
+      setDailyStockImportError("取り込みファイルを選択してください。");
+      return;
+    }
+    const success = await handleDailyStockImport(dailyStockImportFile);
+    if (success) {
+      setDailyStockImportFile(null);
+    }
+  };
+
+  const handleItemMasterImportClick = async () => {
+    if (!itemMasterImportFile) {
+      setItemMasterImportError("取り込みファイルを選択してください。");
+      return;
+    }
+    const success = await handleItemMasterImport(itemMasterImportFile);
+    if (success) {
+      setItemMasterImportFile(null);
+    }
+  };
+
+  const handleMaterialMasterImportClick = async () => {
+    if (!materialMasterImportFile) {
+      setMaterialMasterImportError("取り込みファイルを選択してください。");
+      return;
+    }
+    const success = await handleMaterialMasterImport(materialMasterImportFile);
+    if (success) {
+      setMaterialMasterImportFile(null);
+    }
+  };
+
+  const exportDailyStockCsv = () => {
+    const rows = [...dailyStocks]
+      .sort((a, b) => a.date.localeCompare(b.date) || a.itemCode.localeCompare(b.itemCode))
+      .map((entry) => [entry.date, entry.itemCode, entry.stock, entry.shipped]);
+    const today = toISODate(new Date());
+    downloadCsvFile(`daily-stocks-${today}.csv`, DAILY_STOCK_EXPORT_HEADERS, rows);
+  };
+
+  const exportItemMasterCsv = () => {
+    const rows = [...items]
+      .sort((a, b) => itemCodeKey(a).localeCompare(itemCodeKey(b)))
+      .map((item) => [
+        itemCodeKey(item),
+        item.name,
+        item.unit,
+        item.planningPolicy,
+        item.safetyStock,
+        item.safetyStockAutoEnabled ? "対象" : "対象外",
+        item.safetyStockLookbackDays,
+        item.safetyStockCoefficient,
+        item.shelfLifeDays,
+        item.productionEfficiency,
+        item.packagingEfficiency,
+        item.notes,
+      ]);
+    const today = toISODate(new Date());
+    downloadCsvFile(`item-master-${today}.csv`, ITEM_MASTER_EXPORT_HEADERS, rows);
+  };
+
+  const exportMaterialMasterCsv = () => {
+    const rows = [...materialsMaster]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((material) => [material.id, material.name, material.unit]);
+    const today = toISODate(new Date());
+    downloadCsvFile(`material-master-${today}.csv`, MATERIAL_MASTER_EXPORT_HEADERS, rows);
   };
 
   useEffect(() => {
@@ -4556,7 +4671,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       </div>
       <Card className="rounded-2xl shadow-sm">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">日別在庫（yyyyMMdd / 品目コード / 在庫数 / 出荷数）</CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base font-medium">日別在庫（yyyyMMdd / 品目コード / 在庫数 / 出荷数）</CardTitle>
+            <Button variant="outline" size="sm" onClick={exportDailyStockCsv} disabled={!dailyStocks.length}>
+              CSVエクスポート
+            </Button>
+          </div>
           <div className="text-xs text-muted-foreground">最終更新: {formatUpdatedAt(dailyStockUpdatedAt)}</div>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
@@ -4565,12 +4685,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             type="file"
             accept=".xlsx,.xls,.csv"
             disabled={!canEdit}
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              await handleDailyStockImport(file);
+            onChange={(e) => {
+              const file = e.target.files?.[0] ?? null;
+              setDailyStockImportFile(file);
+              setDailyStockImportNote(null);
+              setDailyStockImportError(null);
             }}
           />
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <div>{dailyStockImportFile ? `選択中: ${dailyStockImportFile.name}` : "ファイル未選択"}</div>
+            <Button
+              size="sm"
+              onClick={() => void handleDailyStockImportClick()}
+              disabled={!dailyStockImportFile || !canEdit}
+            >
+              取り込み
+            </Button>
+          </div>
           <div className="rounded-lg border bg-muted/10 p-3 text-xs">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="space-y-1">
@@ -4678,7 +4809,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       </Card>
       <Card className="rounded-2xl shadow-sm">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">品目マスタ</CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base font-medium">品目マスタ</CardTitle>
+            <Button variant="outline" size="sm" onClick={exportItemMasterCsv} disabled={!items.length}>
+              CSVエクスポート
+            </Button>
+          </div>
         </CardHeader>
           <CardContent className="space-y-4 text-sm">
           <div className="text-xs text-muted-foreground">
@@ -4691,12 +4827,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             type="file"
             accept=".xlsx,.xls,.csv"
             disabled={!canEdit}
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              await handleItemMasterImport(file);
+            onChange={(e) => {
+              const file = e.target.files?.[0] ?? null;
+              setItemMasterImportFile(file);
+              setItemMasterImportNote(null);
+              setItemMasterImportError(null);
             }}
           />
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <div>{itemMasterImportFile ? `選択中: ${itemMasterImportFile.name}` : "ファイル未選択"}</div>
+            <Button
+              size="sm"
+              onClick={() => void handleItemMasterImportClick()}
+              disabled={!itemMasterImportFile || !canEdit}
+            >
+              取り込み
+            </Button>
+          </div>
           {itemMasterImportNote ? (
             <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
               {itemMasterImportNote}
@@ -4711,7 +4858,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       </Card>
       <Card className="rounded-2xl shadow-sm">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">原料マスタ</CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base font-medium">原料マスタ</CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportMaterialMasterCsv}
+              disabled={!materialsMaster.length}
+            >
+              CSVエクスポート
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
           <div className="text-xs text-muted-foreground">必須列: 原料コード / 原料名。任意列: 単位</div>
@@ -4721,12 +4878,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             type="file"
             accept=".xlsx,.xls,.csv"
             disabled={!canEdit}
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              await handleMaterialMasterImport(file);
+            onChange={(e) => {
+              const file = e.target.files?.[0] ?? null;
+              setMaterialMasterImportFile(file);
+              setMaterialMasterImportNote(null);
+              setMaterialMasterImportError(null);
             }}
           />
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <div>{materialMasterImportFile ? `選択中: ${materialMasterImportFile.name}` : "ファイル未選択"}</div>
+            <Button
+              size="sm"
+              onClick={() => void handleMaterialMasterImportClick()}
+              disabled={!materialMasterImportFile || !canEdit}
+            >
+              取り込み
+            </Button>
+          </div>
           {materialMasterImportNote ? (
             <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
               {materialMasterImportNote}
