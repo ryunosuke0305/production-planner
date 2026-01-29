@@ -1903,6 +1903,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return { entries: next, missingItem, invalidRows };
   };
 
+  const mergeDailyStockEntries = (base: DailyStockEntry[], incoming: DailyStockEntry[]) => {
+    const merged = new Map<string, DailyStockEntry>();
+    const toKey = (entry: DailyStockEntry) => `${entry.date}::${entry.itemCode}`;
+    base.forEach((entry) => {
+      merged.set(toKey(entry), entry);
+    });
+    incoming.forEach((entry) => {
+      merged.set(toKey(entry), entry);
+    });
+    return Array.from(merged.values()).sort(
+      (a, b) => a.date.localeCompare(b.date) || a.itemCode.localeCompare(b.itemCode)
+    );
+  };
+
   const parseItemMasterRows = (rows: unknown[][]) => {
     if (!rows.length) {
       throw new Error("シートが空です。");
@@ -2064,7 +2078,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       parseRows: parseDailyStockRows,
       onSuccess: async (result) => {
         await saveDailyStocksToServer(result.entries);
-        setDailyStocks(result.entries);
+        setDailyStocks((prev) => mergeDailyStockEntries(prev, result.entries));
       },
       buildNote: (result) =>
         `日別在庫を${result.entries.length}件取り込みました。` +
