@@ -3462,6 +3462,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const blocksForEod = isPlanWeekView ? blocks : [];
     const out: Record<string, number[]> = {};
     const weekDatesForEod = weekDates;
+    const todayISO = toISODate(new Date());
 
     for (const it of items) {
       const addByDay = new Array(7).fill(0);
@@ -3469,15 +3470,29 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         if (b.itemId !== it.id) continue;
         const dayIndex = endDayIndex(b, planSlotsPerDay) - viewStartOffsetDays;
         if (dayIndex < 0 || dayIndex >= 7) continue;
+        const blockDate = weekDatesForEod[dayIndex];
+        if (!blockDate || blockDate < todayISO) continue;
         addByDay[dayIndex] += Number.isFinite(b.amount) ? b.amount : 0;
       }
       const eod = new Array(7).fill(0);
-      let cur = 0;
+      const itemStockMap = dailyStockMap.get(it.id);
+      let latestStockDate = "";
+      let baseStock = 0;
+      if (itemStockMap) {
+        for (const [date, stock] of itemStockMap) {
+          if (date <= todayISO && date >= latestStockDate) {
+            latestStockDate = date;
+            baseStock = stock;
+          }
+        }
+      }
+      let cur = baseStock;
       for (let d = 0; d < 7; d += 1) {
         const date = weekDatesForEod[d];
-        const override = dailyStockMap.get(it.id)?.get(date ?? "");
-        if (override !== undefined) {
-          cur = override;
+        if (!date) continue;
+        if (date < todayISO) {
+          eod[d] = itemStockMap?.get(date) ?? 0;
+          continue;
         }
         cur += addByDay[d];
         eod[d] = cur;
