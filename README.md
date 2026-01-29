@@ -57,7 +57,7 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 ## データ保存について
 
 - 画面上の計画データは開発サーバー経由で `data/plan.sqlite` に保存され、再読み込みしても保持されます。
-- 品目マスタで入力した品目コード（品目ID）は SQLite に保存され、日別在庫や受注一覧の照合に利用されます。
+- 品目マスタで入力した品目コード（品目ID）は SQLite に保存され、日別在庫の照合に利用されます。
 - Excel取り込み画面のヘッダー指定（任意）も SQLite に保存され、再読み込みしても保持されます。
 - 既存の `data/plan.json` を SQLite に移行する場合は `npm run migrate:plan` を実行してください（再実行しても最新の内容で上書きされます）。
 - `.env` は `data/` ディレクトリにまとめて配置してください（例: `data/.env`）。
@@ -108,7 +108,7 @@ node -e "const crypto=require('crypto');const hash=(pw)=>{const salt=crypto.rand
 
 ## Excel取り込み
 
-Excel取り込みタブから `.xlsx` / `.xls` / `.csv` をアップロードすると、日別在庫・受注一覧・品目マスタ・原料マスタを更新できます。読み込み対象は **先頭シート** のみで、1行目をヘッダーとして判定します。
+Excel取り込みタブから `.xlsx` / `.xls` / `.csv` をアップロードすると、日別在庫・品目マスタ・原料マスタを更新できます。読み込み対象は **先頭シート** のみで、1行目をヘッダーとして判定します。
 ヘッダー名が異なる場合は、ヘッダー指定欄に候補名を入力して「設定を保存」を押すことで、次回以降も同じ候補で判定できます。
 
 ### 日別在庫（必要列）
@@ -116,13 +116,6 @@ Excel取り込みタブから `.xlsx` / `.xls` / `.csv` をアップロードす
 - 日付（例: `日付`, `年月日`, `date`, `stockdate`, `inventorydate`）
 - 品目コード（例: `品目コード`, `品目`, `itemcode`, `item_code`, `itemid`, `item_id`）
 - 在庫数（例: `在庫数`, `在庫`, `stock`, `inventory`, `qty`）
-
-### 受注一覧（必要列）
-
-- 納品日（例: `納品日`, `納品予定日`, `deliverydate`, `delivery_date`）
-- 出荷日（例: `出荷日`, `出荷予定日`, `shipdate`, `ship_date`, `shipmentdate`）
-- 品目コード（例: `品目コード`, `品目`, `itemcode`, `item_code`, `itemid`, `item_id`）
-- 受注数（例: `受注数`, `受注数量`, `数量`, `orderqty`, `order_qty`, `qty`）
 
 取り込み時に品目マスタに存在しない品目コードはスキップされます。無効な行がある場合は件数が表示されます。
 
@@ -197,15 +190,6 @@ Excel取り込みで更新する日別在庫の保存先です。アップロー
 | --- | --- | --- |
 | GET | 日別在庫を取得 | `updatedAtISO` と `entries` を返却 |
 | POST | 日別在庫を保存 | `entries` を受け取り全件置換 |
-
-### `/api/orders`（Vite ミドルウェア）
-
-Excel取り込みで更新する受注一覧の保存先です。アップロード時に全件上書きします。
-
-| メソッド | 説明 | 入出力 |
-| --- | --- | --- |
-| GET | 受注一覧を取得 | `updatedAtISO` と `entries` を返却 |
-| POST | 受注一覧を保存 | `entries` を受け取り全件置換 |
 
 ### `/api/gemini`（Vite ミドルウェア）
 
@@ -290,7 +274,6 @@ items(id TEXT PRIMARY KEY, public_id TEXT, name TEXT, unit TEXT, planning_policy
 item_recipes(item_id TEXT, material_id TEXT, per_unit REAL, unit TEXT, PRIMARY KEY(item_id, material_id))
 blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, amount REAL, memo TEXT)
 daily_stocks(date TEXT, item_id TEXT, item_code TEXT, stock REAL, PRIMARY KEY(date, item_id))
-orders(delivery_date TEXT, ship_date TEXT, item_id TEXT, item_code TEXT, quantity REAL, PRIMARY KEY(delivery_date, ship_date, item_id))
 ```
 
 #### インデックス方針
@@ -300,8 +283,6 @@ orders(delivery_date TEXT, ship_date TEXT, item_id TEXT, item_code TEXT, quantit
 - 期間 + 品目の複合検索: `blocks(item_id, start)`
 - 日別在庫の期間検索: `daily_stocks(date)`
 - 日別在庫の品目検索: `daily_stocks(item_id)`
-- 受注の納品日検索: `orders(delivery_date)`
-- 受注の品目検索: `orders(item_id)`
 
 ### JSON エクスポート（`ExportPayloadV1`）
 
@@ -309,7 +290,7 @@ orders(delivery_date TEXT, ship_date TEXT, item_id TEXT, item_code TEXT, quantit
 
 ```json
 {
-  "schemaVersion": "1.2.0",
+  "schemaVersion": "1.2.1",
   "meta": {
     "exportedAtISO": "2026-01-14T00:00:00.000Z",
     "timezone": "Asia/Tokyo",
