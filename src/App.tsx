@@ -47,6 +47,9 @@ type RecipeUnit = ItemUnit;
 
 const DEFAULT_ITEM_UNIT: ItemUnit = ITEM_UNITS[0];
 const DEFAULT_MATERIAL_UNIT: RecipeUnit = "kg";
+const DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS = 7;
+const DEFAULT_SAFETY_STOCK_COEFFICIENT = 1;
+const DEFAULT_PACKAGING_EFFICIENCY = 1;
 
 type PlanningPolicy = "make_to_order" | "make_to_stock";
 
@@ -69,8 +72,12 @@ type Item = {
   unit: ItemUnit;
   planningPolicy: PlanningPolicy;
   safetyStock: number;
+  safetyStockAutoEnabled: boolean;
+  safetyStockLookbackDays: number;
+  safetyStockCoefficient: number;
   shelfLifeDays: number;
   productionEfficiency: number;
+  packagingEfficiency: number;
   notes: string;
   recipe: RecipeLine[];
 };
@@ -95,7 +102,7 @@ type Block = {
 };
 
 type ExportPayloadV1 = {
-  schemaVersion: "1.2.2";
+  schemaVersion: "1.2.3";
   meta: {
     exportedAtISO: string;
     timezone: string;
@@ -115,8 +122,12 @@ type ExportPayloadV1 = {
     unit: ItemUnit;
     planningPolicy: PlanningPolicy;
     safetyStock: number;
+    safetyStockAutoEnabled: boolean;
+    safetyStockLookbackDays: number;
+    safetyStockCoefficient: number;
     shelfLifeDays: number;
     productionEfficiency: number;
+    packagingEfficiency: number;
     notes: string;
     recipe: Array<{
       materialId: string;
@@ -279,8 +290,12 @@ const SAMPLE_ITEMS: Item[] = [
     unit: "ケース",
     planningPolicy: "make_to_stock",
     safetyStock: 20,
+    safetyStockAutoEnabled: true,
+    safetyStockLookbackDays: 14,
+    safetyStockCoefficient: 1.1,
     shelfLifeDays: 30,
     productionEfficiency: 40,
+    packagingEfficiency: 0.95,
     notes: "定番商品のため平準化。",
     recipe: [
       { materialId: "MAT-A", perUnit: 0.25, unit: "kg" },
@@ -293,8 +308,12 @@ const SAMPLE_ITEMS: Item[] = [
     unit: "ケース",
     planningPolicy: "make_to_order",
     safetyStock: 10,
+    safetyStockAutoEnabled: false,
+    safetyStockLookbackDays: 7,
+    safetyStockCoefficient: 1,
     shelfLifeDays: 7,
     productionEfficiency: 20,
+    packagingEfficiency: 0.9,
     notes: "受注対応中心。",
     recipe: [
       { materialId: "MAT-A", perUnit: 0.1, unit: "kg" },
@@ -307,8 +326,12 @@ const SAMPLE_ITEMS: Item[] = [
     unit: "kg",
     planningPolicy: "make_to_stock",
     safetyStock: 50,
+    safetyStockAutoEnabled: true,
+    safetyStockLookbackDays: 30,
+    safetyStockCoefficient: 1.2,
     shelfLifeDays: 14,
     productionEfficiency: 60,
+    packagingEfficiency: 0.88,
     notes: "週末の追加生産あり。",
     recipe: [
       { materialId: "MAT-D", perUnit: 0.35, unit: "kg" },
@@ -457,6 +480,22 @@ function asBoolean(value: unknown, fallback = false): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function asSafetyStockAutoEnabled(value: unknown, fallback = false): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase().replace(/\s+/g, "");
+    if (!normalized) return fallback;
+    const disabled = ["0", "false", "no", "n", "off", "対象外", "無効", "不可", "停止", "なし", "無し", "×", "x"];
+    const enabled = ["1", "true", "yes", "y", "on", "対象", "有効", "可", "自動", "auto", "○", "o"];
+    if (disabled.includes(normalized)) return false;
+    if (enabled.includes(normalized)) return true;
+    if (normalized.includes("対象外")) return false;
+    if (normalized.includes("対象")) return true;
+  }
+  return fallback;
+}
+
 function asItemUnit(value: unknown): ItemUnit {
   if (typeof value !== "string") return DEFAULT_ITEM_UNIT;
   if (ITEM_UNITS.includes(value as ItemUnit)) return value as ItemUnit;
@@ -547,8 +586,35 @@ const ITEM_HEADERS = {
   unit: ["単位", "unit"],
   planningPolicy: ["計画方針", "方針", "planningpolicy", "planning_policy", "policy"],
   safetyStock: ["安全在庫", "安全在庫数", "safetystock", "safety_stock"],
+  safetyStockAutoEnabled: [
+    "安全在庫自動計算",
+    "安全在庫自動計算対象",
+    "自動計算対象",
+    "安全在庫自動",
+    "auto_safety_stock",
+    "safety_stock_auto",
+    "safety_stock_auto_enabled",
+  ],
+  safetyStockLookbackDays: [
+    "安全在庫参照日数",
+    "参照日数",
+    "安全在庫日数",
+    "safetystockdays",
+    "safety_stock_days",
+    "lookbackdays",
+    "lookback_days",
+  ],
+  safetyStockCoefficient: [
+    "安全在庫係数",
+    "係数",
+    "safetystockcoefficient",
+    "safety_stock_coefficient",
+    "coefficient",
+    "multiplier",
+  ],
   shelfLifeDays: ["賞味期限", "賞味期限日数", "shelflifedays", "shelf_life_days", "expirationdays"],
   productionEfficiency: ["製造効率", "生産効率", "efficiency", "productionefficiency", "production_efficiency"],
+  packagingEfficiency: ["包装効率", "packagingefficiency", "packaging_efficiency", "pack_efficiency"],
   notes: ["備考", "メモ", "notes", "note", "memo", "remark", "remarks"],
 };
 
@@ -580,8 +646,12 @@ type ItemImportRow = {
   unit: ItemUnit;
   planningPolicy: PlanningPolicy;
   safetyStock: number;
+  safetyStockAutoEnabled: boolean | null;
+  safetyStockLookbackDays: number | null;
+  safetyStockCoefficient: number | null;
   shelfLifeDays: number;
   productionEfficiency: number;
+  packagingEfficiency: number | null;
   notes: string;
 };
 
@@ -604,6 +674,39 @@ function sanitizeItems(raw: unknown): Item[] {
       const unit = asItemUnit(record.unit);
       const planningPolicy = asPlanningPolicy(record.planningPolicy ?? record.planning_policy);
       const safetyStock = Math.max(0, asNumber(record.safetyStock ?? record.safety_stock));
+      const safetyStockAutoEnabled = asSafetyStockAutoEnabled(
+        record.safetyStockAutoEnabled ??
+          record.safety_stock_auto_enabled ??
+          record.safetyStockAuto ??
+          record.safety_stock_auto ??
+          record.safetyStockAutoCalc ??
+          record.safety_stock_auto_calc,
+        false
+      );
+      const safetyStockLookbackDays = Math.max(
+        0,
+        asNumber(
+          record.safetyStockLookbackDays ??
+            record.safety_stock_lookback_days ??
+            record.safetyStockDays ??
+            record.safety_stock_days ??
+            record.safetyStockRefDays ??
+            record.safety_stock_ref_days,
+          DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS
+        )
+      );
+      const safetyStockCoefficient = Math.max(
+        0,
+        asNumber(
+          record.safetyStockCoefficient ??
+            record.safety_stock_coefficient ??
+            record.safetyStockFactor ??
+            record.safety_stock_factor ??
+            record.safetyStockMultiplier ??
+            record.safety_stock_multiplier,
+          DEFAULT_SAFETY_STOCK_COEFFICIENT
+        )
+      );
       const shelfLifeDays = Math.max(
         0,
         asNumber(
@@ -618,6 +721,13 @@ function sanitizeItems(raw: unknown): Item[] {
       const productionEfficiency = Math.max(
         0,
         asNumber(record.productionEfficiency ?? record.production_efficiency ?? record.efficiency)
+      );
+      const packagingEfficiency = Math.max(
+        0,
+        asNumber(
+          record.packagingEfficiency ?? record.packaging_efficiency ?? record.packEfficiency ?? record.pack_efficiency,
+          DEFAULT_PACKAGING_EFFICIENCY
+        )
       );
       const notes = asString(record.notes ?? record.note ?? record.memo ?? record.remark ?? record.remarks);
       const recipe = Array.isArray(record.recipe)
@@ -642,8 +752,12 @@ function sanitizeItems(raw: unknown): Item[] {
         unit,
         planningPolicy,
         safetyStock,
+        safetyStockAutoEnabled,
+        safetyStockLookbackDays,
+        safetyStockCoefficient,
         shelfLifeDays,
         productionEfficiency,
+        packagingEfficiency,
         notes,
         recipe,
       } satisfies Item;
@@ -982,7 +1096,7 @@ function buildExportPayload(p: {
   const exportHours = p.hoursByDay[0]?.filter((hour): hour is number => hour !== null) ?? [];
 
   return {
-    schemaVersion: "1.2.2",
+    schemaVersion: "1.2.3",
     meta: {
       exportedAtISO: new Date().toISOString(),
       timezone: p.timezone,
@@ -1002,8 +1116,12 @@ function buildExportPayload(p: {
       unit: it.unit,
       planningPolicy: it.planningPolicy,
       safetyStock: it.safetyStock,
+      safetyStockAutoEnabled: it.safetyStockAutoEnabled,
+      safetyStockLookbackDays: it.safetyStockLookbackDays,
+      safetyStockCoefficient: it.safetyStockCoefficient,
       shelfLifeDays: it.shelfLifeDays,
       productionEfficiency: it.productionEfficiency,
+      packagingEfficiency: it.packagingEfficiency,
       notes: it.notes,
       recipe: it.recipe.map((r) => ({
         materialId: r.materialId,
@@ -1131,8 +1249,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [itemUnitDraft, setItemUnitDraft] = useState<ItemUnit>(DEFAULT_ITEM_UNIT);
   const [itemPlanningPolicyDraft, setItemPlanningPolicyDraft] = useState<PlanningPolicy>("make_to_stock");
   const [itemSafetyStockDraft, setItemSafetyStockDraft] = useState("0");
+  const [itemSafetyStockAutoEnabledDraft, setItemSafetyStockAutoEnabledDraft] = useState(false);
+  const [itemSafetyStockLookbackDaysDraft, setItemSafetyStockLookbackDaysDraft] = useState(
+    String(DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS)
+  );
+  const [itemSafetyStockCoefficientDraft, setItemSafetyStockCoefficientDraft] = useState(
+    String(DEFAULT_SAFETY_STOCK_COEFFICIENT)
+  );
   const [itemShelfLifeDaysDraft, setItemShelfLifeDaysDraft] = useState("0");
   const [itemProductionEfficiencyDraft, setItemProductionEfficiencyDraft] = useState("0");
+  const [itemPackagingEfficiencyDraft, setItemPackagingEfficiencyDraft] = useState(
+    String(DEFAULT_PACKAGING_EFFICIENCY)
+  );
   const [itemNotesDraft, setItemNotesDraft] = useState("");
   const [itemFormError, setItemFormError] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -1141,8 +1269,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [editingItemUnit, setEditingItemUnit] = useState<ItemUnit>(DEFAULT_ITEM_UNIT);
   const [editingItemPlanningPolicy, setEditingItemPlanningPolicy] = useState<PlanningPolicy>("make_to_stock");
   const [editingItemSafetyStock, setEditingItemSafetyStock] = useState("0");
+  const [editingItemSafetyStockAutoEnabled, setEditingItemSafetyStockAutoEnabled] = useState(false);
+  const [editingItemSafetyStockLookbackDays, setEditingItemSafetyStockLookbackDays] = useState(
+    String(DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS)
+  );
+  const [editingItemSafetyStockCoefficient, setEditingItemSafetyStockCoefficient] = useState(
+    String(DEFAULT_SAFETY_STOCK_COEFFICIENT)
+  );
   const [editingItemShelfLifeDays, setEditingItemShelfLifeDays] = useState("0");
   const [editingItemProductionEfficiency, setEditingItemProductionEfficiency] = useState("0");
+  const [editingItemPackagingEfficiency, setEditingItemPackagingEfficiency] = useState(
+    String(DEFAULT_PACKAGING_EFFICIENCY)
+  );
   const [editingItemNotes, setEditingItemNotes] = useState("");
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
   const [itemModalMode, setItemModalMode] = useState<"create" | "edit">("create");
@@ -1745,8 +1883,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const unitIndex = findHeaderIndex(headers, ITEM_HEADERS.unit);
     const policyIndex = findHeaderIndex(headers, ITEM_HEADERS.planningPolicy);
     const safetyStockIndex = findHeaderIndex(headers, ITEM_HEADERS.safetyStock);
+    const autoCalcIndex = findHeaderIndex(headers, ITEM_HEADERS.safetyStockAutoEnabled);
+    const lookbackIndex = findHeaderIndex(headers, ITEM_HEADERS.safetyStockLookbackDays);
+    const coefficientIndex = findHeaderIndex(headers, ITEM_HEADERS.safetyStockCoefficient);
     const shelfLifeIndex = findHeaderIndex(headers, ITEM_HEADERS.shelfLifeDays);
     const efficiencyIndex = findHeaderIndex(headers, ITEM_HEADERS.productionEfficiency);
+    const packagingEfficiencyIndex = findHeaderIndex(headers, ITEM_HEADERS.packagingEfficiency);
     const notesIndex = findHeaderIndex(headers, ITEM_HEADERS.notes);
 
     const next: ItemImportRow[] = [];
@@ -1770,8 +1912,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       const unit = unitIndex >= 0 ? asItemUnit(row[unitIndex]) : DEFAULT_ITEM_UNIT;
       const planningPolicy = policyIndex >= 0 ? asPlanningPolicy(row[policyIndex]) : "make_to_stock";
       const safetyStock = Math.max(0, normalizeNumberInput(row[safetyStockIndex]) ?? 0);
+      const safetyStockAutoEnabled = autoCalcIndex >= 0 ? asSafetyStockAutoEnabled(row[autoCalcIndex]) : null;
+      const safetyStockLookbackDays =
+        lookbackIndex >= 0 ? Math.max(0, normalizeNumberInput(row[lookbackIndex]) ?? 0) : null;
+      const safetyStockCoefficient =
+        coefficientIndex >= 0 ? Math.max(0, normalizeNumberInput(row[coefficientIndex]) ?? 0) : null;
       const shelfLifeDays = Math.max(0, normalizeNumberInput(row[shelfLifeIndex]) ?? 0);
       const productionEfficiency = Math.max(0, normalizeNumberInput(row[efficiencyIndex]) ?? 0);
+      const packagingEfficiency =
+        packagingEfficiencyIndex >= 0
+          ? Math.max(0, normalizeNumberInput(row[packagingEfficiencyIndex]) ?? 0)
+          : null;
       const notes = notesIndex >= 0 ? String(row[notesIndex] ?? "").trim() : "";
       next.push({
         code,
@@ -1779,8 +1930,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         unit,
         planningPolicy,
         safetyStock,
+        safetyStockAutoEnabled,
+        safetyStockLookbackDays,
+        safetyStockCoefficient,
         shelfLifeDays,
         productionEfficiency,
+        packagingEfficiency,
         notes,
       });
     });
@@ -1913,8 +2068,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               unit: row.unit,
               planningPolicy: row.planningPolicy,
               safetyStock: row.safetyStock,
+              safetyStockAutoEnabled: row.safetyStockAutoEnabled ?? existing.safetyStockAutoEnabled,
+              safetyStockLookbackDays: row.safetyStockLookbackDays ?? existing.safetyStockLookbackDays,
+              safetyStockCoefficient: row.safetyStockCoefficient ?? existing.safetyStockCoefficient,
               shelfLifeDays: row.shelfLifeDays,
               productionEfficiency: row.productionEfficiency,
+              packagingEfficiency: row.packagingEfficiency ?? existing.packagingEfficiency,
               notes: row.notes,
             };
             const idx = indexById.get(existing.id);
@@ -1932,8 +2091,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               unit: row.unit,
               planningPolicy: row.planningPolicy,
               safetyStock: row.safetyStock,
+              safetyStockAutoEnabled: row.safetyStockAutoEnabled ?? false,
+              safetyStockLookbackDays: row.safetyStockLookbackDays ?? DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS,
+              safetyStockCoefficient: row.safetyStockCoefficient ?? DEFAULT_SAFETY_STOCK_COEFFICIENT,
               shelfLifeDays: row.shelfLifeDays,
               productionEfficiency: row.productionEfficiency,
+              packagingEfficiency: row.packagingEfficiency ?? DEFAULT_PACKAGING_EFFICIENCY,
               notes: row.notes,
               recipe: [],
             });
@@ -2928,8 +3091,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setItemUnitDraft(DEFAULT_ITEM_UNIT);
     setItemPlanningPolicyDraft("make_to_stock");
     setItemSafetyStockDraft("0");
+    setItemSafetyStockAutoEnabledDraft(false);
+    setItemSafetyStockLookbackDaysDraft(String(DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS));
+    setItemSafetyStockCoefficientDraft(String(DEFAULT_SAFETY_STOCK_COEFFICIENT));
     setItemShelfLifeDaysDraft("0");
     setItemProductionEfficiencyDraft("0");
+    setItemPackagingEfficiencyDraft(String(DEFAULT_PACKAGING_EFFICIENCY));
     setItemNotesDraft("");
   };
 
@@ -2956,8 +3123,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       return false;
     }
     const safetyStock = Math.max(0, safeNumber(itemSafetyStockDraft));
+    const safetyStockLookbackDays = Math.max(0, safeNumber(itemSafetyStockLookbackDaysDraft));
+    const safetyStockCoefficient = Math.max(0, safeNumber(itemSafetyStockCoefficientDraft));
     const shelfLifeDays = Math.max(0, safeNumber(itemShelfLifeDaysDraft));
     const productionEfficiency = Math.max(0, safeNumber(itemProductionEfficiencyDraft));
+    const packagingEfficiency = Math.max(0, safeNumber(itemPackagingEfficiencyDraft));
     const newItem: Item = {
       id: uid("item"),
       publicId: publicId || undefined,
@@ -2965,8 +3135,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       unit: itemUnitDraft,
       planningPolicy: itemPlanningPolicyDraft,
       safetyStock,
+      safetyStockAutoEnabled: itemSafetyStockAutoEnabledDraft,
+      safetyStockLookbackDays,
+      safetyStockCoefficient,
       shelfLifeDays,
       productionEfficiency,
+      packagingEfficiency,
       notes: itemNotesDraft.trim(),
       recipe: [],
     };
@@ -2983,8 +3157,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setEditingItemUnit(item.unit);
     setEditingItemPlanningPolicy(item.planningPolicy ?? "make_to_stock");
     setEditingItemSafetyStock(String(item.safetyStock ?? 0));
+    setEditingItemSafetyStockAutoEnabled(item.safetyStockAutoEnabled ?? false);
+    setEditingItemSafetyStockLookbackDays(String(item.safetyStockLookbackDays ?? DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS));
+    setEditingItemSafetyStockCoefficient(String(item.safetyStockCoefficient ?? DEFAULT_SAFETY_STOCK_COEFFICIENT));
     setEditingItemShelfLifeDays(String(item.shelfLifeDays ?? 0));
     setEditingItemProductionEfficiency(String(item.productionEfficiency ?? 0));
+    setEditingItemPackagingEfficiency(String(item.packagingEfficiency ?? DEFAULT_PACKAGING_EFFICIENCY));
     setEditingItemNotes(item.notes ?? "");
     setItemFormError(null);
   };
@@ -2996,8 +3174,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setEditingItemUnit(DEFAULT_ITEM_UNIT);
     setEditingItemPlanningPolicy("make_to_stock");
     setEditingItemSafetyStock("0");
+    setEditingItemSafetyStockAutoEnabled(false);
+    setEditingItemSafetyStockLookbackDays(String(DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS));
+    setEditingItemSafetyStockCoefficient(String(DEFAULT_SAFETY_STOCK_COEFFICIENT));
     setEditingItemShelfLifeDays("0");
     setEditingItemProductionEfficiency("0");
+    setEditingItemPackagingEfficiency(String(DEFAULT_PACKAGING_EFFICIENCY));
     setEditingItemNotes("");
     setItemFormError(null);
   };
@@ -3024,8 +3206,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       return false;
     }
     const nextSafetyStock = Math.max(0, safeNumber(editingItemSafetyStock));
+    const nextSafetyStockLookbackDays = Math.max(0, safeNumber(editingItemSafetyStockLookbackDays));
+    const nextSafetyStockCoefficient = Math.max(0, safeNumber(editingItemSafetyStockCoefficient));
     const nextShelfLifeDays = Math.max(0, safeNumber(editingItemShelfLifeDays));
     const nextProductionEfficiency = Math.max(0, safeNumber(editingItemProductionEfficiency));
+    const nextPackagingEfficiency = Math.max(0, safeNumber(editingItemPackagingEfficiency));
     const nextNotes = editingItemNotes.trim();
     setItems((prev) =>
       prev.map((it) =>
@@ -3037,8 +3222,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               unit: editingItemUnit,
               planningPolicy: editingItemPlanningPolicy,
               safetyStock: nextSafetyStock,
+              safetyStockAutoEnabled: editingItemSafetyStockAutoEnabled,
+              safetyStockLookbackDays: nextSafetyStockLookbackDays,
+              safetyStockCoefficient: nextSafetyStockCoefficient,
               shelfLifeDays: nextShelfLifeDays,
               productionEfficiency: nextProductionEfficiency,
+              packagingEfficiency: nextPackagingEfficiency,
               notes: nextNotes,
             }
           : it
@@ -3071,6 +3260,73 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       onCancelEditItem();
     }
     return true;
+  };
+
+  const computeSafetyStockFromDaily = (item: Item) => {
+    const lookbackDays = Math.max(0, Math.floor(item.safetyStockLookbackDays));
+    if (lookbackDays <= 0) return null;
+    const coefficient = Math.max(0, item.safetyStockCoefficient);
+    const dailyForItem = dailyStocks.filter((entry) => entry.itemId === item.id);
+    if (!dailyForItem.length) return null;
+    const latestDate = dailyForItem.reduce(
+      (latest, entry) => (entry.date > latest ? entry.date : latest),
+      dailyForItem[0].date
+    );
+    const startISO = toISODate(addDays(new Date(latestDate), -(lookbackDays - 1)));
+    const shippedTotal = dailyForItem.reduce((sum, entry) => {
+      if (entry.date < startISO || entry.date > latestDate) return sum;
+      return sum + (Number.isFinite(entry.shipped) ? entry.shipped : 0);
+    }, 0);
+    return {
+      safetyStock: Math.max(0, shippedTotal * coefficient),
+      rangeStartISO: startISO,
+      rangeEndISO: latestDate,
+    };
+  };
+
+  const applySafetyStockForItem = (itemId: string) => {
+    if (!canEdit) return;
+    const item = items.find((it) => it.id === itemId);
+    if (!item) return;
+    const result = computeSafetyStockFromDaily(item);
+    if (!result) {
+      window.alert("出荷数データが不足しているため、安全在庫を算出できませんでした。");
+      return;
+    }
+    setItems((prev) =>
+      prev.map((it) => (it.id === itemId ? { ...it, safetyStock: result.safetyStock } : it))
+    );
+  };
+
+  const applySafetyStockForTargets = () => {
+    if (!canEdit) return;
+    const targets = items.filter((item) => item.safetyStockAutoEnabled);
+    if (!targets.length) {
+      window.alert("自動計算の対象となる品目がありません。");
+      return;
+    }
+    let updated = 0;
+    let skipped = 0;
+    const nextById = new Map<string, number>();
+    targets.forEach((item) => {
+      const result = computeSafetyStockFromDaily(item);
+      if (!result) {
+        skipped += 1;
+        return;
+      }
+      nextById.set(item.id, result.safetyStock);
+      updated += 1;
+    });
+    if (updated === 0) {
+      window.alert("出荷数データが不足しているため、一括計算できませんでした。");
+      return;
+    }
+    setItems((prev) =>
+      prev.map((it) => (nextById.has(it.id) ? { ...it, safetyStock: nextById.get(it.id) ?? it.safetyStock } : it))
+    );
+    if (skipped > 0) {
+      window.alert(`安全在庫を${updated}件更新しました。出荷数不足で${skipped}件はスキップしました。`);
+    }
   };
 
   const resetMaterialDrafts = () => {
@@ -3828,7 +4084,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const masterSectionDescriptionMap: Record<"home" | "items" | "materials" | "users", string> = {
     home: "品目・原料マスタの登録・編集・削除を行います。",
-    items: "品目の計画方針・安全在庫・賞味期限・製造効率などを管理します。",
+    items: "品目の計画方針・安全在庫（自動計算設定）・賞味期限・製造効率・包装効率などを管理します。",
     materials: "原料の単位と名称を管理します。",
     users: "ユーザーID・表示名・権限・パスワードを管理します。",
   };
@@ -3904,7 +4160,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               品目を追加
             </Button>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/10 px-3 py-2 text-xs">
+              <div className="space-y-1">
+                <div className="font-semibold text-slate-700">安全在庫 自動計算</div>
+                <div className="text-muted-foreground">
+                  出荷数の直近N日分 × 係数で安全在庫を算出します。対象は「自動計算」が「対象」の品目のみです。
+                </div>
+              </div>
+              <Button size="sm" onClick={applySafetyStockForTargets} disabled={!canEdit}>
+                対象を一括計算
+              </Button>
+            </div>
             {items.length ? (
               <div className="overflow-x-auto rounded-lg border">
                 <table className="w-full text-sm">
@@ -3914,9 +4181,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       <th className="px-3 py-2 text-left font-medium">品目コード</th>
                       <th className="px-3 py-2 text-center font-medium">単位</th>
                       <th className="px-3 py-2 text-left font-medium">計画方針</th>
+                      <th className="px-3 py-2 text-center font-medium">自動計算</th>
+                      <th className="px-3 py-2 text-right font-medium">参照日数</th>
+                      <th className="px-3 py-2 text-right font-medium">係数</th>
                       <th className="px-3 py-2 text-right font-medium">安全在庫</th>
                       <th className="px-3 py-2 text-right font-medium">賞味期限(日)</th>
                       <th className="px-3 py-2 text-right font-medium">製造効率</th>
+                      <th className="px-3 py-2 text-right font-medium">包装効率</th>
                       <th className="px-3 py-2 text-left font-medium">備考</th>
                       <th className="px-3 py-2 text-right font-medium">操作</th>
                     </tr>
@@ -3932,10 +4203,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         <td className="px-3 py-2 text-muted-foreground">
                           {PLANNING_POLICY_LABELS[item.planningPolicy] ?? item.planningPolicy}
                         </td>
+                        <td className="px-3 py-2 text-center text-muted-foreground">
+                          {item.safetyStockAutoEnabled ? "対象" : "対象外"}
+                        </td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">{item.safetyStockLookbackDays}</td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">{item.safetyStockCoefficient}</td>
                         <td className="px-3 py-2 text-right text-muted-foreground">{item.safetyStock}</td>
                         <td className="px-3 py-2 text-right text-muted-foreground">{item.shelfLifeDays}</td>
                         <td className="px-3 py-2 text-right text-muted-foreground">
                           <span>{item.productionEfficiency}</span>
+                          <span className="ml-1 text-xs text-slate-500">{item.unit}/人時</span>
+                        </td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">
+                          <span>{item.packagingEfficiency}</span>
                           <span className="ml-1 text-xs text-slate-500">{item.unit}/人時</span>
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
@@ -3945,6 +4225,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                           <div className="flex justify-end gap-2">
                             <Button variant="outline" onClick={() => openRecipeEdit(item.id)} disabled={!canEdit}>
                               レシピ {item.recipe.length}件
+                            </Button>
+                            <Button variant="outline" onClick={() => applySafetyStockForItem(item.id)} disabled={!canEdit}>
+                              安全在庫計算
                             </Button>
                             <Button variant="outline" onClick={() => openEditItemModal(item)} disabled={!canEdit}>
                               編集
@@ -4218,9 +4501,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         <CardHeader className="pb-2">
           <CardTitle className="text-base font-medium">品目マスタ</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4 text-sm">
+          <CardContent className="space-y-4 text-sm">
           <div className="text-xs text-muted-foreground">
-            必須列: 品目コード / 品目名。任意列: 単位 / 計画方針 / 安全在庫 / 賞味期限日数 / 製造効率 / 備考
+            必須列: 品目コード / 品目名。任意列: 単位 / 計画方針 / 安全在庫 / 安全在庫自動計算 / 安全在庫参照日数 /
+            安全在庫係数 / 賞味期限日数 / 製造効率 / 包装効率 / 備考
           </div>
           <div className="text-xs text-muted-foreground">品目コードをキーに上書き・追加します。</div>
           <Input
@@ -4723,6 +5007,65 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     }}
                     placeholder="安全在庫"
                   />
+                  <div className="text-sm font-medium text-muted-foreground">安全在庫 自動計算</div>
+                  <Select
+                    value={
+                      isItemEditMode
+                        ? editingItemSafetyStockAutoEnabled
+                          ? "enabled"
+                          : "disabled"
+                        : itemSafetyStockAutoEnabledDraft
+                          ? "enabled"
+                          : "disabled"
+                    }
+                    onValueChange={(value) => {
+                      const enabled = value === "enabled";
+                      if (isItemEditMode) {
+                        setEditingItemSafetyStockAutoEnabled(enabled);
+                      } else {
+                        setItemSafetyStockAutoEnabledDraft(enabled);
+                      }
+                      setItemFormError(null);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="自動計算対象" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="enabled">対象</SelectItem>
+                      <SelectItem value="disabled">対象外</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <div className="text-sm font-medium text-muted-foreground">安全在庫 参照日数</div>
+                  <Input
+                    inputMode="numeric"
+                    value={isItemEditMode ? editingItemSafetyStockLookbackDays : itemSafetyStockLookbackDaysDraft}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (isItemEditMode) {
+                        setEditingItemSafetyStockLookbackDays(next);
+                      } else {
+                        setItemSafetyStockLookbackDaysDraft(next);
+                      }
+                      setItemFormError(null);
+                    }}
+                    placeholder="例: 14"
+                  />
+                  <div className="text-sm font-medium text-muted-foreground">安全在庫 係数</div>
+                  <Input
+                    inputMode="decimal"
+                    value={isItemEditMode ? editingItemSafetyStockCoefficient : itemSafetyStockCoefficientDraft}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (isItemEditMode) {
+                        setEditingItemSafetyStockCoefficient(next);
+                      } else {
+                        setItemSafetyStockCoefficientDraft(next);
+                      }
+                      setItemFormError(null);
+                    }}
+                    placeholder="例: 1.1"
+                  />
                   <div className="text-sm font-medium text-muted-foreground">賞味期限（日数）</div>
                   <Input
                     inputMode="decimal"
@@ -4757,6 +5100,21 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     />
                     <span className="text-xs text-muted-foreground">{itemEfficiencyUnit}/人時</span>
                   </div>
+                  <div className="text-sm font-medium text-muted-foreground">包装効率</div>
+                  <Input
+                    inputMode="decimal"
+                    value={isItemEditMode ? editingItemPackagingEfficiency : itemPackagingEfficiencyDraft}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (isItemEditMode) {
+                        setEditingItemPackagingEfficiency(next);
+                      } else {
+                        setItemPackagingEfficiencyDraft(next);
+                      }
+                      setItemFormError(null);
+                    }}
+                    placeholder="例: 0.95"
+                  />
                   <div className="text-sm font-medium text-muted-foreground">備考</div>
                   <Textarea
                     value={isItemEditMode ? editingItemNotes : itemNotesDraft}
