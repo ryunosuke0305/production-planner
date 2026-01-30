@@ -24,6 +24,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { SearchableCombobox } from "@/components/ui/searchable-combobox";
 import { ConditionsDialog } from "@/features/manufacturing/components/dialogs/ConditionsDialog";
+import { UserDialog } from "@/features/manufacturing/components/dialogs/UserDialog";
 import {
   DAILY_STOCK_EXPORT_HEADERS,
   DAILY_STOCK_HEADERS,
@@ -154,21 +155,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [managedUsersError, setManagedUsersError] = useState<string | null>(null);
   const [managedUsersNote, setManagedUsersNote] = useState<string | null>(null);
   const [userModalMode, setUserModalMode] = useState<"create" | "edit">("create");
-  const [newUserId, setNewUserId] = useState("");
-  const [newUserName, setNewUserName] = useState("");
-  const [newUserRole, setNewUserRole] = useState<AuthRole>("viewer");
-  const [newUserPassword, setNewUserPassword] = useState("");
-  const [newUserPasswordConfirm, setNewUserPasswordConfirm] = useState("");
-  const [userCreateBusy, setUserCreateBusy] = useState(false);
-  const [userCreateError, setUserCreateError] = useState<string | null>(null);
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
-  const [editUserName, setEditUserName] = useState("");
-  const [editUserRole, setEditUserRole] = useState<AuthRole>("viewer");
-  const [editUserPassword, setEditUserPassword] = useState("");
-  const [editUserPasswordConfirm, setEditUserPasswordConfirm] = useState("");
-  const [userEditBusy, setUserEditBusy] = useState(false);
-  const [userEditError, setUserEditError] = useState<string | null>(null);
 
   const [materialsMaster, setMaterialsMaster] = useState<Material[]>(SAMPLE_MATERIALS);
   const [items, setItems] = useState<Item[]>(SAMPLE_ITEMS);
@@ -449,107 +437,74 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     };
   }, [authUser, canEdit, masterSection]);
 
-  const handleCreateManagedUser = async () => {
-    if (!canEdit) return;
-    setUserCreateError(null);
+  const handleCreateManagedUser = async (payload: {
+    id: string;
+    name: string;
+    role: AuthRole;
+    password: string;
+  }): Promise<{ error?: string } | undefined> => {
+    if (!canEdit) return { error: "ユーザーの追加に失敗しました。" };
     setManagedUsersNote(null);
-    const trimmedId = newUserId.trim();
-    const trimmedName = newUserName.trim();
-    if (!trimmedId || !trimmedName) {
-      setUserCreateError("ユーザーIDと表示名を入力してください。");
-      return;
-    }
-    if (!newUserPassword) {
-      setUserCreateError("パスワードを入力してください。");
-      return;
-    }
-    if (newUserPassword !== newUserPasswordConfirm) {
-      setUserCreateError("パスワードが一致しません。");
-      return;
-    }
-    setUserCreateBusy(true);
     try {
+      const trimmedId = payload.id.trim();
+      const trimmedName = payload.name.trim();
       const response = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: trimmedId,
           name: trimmedName,
-          role: newUserRole,
-          password: newUserPassword,
+          role: payload.role,
+          password: payload.password,
         }),
       });
       if (!response.ok) {
         const message = await response.text();
-        setUserCreateError(message || "ユーザーの追加に失敗しました。");
-        return;
+        return { error: message || "ユーザーの追加に失敗しました。" };
       }
-      setNewUserId("");
-      setNewUserName("");
-      setNewUserRole("viewer");
-      setNewUserPassword("");
-      setNewUserPasswordConfirm("");
       setManagedUsersNote("ユーザーを追加しました。");
       await fetchManagedUsers();
     } catch (error) {
       console.error(error);
-      setUserCreateError("ユーザーの追加に失敗しました。");
-    } finally {
-      setUserCreateBusy(false);
+      return { error: "ユーザーの追加に失敗しました。" };
     }
   };
 
   const openCreateManagedUserModal = () => {
     setUserModalMode("create");
-    setNewUserId("");
-    setNewUserName("");
-    setNewUserRole("viewer");
-    setNewUserPassword("");
-    setNewUserPasswordConfirm("");
-    setUserCreateError(null);
+    setEditingUser(null);
     setIsUserModalOpen(true);
   };
 
   const openEditManagedUserModal = (user: ManagedUser) => {
     setUserModalMode("edit");
     setEditingUser(user);
-    setEditUserName(user.name);
-    setEditUserRole(user.role);
-    setEditUserPassword("");
-    setEditUserPasswordConfirm("");
-    setUserEditError(null);
     setIsUserModalOpen(true);
   };
 
-  const handleUpdateManagedUser = async () => {
-    if (!canEdit || !editingUser) return;
-    setUserEditError(null);
+  const handleUpdateManagedUser = async (payload: {
+    id: string;
+    name: string;
+    role: AuthRole;
+    password?: string;
+  }): Promise<{ error?: string } | undefined> => {
+    if (!canEdit) return { error: "ユーザーの更新に失敗しました。" };
     setManagedUsersNote(null);
-    const trimmedName = editUserName.trim();
-    if (!trimmedName) {
-      setUserEditError("表示名を入力してください。");
-      return;
-    }
-    if (editUserPassword && editUserPassword !== editUserPasswordConfirm) {
-      setUserEditError("パスワードが一致しません。");
-      return;
-    }
-    setUserEditBusy(true);
     try {
+      const trimmedName = payload.name.trim();
       const response = await fetch("/api/admin/users", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id: editingUser.id,
+          id: payload.id,
           name: trimmedName,
-          role: editUserRole,
-          password: editUserPassword || undefined,
+          role: payload.role,
+          password: payload.password || undefined,
         }),
       });
       if (!response.ok) {
         const message = await response.text();
-        setUserEditError(message || "ユーザーの更新に失敗しました。");
-        return;
+        return { error: message || "ユーザーの更新に失敗しました。" };
       }
       setIsUserModalOpen(false);
       setEditingUser(null);
@@ -557,9 +512,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       await fetchManagedUsers();
     } catch (error) {
       console.error(error);
-      setUserEditError("ユーザーの更新に失敗しました。");
-    } finally {
-      setUserEditBusy(false);
+      return { error: "ユーザーの更新に失敗しました。" };
     }
   };
 
@@ -4055,101 +4008,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         </main>
 
         {/* ユーザー管理モーダル */}
-        <Dialog
-          open={isUserModalOpen}
+        <UserDialog
+          dialogModel={{
+            open: isUserModalOpen,
+            mode: userModalMode,
+            editingUser,
+            modalWideClassName,
+            modalBodyClassName,
+          }}
           onOpenChange={(open) => {
             setIsUserModalOpen(open);
             if (!open) {
               setEditingUser(null);
             }
           }}
-        >
-          <DialogContent className={modalWideClassName}>
-            <DialogHeader>
-              <DialogTitle>{userModalMode === "create" ? "ユーザーを追加" : "ユーザーを編集"}</DialogTitle>
-            </DialogHeader>
-            <div className={modalBodyClassName}>
-              <div className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-[160px_1fr] md:items-center">
-                  <div className="text-sm font-medium text-muted-foreground">ユーザーID</div>
-                  <Input
-                    value={userModalMode === "create" ? newUserId : editingUser?.id ?? ""}
-                    onChange={(e) => setNewUserId(e.target.value)}
-                    placeholder="例: admin2"
-                    disabled={userModalMode === "edit"}
-                  />
-                  <div className="text-sm font-medium text-muted-foreground">表示名</div>
-                  <Input
-                    value={userModalMode === "create" ? newUserName : editUserName}
-                    onChange={(e) =>
-                      userModalMode === "create" ? setNewUserName(e.target.value) : setEditUserName(e.target.value)
-                    }
-                    placeholder="表示名"
-                  />
-                  <div className="text-sm font-medium text-muted-foreground">権限</div>
-                  <Select
-                    value={userModalMode === "create" ? newUserRole : editUserRole}
-                    onValueChange={(value) =>
-                      userModalMode === "create"
-                        ? setNewUserRole(value as AuthRole)
-                        : setEditUserRole(value as AuthRole)
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="権限を選択" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="admin">管理者</SelectItem>
-                      <SelectItem value="viewer">閲覧者</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <div className="text-sm font-medium text-muted-foreground">パスワード</div>
-                  <Input
-                    type="password"
-                    value={userModalMode === "create" ? newUserPassword : editUserPassword}
-                    onChange={(e) =>
-                      userModalMode === "create"
-                        ? setNewUserPassword(e.target.value)
-                        : setEditUserPassword(e.target.value)
-                    }
-                    placeholder={userModalMode === "create" ? "パスワード" : "変更する場合のみ入力"}
-                  />
-                  <div className="text-sm font-medium text-muted-foreground">パスワード（確認）</div>
-                  <Input
-                    type="password"
-                    value={userModalMode === "create" ? newUserPasswordConfirm : editUserPasswordConfirm}
-                    onChange={(e) =>
-                      userModalMode === "create"
-                        ? setNewUserPasswordConfirm(e.target.value)
-                        : setEditUserPasswordConfirm(e.target.value)
-                    }
-                    placeholder={userModalMode === "create" ? "パスワードを再入力" : "パスワードを再入力"}
-                  />
-                </div>
-                {userModalMode === "create" && userCreateError ? (
-                  <div className="text-sm text-destructive">{userCreateError}</div>
-                ) : null}
-                {userModalMode === "edit" && userEditError ? (
-                  <div className="text-sm text-destructive">{userEditError}</div>
-                ) : null}
-              </div>
-            </div>
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setIsUserModalOpen(false)}>
-                キャンセル
-              </Button>
-              {userModalMode === "create" ? (
-                <Button onClick={() => void handleCreateManagedUser()} disabled={userCreateBusy}>
-                  {userCreateBusy ? "追加中..." : "追加"}
-                </Button>
-              ) : (
-                <Button onClick={() => void handleUpdateManagedUser()} disabled={userEditBusy}>
-                  {userEditBusy ? "保存中..." : "保存"}
-                </Button>
-              )}
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          onCreate={handleCreateManagedUser}
+          onUpdate={handleUpdateManagedUser}
+        />
 
         {/* 品目マスタモーダル */}
         <Dialog open={isItemModalOpen} onOpenChange={handleItemModalOpenChange}>
