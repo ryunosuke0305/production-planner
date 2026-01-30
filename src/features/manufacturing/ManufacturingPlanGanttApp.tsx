@@ -5,27 +5,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SearchableCombobox } from "@/components/ui/searchable-combobox";
-import {
-  ItemDialog,
-  type ItemDialogCommitPayload,
-} from "@/features/manufacturing/components/dialogs/ItemDialog";
-import { MaterialDialog } from "@/features/manufacturing/components/dialogs/MaterialDialog";
-import { UserDialog } from "@/features/manufacturing/components/dialogs/UserDialog";
+import { type ItemDialogCommitPayload } from "@/features/manufacturing/components/dialogs/ItemDialog";
 import { ManufacturingPlanLayout } from "@/features/manufacturing/components/ManufacturingPlanLayout";
+import { ManufacturingPlanDialogs } from "@/features/manufacturing/components/ManufacturingPlanDialogs";
 import { ImportView } from "@/features/manufacturing/views/ImportView";
 import { InventoryView } from "@/features/manufacturing/views/InventoryView";
 import { LoginView } from "@/features/manufacturing/views/LoginView";
@@ -43,7 +31,6 @@ import {
   DEFAULT_SAFETY_STOCK_COEFFICIENT,
   DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS,
   DEFAULT_TIMEZONE,
-  ITEM_UNITS,
   ITEM_HEADERS,
   ITEM_MASTER_EXPORT_HEADERS,
   MATERIAL_HEADERS,
@@ -2759,17 +2746,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               onOpenConstraints={openConstraintsDialog}
               canEdit={canEdit}
               chatScrollRef={chatScrollRef}
-              constraintsOpen={constraintsOpen}
-              onConstraintsOpenChange={setConstraintsOpen}
-              onSaveConstraints={() => void saveConstraints()}
-              constraintsDialogModel={constraintsDialogModel}
-              constraintsDialogActions={constraintsDialogActions}
-              modalBodyClassName={modalBodyClassName}
-              modalWideClassName={modalWideClassName}
-              blockDetailDialogModel={blockDetailDialogModel}
-              blockDetailDialogActions={blockDetailDialogActions}
-              onPlanOpenChange={handlePlanOpenChange}
-              onPlanSave={onPlanSave}
             />
           )
         : activeView === "inventory"
@@ -2852,28 +2828,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   <ManualView manualAudience={manualAudience} onManualAudienceChange={setManualAudience} />
                 )}
 
-      {/* ユーザー管理モーダル */}
-      <UserDialog
-        dialogModel={{
+      <ManufacturingPlanDialogs
+        userDialogModel={{
           open: isUserModalOpen,
           mode: userModalMode,
           editingUser,
           modalWideClassName,
           modalBodyClassName,
         }}
-        onOpenChange={(open) => {
+        onUserDialogOpenChange={(open) => {
           setIsUserModalOpen(open);
           if (!open) {
             setEditingUser(null);
           }
         }}
-        onCreate={handleCreateManagedUser}
-        onUpdate={handleUpdateManagedUser}
-      />
-
-      {/* 品目マスタモーダル */}
-      <ItemDialog
-        dialogModel={{
+        onUserCreate={handleCreateManagedUser}
+        onUserUpdate={handleUpdateManagedUser}
+        itemDialogModel={{
           open: itemDialogState.open,
           mode: itemDialogState.mode,
           editingItemId: itemDialogState.editingItemId,
@@ -2882,13 +2853,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           modalBodyClassName,
           canEdit,
         }}
-        onOpenChange={handleItemDialogOpenChange}
-        onSave={handleItemDialogSave}
-      />
-
-      {/* 原料マスタモーダル */}
-      <MaterialDialog
-        dialogModel={{
+        onItemDialogOpenChange={handleItemDialogOpenChange}
+        onItemDialogSave={handleItemDialogSave}
+        materialDialogModel={{
           open: materialDialogState.open,
           mode: materialDialogMode,
           editingMaterialId: materialDialogState.editingMaterialId,
@@ -2900,137 +2867,31 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           modalBodyClassName,
           canEdit,
         }}
-        onOpenChange={handleMaterialDialogOpenChange}
-        onSave={handleMaterialSave}
+        onMaterialDialogOpenChange={handleMaterialDialogOpenChange}
+        onMaterialDialogSave={handleMaterialSave}
+        recipeDialogOpen={openRecipe}
+        onRecipeDialogOpenChange={setOpenRecipe}
+        activeRecipeItemName={activeRecipeItem?.name ?? null}
+        activeRecipeItemUnit={activeRecipeItem?.unit ?? null}
+        recipeDraft={recipeDraft}
+        onRecipeDraftChange={setRecipeDraft}
+        materialOptions={materialOptions}
+        materialMap={materialMap}
+        materialsMaster={materialsMaster}
+        canEdit={canEdit}
+        modalWideClassName={modalWideClassName}
+        modalBodyClassName={modalBodyClassName}
+        onRecipeSave={onRecipeSave}
+        constraintsDialogOpen={constraintsOpen}
+        onConstraintsDialogOpenChange={setConstraintsOpen}
+        onConstraintsSave={() => void saveConstraints()}
+        constraintsDialogModel={constraintsDialogModel}
+        constraintsDialogActions={constraintsDialogActions}
+        blockDetailDialogModel={blockDetailDialogModel}
+        blockDetailDialogActions={blockDetailDialogActions}
+        onPlanOpenChange={handlePlanOpenChange}
+        onPlanSave={onPlanSave}
       />
-
-        {/* レシピ設定モーダル */}
-        <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
-          <DialogContent className={modalWideClassName}>
-            <DialogHeader>
-              <DialogTitle>レシピ設定{activeRecipeItem ? `：${activeRecipeItem.name}` : ""}</DialogTitle>
-            </DialogHeader>
-
-            <div className={modalBodyClassName}>
-              <div className="space-y-4">
-                <div className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
-                  係数は「製品1{activeRecipeItem?.unit ?? ""}あたりの原料量」です。
-                </div>
-                <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
-                  原料はマスタから選択します。未登録の場合は「マスタ管理」画面で追加してください。
-                </div>
-
-                <div className="rounded-xl border">
-                  <div className="grid grid-cols-12 gap-2 border-b bg-muted/30 p-2 text-xs text-muted-foreground">
-                    <div className="col-span-6">原材料名</div>
-                    <div className="col-span-3 text-right">係数</div>
-                    <div className="col-span-2">単位</div>
-                    <div className="col-span-1 text-right"> </div>
-                  </div>
-
-                  <div className="divide-y">
-                    {recipeDraft.map((r, idx) => (
-                      <div key={`${r.materialId}-${idx}`} className="grid grid-cols-12 items-center gap-2 p-2">
-                        <div className="col-span-6">
-                          <SearchableCombobox
-                            value={r.materialId}
-                            options={materialOptions}
-                            onChange={(value) => {
-                              const selected = materialMap.get(value);
-                              setRecipeDraft((prev) =>
-                                prev.map((x, i) =>
-                                  i === idx
-                                    ? {
-                                        ...x,
-                                        materialId: value,
-                                        unit: selected?.unit ?? x.unit,
-                                      }
-                                    : x
-                                )
-                              );
-                            }}
-                            placeholder="原料を検索"
-                            emptyLabel={materialsMaster.length ? "該当する原料がありません" : "原料が未登録です"}
-                            disabled={!materialsMaster.length}
-                          />
-                        </div>
-                        <div className="col-span-3">
-                          <Input
-                            inputMode="decimal"
-                            value={String(r.perUnit)}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setRecipeDraft((prev) =>
-                                prev.map((x, i) => (i === idx ? { ...x, perUnit: safeNumber(v) } : x))
-                              );
-                            }}
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <Select
-                            value={r.unit}
-                            onValueChange={(v) => {
-                              const unit = asRecipeUnit(v);
-                              setRecipeDraft((prev) => prev.map((x, i) => (i === idx ? { ...x, unit } : x)));
-                            }}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="単位" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {ITEM_UNITS.map((unit) => (
-                                <SelectItem key={unit} value={unit}>
-                                  {unit}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="col-span-1 text-right">
-                          <Button
-                            variant="outline"
-                            onClick={() => setRecipeDraft((prev) => prev.filter((_, i) => i !== idx))}
-                          >
-                            -
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-
-                    <div className="p-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          const fallbackMaterial = materialsMaster[0];
-                          setRecipeDraft((prev) => [
-                            ...prev,
-                            {
-                              materialId: fallbackMaterial?.id ?? "",
-                              perUnit: 0,
-                              unit: fallbackMaterial?.unit ?? DEFAULT_MATERIAL_UNIT,
-                            },
-                          ]);
-                        }}
-                        disabled={!canEdit}
-                      >
-                        追加
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setOpenRecipe(false)}>
-                キャンセル
-              </Button>
-              <Button onClick={onRecipeSave} disabled={!canEdit}>
-                保存
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
     </ManufacturingPlanLayout>
   );
 }
