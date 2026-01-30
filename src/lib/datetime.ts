@@ -41,6 +41,18 @@ export function parseISODateJST(isoDate: string): Date | null {
   return new Date(utcMs);
 }
 
+export function parseISODateTimeJST(isoDate: string, hour: number): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  if (!Number.isFinite(hour)) return null;
+  const utcMs = Date.UTC(year, month - 1, day, hour, 0, 0) - JST_OFFSET_MINUTES * MS_PER_MINUTE;
+  return new Date(utcMs);
+}
+
 export function toMD(isoDate: string): string {
   const parts = isoDate.split("-").map((v) => Number(v));
   const m = parts[1];
@@ -54,9 +66,17 @@ export function toWeekday(isoDate: string): string {
   return new Intl.DateTimeFormat("ja-JP", { timeZone: DEFAULT_TIMEZONE, weekday: "short" }).format(date);
 }
 
+const WEEKDAY_EN_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+export function getWeekdayIndexInTimeZone(date: Date, timeZone: string = DEFAULT_TIMEZONE): number {
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(date);
+  const index = WEEKDAY_EN_SHORT.indexOf(weekday as (typeof WEEKDAY_EN_SHORT)[number]);
+  return index >= 0 ? index : date.getDay();
+}
+
 export function addDays(base: Date, delta: number): Date {
   const d = new Date(base);
-  d.setDate(base.getDate() + delta);
+  d.setUTCDate(d.getUTCDate() + delta);
   return d;
 }
 
@@ -68,11 +88,9 @@ export function diffDays(startISO: string, endISO: string): number {
 }
 
 export const getDefaultWeekStart = (): Date => {
-  const now = new Date();
-  const day = now.getDay();
+  const todayISO = toISODate(new Date());
+  const today = parseISODateJST(todayISO) ?? new Date();
+  const day = getWeekdayIndexInTimeZone(today);
   const diffToMonday = (day + 6) % 7;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - diffToMonday);
-  monday.setHours(0, 0, 0, 0);
-  return monday;
+  return addDays(today, -diffToMonday);
 };

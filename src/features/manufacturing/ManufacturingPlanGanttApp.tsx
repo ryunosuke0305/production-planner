@@ -40,7 +40,15 @@ import {
   SAMPLE_MATERIALS,
 } from "@/constants/planning";
 import { buildCalendarDays, buildDefaultCalendarDays, extendCalendarDaysTo } from "@/lib/calendar";
-import { toISODate, addDays, diffDays, getDefaultWeekStart, parseISODateJST, toMD, toWeekday } from "@/lib/datetime";
+import {
+  toISODate,
+  addDays,
+  diffDays,
+  getDefaultWeekStart,
+  parseISODateJST,
+  toMD,
+  toWeekday,
+} from "@/lib/datetime";
 import { downloadCsvFile, downloadTextFile } from "@/lib/export/csv";
 import { buildExportPayload } from "@/lib/export/payload";
 import { calcMaterials, durationLabel, itemCodeKey } from "@/lib/format";
@@ -233,10 +241,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (viewStartISO < currentPlanStartISO) {
       const daysToPrepend = diffDays(viewStartISO, currentPlanStartISO);
       if (daysToPrepend > 0) {
-        const newDays = buildCalendarDays(new Date(viewStartISO), daysToPrepend);
+        const viewStartDate = parseISODateJST(viewStartISO) ?? new Date(viewStartISO);
+        const newDays = buildCalendarDays(viewStartDate, daysToPrepend);
         const shiftSlots = daysToPrepend * planSlotsPerDay;
         setPlanCalendarDays((prev) => [...newDays, ...prev]);
-        setPlanWeekStart(new Date(viewStartISO));
+        const planWeekStartDate = parseISODateJST(viewStartISO) ?? new Date(viewStartISO);
+        setPlanWeekStart(planWeekStartDate);
         if (shiftSlots > 0) {
           setBlocks((prev) => prev.map((b) => ({ ...b, start: b.start + shiftSlots })));
         }
@@ -247,7 +257,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (viewEndISO > currentPlanEndISO) {
       const daysToAppend = diffDays(currentPlanEndISO, viewEndISO);
       if (daysToAppend > 0) {
-        const appendStart = addDays(new Date(currentPlanEndISO), 1);
+        const appendStartBase = parseISODateJST(currentPlanEndISO) ?? new Date(currentPlanEndISO);
+        const appendStart = addDays(appendStartBase, 1);
         const newDays = buildCalendarDays(appendStart, daysToAppend);
         setPlanCalendarDays((prev) => [...prev, ...newDays]);
       }
@@ -1234,14 +1245,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         const payload = parsePlanPayload(raw);
         if (!payload || cancelled) return;
 
-        const parsedWeekStart = new Date(payload.weekStartISO);
+        const parsedWeekStart = parseISODateJST(payload.weekStartISO) ?? new Date(payload.weekStartISO);
         const effectiveWeekStart = Number.isNaN(parsedWeekStart.getTime()) ? getDefaultWeekStart() : parsedWeekStart;
         const currentWeekStart = getDefaultWeekStart();
         effectiveWeekStart.setHours(0, 0, 0, 0);
         const nextCalendarDays = payload.calendarDays.length
           ? payload.calendarDays
           : buildDefaultCalendarDays(effectiveWeekStart);
-        const normalizedWeekStart = new Date(nextCalendarDays[0]?.date ?? payload.weekStartISO);
+        const normalizedWeekStartISO = nextCalendarDays[0]?.date ?? payload.weekStartISO;
+        const normalizedWeekStart = parseISODateJST(normalizedWeekStartISO) ?? new Date(normalizedWeekStartISO);
         if (!Number.isNaN(normalizedWeekStart.getTime())) {
           normalizedWeekStart.setHours(0, 0, 0, 0);
           setPlanWeekStart(normalizedWeekStart);
@@ -2491,16 +2503,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             }}
           >
             {/* ヘッダ（時間） */}
-            <div className="sticky left-0 top-[72px] z-50 bg-white border-b border-r p-3 font-medium">日付</div>
+            <div className="sticky left-0 top-0 z-50 bg-white border-b border-r p-3 font-medium">日付</div>
             {slotHeaderLabels.map((label, idx) => (
               <div
                 key={`hour-${label || "blank"}-${idx}`}
-                className="sticky top-[72px] z-20 bg-white border-b border-r p-2 text-center text-xs text-muted-foreground"
+                className="sticky top-0 z-20 bg-white border-b border-r p-2 text-center text-xs text-muted-foreground"
               >
                 {label || (viewDensity === "day" ? "日" : "")}
               </div>
             ))}
-            <div className="sticky top-[72px] z-30 bg-white border-b p-3 text-center font-medium">在庫（EOD）</div>
+            <div className="sticky top-0 z-30 bg-white border-b p-3 text-center font-medium">在庫（EOD）</div>
 
             {/* 行（日付） */}
             {weekDates.map((date, dayIdx) => {
