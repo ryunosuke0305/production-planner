@@ -53,12 +53,6 @@ type AuthUser = {
   passwordHash: string;
 };
 
-type AuthSession = {
-  userId: string;
-  name: string;
-  role: AuthRole;
-};
-
 type AuthJwtPayload = {
   sub: string;
   name: string;

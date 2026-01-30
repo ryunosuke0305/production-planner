@@ -4,6 +4,7 @@ type ButtonVariant = "default" | "outline" | "destructive" | "secondary";
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
+  size?: "sm" | "md" | "lg";
 };
 
 const baseStyles =
