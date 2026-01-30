@@ -48,6 +48,13 @@ function ensureSchema(db) {
       stock REAL NOT NULL,
       planning_policy TEXT NOT NULL DEFAULT 'make_to_stock',
       safety_stock REAL NOT NULL DEFAULT 0,
+      safety_stock_auto_enabled INTEGER NOT NULL DEFAULT 0,
+      safety_stock_lookback_days INTEGER NOT NULL DEFAULT 7,
+      safety_stock_coefficient REAL NOT NULL DEFAULT 1,
+      shelf_life_days INTEGER NOT NULL DEFAULT 0,
+      production_efficiency REAL NOT NULL DEFAULT 0,
+      packaging_efficiency REAL NOT NULL DEFAULT 1,
+      notes TEXT NOT NULL DEFAULT '',
       reorder_point REAL NOT NULL DEFAULT 0,
       lot_size REAL NOT NULL DEFAULT 0
     );
@@ -133,6 +140,13 @@ function ensureItemsPlanningColumns(db) {
   const hasPublicId = columns.some((column) => column.name === "public_id");
   const hasPlanningPolicy = columns.some((column) => column.name === "planning_policy");
   const hasSafetyStock = columns.some((column) => column.name === "safety_stock");
+  const hasSafetyStockAutoEnabled = columns.some((column) => column.name === "safety_stock_auto_enabled");
+  const hasSafetyStockLookbackDays = columns.some((column) => column.name === "safety_stock_lookback_days");
+  const hasSafetyStockCoefficient = columns.some((column) => column.name === "safety_stock_coefficient");
+  const hasShelfLifeDays = columns.some((column) => column.name === "shelf_life_days");
+  const hasProductionEfficiency = columns.some((column) => column.name === "production_efficiency");
+  const hasPackagingEfficiency = columns.some((column) => column.name === "packaging_efficiency");
+  const hasNotes = columns.some((column) => column.name === "notes");
   const hasReorderPoint = columns.some((column) => column.name === "reorder_point");
   const hasLotSize = columns.some((column) => column.name === "lot_size");
   if (!hasPublicId) {
@@ -143,6 +157,27 @@ function ensureItemsPlanningColumns(db) {
   }
   if (!hasSafetyStock) {
     db.exec("ALTER TABLE items ADD COLUMN safety_stock REAL NOT NULL DEFAULT 0");
+  }
+  if (!hasSafetyStockAutoEnabled) {
+    db.exec("ALTER TABLE items ADD COLUMN safety_stock_auto_enabled INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!hasSafetyStockLookbackDays) {
+    db.exec("ALTER TABLE items ADD COLUMN safety_stock_lookback_days INTEGER NOT NULL DEFAULT 7");
+  }
+  if (!hasSafetyStockCoefficient) {
+    db.exec("ALTER TABLE items ADD COLUMN safety_stock_coefficient REAL NOT NULL DEFAULT 1");
+  }
+  if (!hasShelfLifeDays) {
+    db.exec("ALTER TABLE items ADD COLUMN shelf_life_days INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!hasProductionEfficiency) {
+    db.exec("ALTER TABLE items ADD COLUMN production_efficiency REAL NOT NULL DEFAULT 0");
+  }
+  if (!hasPackagingEfficiency) {
+    db.exec("ALTER TABLE items ADD COLUMN packaging_efficiency REAL NOT NULL DEFAULT 1");
+  }
+  if (!hasNotes) {
+    db.exec("ALTER TABLE items ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
   }
   if (!hasReorderPoint) {
     db.exec("ALTER TABLE items ADD COLUMN reorder_point REAL NOT NULL DEFAULT 0");
@@ -227,7 +262,7 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
 
   const items = db
     .prepare(
-      "SELECT id, public_id, name, unit, stock, planning_policy, safety_stock, reorder_point, lot_size FROM items ORDER BY id"
+      "SELECT id, public_id, name, unit, stock, planning_policy, safety_stock, safety_stock_auto_enabled, safety_stock_lookback_days, safety_stock_coefficient, shelf_life_days, production_efficiency, packaging_efficiency, notes, reorder_point, lot_size FROM items ORDER BY id"
     )
     .all()
     .map((row) => ({
@@ -238,6 +273,13 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
       stock: row.stock,
       planningPolicy: row.planning_policy ?? "make_to_stock",
       safetyStock: row.safety_stock ?? 0,
+      safetyStockAutoEnabled: Boolean(row.safety_stock_auto_enabled),
+      safetyStockLookbackDays: row.safety_stock_lookback_days ?? 7,
+      safetyStockCoefficient: row.safety_stock_coefficient ?? 1,
+      shelfLifeDays: row.shelf_life_days ?? 0,
+      productionEfficiency: row.production_efficiency ?? 0,
+      packagingEfficiency: row.packaging_efficiency ?? 1,
+      notes: row.notes ?? "",
       reorderPoint: row.reorder_point ?? 0,
       lotSize: row.lot_size ?? 0,
     }));
@@ -379,7 +421,7 @@ export function savePlanPayload(db, payload) {
   );
   const insertMaterial = db.prepare("INSERT INTO materials (id, name, unit) VALUES (?, ?, ?)");
   const insertItem = db.prepare(
-    "INSERT INTO items (id, public_id, name, unit, stock, planning_policy, safety_stock, reorder_point, lot_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO items (id, public_id, name, unit, stock, planning_policy, safety_stock, safety_stock_auto_enabled, safety_stock_lookback_days, safety_stock_coefficient, shelf_life_days, production_efficiency, packaging_efficiency, notes, reorder_point, lot_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
   const insertRecipe = db.prepare(
     "INSERT INTO item_recipes (item_id, material_id, per_unit, unit) VALUES (?, ?, ?, ?)"
@@ -425,6 +467,13 @@ export function savePlanPayload(db, payload) {
         item.stock ?? 0,
         item.planningPolicy ?? "make_to_stock",
         item.safetyStock ?? 0,
+        item.safetyStockAutoEnabled ? 1 : 0,
+        item.safetyStockLookbackDays ?? 7,
+        item.safetyStockCoefficient ?? 1,
+        item.shelfLifeDays ?? 0,
+        item.productionEfficiency ?? 0,
+        item.packagingEfficiency ?? 1,
+        item.notes ?? "",
         item.reorderPoint ?? 0,
         item.lotSize ?? 0
       );
