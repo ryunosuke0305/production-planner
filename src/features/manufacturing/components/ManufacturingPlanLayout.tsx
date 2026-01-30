@@ -7,40 +7,52 @@ type ViewKey = "schedule" | "inventory" | "master" | "import" | "manual";
 
 type ManufacturingPlanLayoutProps = {
   navOpen: boolean;
-  onToggleNav: () => void;
-  onCloseNav: () => void;
+  setNavOpen: React.Dispatch<React.SetStateAction<boolean>>;
   activeView: ViewKey;
+  setActiveView: React.Dispatch<React.SetStateAction<ViewKey>>;
   viewLabel: string;
   authUser: AuthUser;
   authRoleLabel: string;
   canEdit: boolean;
   onLogout: () => void;
-  onSelectView: (view: ViewKey) => void;
-  onSelectMasterHome: () => void;
+  onSelectMasterHome?: () => void;
   children: React.ReactNode;
 };
 
 export function ManufacturingPlanLayout({
   navOpen,
-  onToggleNav,
-  onCloseNav,
+  setNavOpen,
   activeView,
+  setActiveView,
   viewLabel,
   authUser,
   authRoleLabel,
   canEdit,
   onLogout,
-  onSelectView,
   onSelectMasterHome,
   children,
 }: ManufacturingPlanLayoutProps): JSX.Element {
+  const handleSelectView = (view: ViewKey) => {
+    setActiveView(view);
+    setNavOpen(false);
+  };
+
+  const handleSelectMasterHome = () => {
+    if (onSelectMasterHome) {
+      onSelectMasterHome();
+    } else {
+      setActiveView("master");
+    }
+    setNavOpen(false);
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div
         className={`fixed inset-0 z-[70] bg-black/30 transition ${
           navOpen ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
-        onClick={onCloseNav}
+        onClick={() => setNavOpen(false)}
       />
       <aside
         className={`fixed left-0 top-0 z-[80] h-full w-64 border-r bg-background shadow-sm transition-transform ${
@@ -50,7 +62,7 @@ export function ManufacturingPlanLayout({
         <div className="flex h-full flex-col gap-4 p-4">
           <div className="flex items-center justify-between">
             <div className="text-lg font-semibold">メニュー</div>
-            <button type="button" className="rounded-md border px-2 py-1 text-sm" onClick={onCloseNav}>
+            <button type="button" className="rounded-md border px-2 py-1 text-sm" onClick={() => setNavOpen(false)}>
               閉じる
             </button>
           </div>
@@ -60,7 +72,7 @@ export function ManufacturingPlanLayout({
               className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
                 activeView === "schedule" ? "bg-muted font-semibold" : "hover:bg-muted/50"
               }`}
-              onClick={() => onSelectView("schedule")}
+              onClick={() => handleSelectView("schedule")}
             >
               スケジュール
             </button>
@@ -69,7 +81,7 @@ export function ManufacturingPlanLayout({
               className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
                 activeView === "inventory" ? "bg-muted font-semibold" : "hover:bg-muted/50"
               }`}
-              onClick={() => onSelectView("inventory")}
+              onClick={() => handleSelectView("inventory")}
             >
               在庫データ
             </button>
@@ -78,7 +90,7 @@ export function ManufacturingPlanLayout({
               className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
                 activeView === "import" ? "bg-muted font-semibold" : "hover:bg-muted/50"
               }`}
-              onClick={() => onSelectView("import")}
+              onClick={() => handleSelectView("import")}
             >
               Excel取り込み
             </button>
@@ -87,7 +99,7 @@ export function ManufacturingPlanLayout({
               className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
                 activeView === "master" ? "bg-muted font-semibold" : "hover:bg-muted/50"
               }`}
-              onClick={onSelectMasterHome}
+              onClick={handleSelectMasterHome}
             >
               マスタ管理
             </button>
@@ -96,7 +108,7 @@ export function ManufacturingPlanLayout({
               className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
                 activeView === "manual" ? "bg-muted font-semibold" : "hover:bg-muted/50"
               }`}
-              onClick={() => onSelectView("manual")}
+              onClick={() => handleSelectView("manual")}
             >
               マニュアル
             </button>
@@ -109,7 +121,7 @@ export function ManufacturingPlanLayout({
           <button
             type="button"
             className="rounded-md border p-2 hover:bg-muted"
-            onClick={onToggleNav}
+            onClick={() => setNavOpen((prev) => !prev)}
             aria-label="メニューを開く"
           >
             <span className="block h-0.5 w-5 bg-foreground" />
