@@ -24,6 +24,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { SearchableCombobox } from "@/components/ui/searchable-combobox";
 import { ConditionsDialog } from "@/features/manufacturing/components/dialogs/ConditionsDialog";
+import { MaterialDialog } from "@/features/manufacturing/components/dialogs/MaterialDialog";
 import { UserDialog } from "@/features/manufacturing/components/dialogs/UserDialog";
 import {
   DAILY_STOCK_EXPORT_HEADERS,
@@ -312,8 +313,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [openRecipe, setOpenRecipe] = useState(false);
   const [activeRecipeItemId, setActiveRecipeItemId] = useState<string | null>(null);
   const [recipeDraft, setRecipeDraft] = useState<RecipeLine[]>([]);
-  const [materialNameDraft, setMaterialNameDraft] = useState("");
-  const [materialUnitDraft, setMaterialUnitDraft] = useState<RecipeUnit>(DEFAULT_MATERIAL_UNIT);
 
   const canEdit = authUser?.role === "admin";
   const authRoleLabel = authUser?.role === "admin" ? "管理者" : authUser ? "閲覧者" : "";
@@ -547,12 +546,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       setActiveView("schedule");
     }
   };
-  const [materialFormError, setMaterialFormError] = useState<string | null>(null);
-  const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null);
-  const [editingMaterialName, setEditingMaterialName] = useState("");
-  const [editingMaterialUnit, setEditingMaterialUnit] = useState<RecipeUnit>(DEFAULT_MATERIAL_UNIT);
-  const [isMaterialModalOpen, setIsMaterialModalOpen] = useState(false);
-  const [materialModalMode, setMaterialModalMode] = useState<"create" | "edit">("create");
+  const [materialDialogState, setMaterialDialogState] = useState<{
+    open: boolean;
+    editingMaterialId: string | null;
+  }>({
+    open: false,
+    editingMaterialId: null,
+  });
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -2394,99 +2394,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
   };
 
-  const resetMaterialDrafts = () => {
-    setMaterialNameDraft("");
-    setMaterialUnitDraft(DEFAULT_MATERIAL_UNIT);
-  };
-
-  const openCreateMaterialModal = () => {
-    setMaterialModalMode("create");
-    resetMaterialDrafts();
-    setMaterialFormError(null);
-    setIsMaterialModalOpen(true);
-  };
-
-  const onCreateMaterial = () => {
-    const name = materialNameDraft.trim();
-    if (!name) {
-      setMaterialFormError("原料名を入力してください。");
-      return false;
-    }
-    if (materialsMaster.some((m) => m.name === name)) {
-      setMaterialFormError("同じ原料名がすでに登録されています。");
-      return false;
-    }
-    const newMaterial: Material = {
-      id: uid("mat"),
-      name,
-      unit: materialUnitDraft,
-    };
-    setMaterialsMaster((prev) => [...prev, newMaterial]);
-    resetMaterialDrafts();
-    setMaterialFormError(null);
-    return true;
-  };
-
-  const onStartEditMaterial = (material: Material) => {
-    setEditingMaterialId(material.id);
-    setEditingMaterialName(material.name);
-    setEditingMaterialUnit(material.unit);
-    setMaterialFormError(null);
-  };
-
-  const onCancelEditMaterial = () => {
-    setEditingMaterialId(null);
-    setEditingMaterialName("");
-    setEditingMaterialUnit(DEFAULT_MATERIAL_UNIT);
-    setMaterialFormError(null);
-  };
-
-  const onSaveEditMaterial = () => {
-    if (!editingMaterialId) return;
-    const nextName = editingMaterialName.trim();
-    if (!nextName) {
-      setMaterialFormError("原料名を入力してください。");
-      return false;
-    }
-    if (materialsMaster.some((m) => m.name === nextName && m.id !== editingMaterialId)) {
-      setMaterialFormError("同じ原料名がすでに登録されています。");
-      return false;
-    }
-    setMaterialsMaster((prev) =>
-      prev.map((m) =>
-        m.id === editingMaterialId
-          ? {
-              ...m,
-              name: nextName,
-              unit: editingMaterialUnit,
-            }
-          : m
-      )
-    );
-    setMaterialFormError(null);
-    onCancelEditMaterial();
-    return true;
-  };
-
-  const onDeleteMaterial = (materialId: string) => {
-    const target = materialsMaster.find((m) => m.id === materialId);
-    if (!target) return false;
-    const confirmed = window.confirm(`${target.name} を削除しますか？`);
-    if (!confirmed) return false;
-    setMaterialsMaster((prev) => prev.filter((m) => m.id !== materialId));
-    setItems((prev) =>
-      prev.map((item) => ({
-        ...item,
-        recipe: item.recipe.filter((line) => line.materialId !== materialId),
-      }))
-    );
-    setRecipeDraft((prev) => prev.filter((line) => line.materialId !== materialId));
-    if (editingMaterialId === materialId) {
-      onCancelEditMaterial();
-    }
-    return true;
-  };
-
   const openEditItemModal = (item: Item) => {
     setItemModalMode("edit");
     onStartEditItem(item);
@@ -2505,22 +2412,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
   };
 
-  const openEditMaterialModal = (material: Material) => {
-    setMaterialModalMode("edit");
-    onStartEditMaterial(material);
-    setIsMaterialModalOpen(true);
-  };
-
-  const handleMaterialModalOpenChange = (open: boolean) => {
-    setIsMaterialModalOpen(open);
-    if (!open) {
-      setMaterialFormError(null);
-      if (materialModalMode === "edit") {
-        onCancelEditMaterial();
-      } else {
-        resetMaterialDrafts();
-      }
-    }
+  const handleMaterialDialogOpenChange = (open: boolean) => {
+    setMaterialDialogState((prev) => ({
+      open,
+      editingMaterialId: open ? prev.editingMaterialId : null,
+    }));
   };
 
   const eodStockByItem = useMemo(() => {
@@ -2629,7 +2525,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }px, rgba(148, 163, 184, 0.4) ${colW - 1}px, rgba(148, 163, 184, 0.4) ${colW}px)`;
 
   const isItemEditMode = itemModalMode === "edit";
-  const isMaterialEditMode = materialModalMode === "edit";
+  const materialDialogMode: "create" | "edit" = materialDialogState.editingMaterialId ? "edit" : "create";
   const itemEfficiencyUnit = isItemEditMode ? editingItemUnit : itemUnitDraft;
 
   const handleItemModalSave = () => {
@@ -2639,11 +2535,34 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
   };
 
-  const handleMaterialModalSave = () => {
-    const didSave = isMaterialEditMode ? onSaveEditMaterial() : onCreateMaterial();
-    if (didSave) {
-      setIsMaterialModalOpen(false);
+  const handleMaterialSave = (payload: {
+    mode: "create" | "edit";
+    materialId?: string;
+    name: string;
+    unit: RecipeUnit;
+  }) => {
+    if (payload.mode === "create") {
+      const newMaterial: Material = {
+        id: uid("mat"),
+        name: payload.name,
+        unit: payload.unit,
+      };
+      setMaterialsMaster((prev) => [...prev, newMaterial]);
+      return true;
     }
+    if (!payload.materialId) return false;
+    setMaterialsMaster((prev) =>
+      prev.map((material) =>
+        material.id === payload.materialId
+          ? {
+              ...material,
+              name: payload.name,
+              unit: payload.unit,
+            }
+          : material
+      )
+    );
+    return true;
   };
 
   const scheduleHeader = (
@@ -3375,7 +3294,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         <Card className="rounded-2xl">
           <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
             <CardTitle className="text-base font-medium">原料一覧</CardTitle>
-            <Button onClick={openCreateMaterialModal} disabled={!canEdit}>
+            <Button
+              onClick={() =>
+                setMaterialDialogState({
+                  open: true,
+                  editingMaterialId: null,
+                })
+              }
+              disabled={!canEdit}
+            >
               原料を追加
             </Button>
           </CardHeader>
@@ -3399,7 +3326,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                         <td className="px-3 py-2 text-muted-foreground">{material.unit}</td>
                         <td className="px-3 py-2">
                           <div className="flex justify-end gap-2">
-                            <Button variant="outline" onClick={() => openEditMaterialModal(material)} disabled={!canEdit}>
+                            <Button
+                              variant="outline"
+                              onClick={() =>
+                                setMaterialDialogState({
+                                  open: true,
+                                  editingMaterialId: material.id,
+                                })
+                              }
+                              disabled={!canEdit}
+                            >
                               編集
                             </Button>
                           </div>
@@ -4282,84 +4218,22 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         </Dialog>
 
         {/* 原料マスタモーダル */}
-        <Dialog open={isMaterialModalOpen} onOpenChange={handleMaterialModalOpenChange}>
-          <DialogContent className={modalWideClassName}>
-            <DialogHeader>
-              <DialogTitle>{isMaterialEditMode ? "原料を編集" : "原料を追加"}</DialogTitle>
-            </DialogHeader>
-
-            <div className={modalBodyClassName}>
-              <div className="rounded-xl border bg-white p-4 shadow-sm">
-                <div className="grid gap-3 md:grid-cols-[180px_1fr] md:items-center">
-                  <div className="text-sm font-medium text-muted-foreground">原料名</div>
-                  <Input
-                    value={isMaterialEditMode ? editingMaterialName : materialNameDraft}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (isMaterialEditMode) {
-                        setEditingMaterialName(next);
-                      } else {
-                        setMaterialNameDraft(next);
-                      }
-                      setMaterialFormError(null);
-                    }}
-                    placeholder="原料名"
-                  />
-                  <div className="text-sm font-medium text-muted-foreground">単位</div>
-                  <Select
-                    value={isMaterialEditMode ? editingMaterialUnit : materialUnitDraft}
-                    onValueChange={(value) => {
-                      if (isMaterialEditMode) {
-                        setEditingMaterialUnit(value as RecipeUnit);
-                      } else {
-                        setMaterialUnitDraft(value as RecipeUnit);
-                      }
-                      setMaterialFormError(null);
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="単位" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ITEM_UNITS.map((unit) => (
-                        <SelectItem key={unit} value={unit}>
-                          {unit}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {materialFormError ? <div className="mt-4 text-sm text-destructive">{materialFormError}</div> : null}
-              </div>
-            </div>
-
-            <DialogFooter className="flex flex-wrap items-center justify-between gap-2">
-              <Button variant="outline" onClick={() => handleMaterialModalOpenChange(false)}>
-                キャンセル
-              </Button>
-              <div className="flex flex-wrap items-center gap-2">
-                {isMaterialEditMode ? (
-                  <Button
-                    variant="destructive"
-                    onClick={() => {
-                      if (!editingMaterialId) return;
-                      const didDelete = onDeleteMaterial(editingMaterialId);
-                      if (didDelete) {
-                        setIsMaterialModalOpen(false);
-                      }
-                    }}
-                    disabled={!canEdit}
-                  >
-                    削除
-                  </Button>
-                ) : null}
-                <Button onClick={handleMaterialModalSave} disabled={!canEdit}>
-                  {isMaterialEditMode ? "保存" : "追加"}
-                </Button>
-              </div>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <MaterialDialog
+          dialogModel={{
+            open: materialDialogState.open,
+            mode: materialDialogMode,
+            editingMaterialId: materialDialogState.editingMaterialId,
+            materialsMaster,
+            setMaterialsMaster,
+            setItems,
+            setRecipeDraft,
+            modalWideClassName,
+            modalBodyClassName,
+            canEdit,
+          }}
+          onOpenChange={handleMaterialDialogOpenChange}
+          onSave={handleMaterialSave}
+        />
 
         {/* レシピ設定モーダル */}
         <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
