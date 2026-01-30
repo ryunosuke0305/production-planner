@@ -18,7 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { SearchableCombobox } from "@/components/ui/searchable-combobox";
 import {
   ItemDialog,
@@ -26,6 +25,7 @@ import {
 } from "@/features/manufacturing/components/dialogs/ItemDialog";
 import { MaterialDialog } from "@/features/manufacturing/components/dialogs/MaterialDialog";
 import { UserDialog } from "@/features/manufacturing/components/dialogs/UserDialog";
+import { ManufacturingPlanLayout } from "@/features/manufacturing/components/layout/ManufacturingPlanLayout";
 import { ImportView } from "@/features/manufacturing/views/ImportView";
 import { InventoryView } from "@/features/manufacturing/views/InventoryView";
 import { LoginView } from "@/features/manufacturing/views/LoginView";
@@ -2699,6 +2699,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const viewLabel = activeView === "master" ? masterViewLabelMap[masterSection] : viewLabelMap[activeView];
+  const handleViewSelect = (view: "schedule" | "inventory" | "master" | "import" | "manual") => {
+    setActiveView(view);
+    setNavOpen(false);
+  };
+  const handleMasterHomeSelect = () => {
+    setActiveView("master");
+    setMasterSection("home");
+    setNavOpen(false);
+  };
 
   if (authLoading) {
     return (
@@ -2724,289 +2733,182 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div
-        className={`fixed inset-0 z-[70] bg-black/30 transition ${
-          navOpen ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-        onClick={() => setNavOpen(false)}
-      />
-      <aside
-        className={`fixed left-0 top-0 z-[80] h-full w-64 border-r bg-background shadow-sm transition-transform ${
-          navOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
-        <div className="flex h-full flex-col gap-4 p-4">
-          <div className="flex items-center justify-between">
-            <div className="text-lg font-semibold">メニュー</div>
-            <button
-              type="button"
-              className="rounded-md border px-2 py-1 text-sm"
-              onClick={() => setNavOpen(false)}
-            >
-              閉じる
-            </button>
-          </div>
-          <nav className="space-y-1">
-            <button
-              type="button"
-              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
-                activeView === "schedule" ? "bg-muted font-semibold" : "hover:bg-muted/50"
-              }`}
-              onClick={() => {
-                setActiveView("schedule");
-                setNavOpen(false);
-              }}
-            >
-              スケジュール
-            </button>
-            <button
-              type="button"
-              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
-                activeView === "inventory" ? "bg-muted font-semibold" : "hover:bg-muted/50"
-              }`}
-              onClick={() => {
-                setActiveView("inventory");
-                setNavOpen(false);
-              }}
-            >
-              在庫データ
-            </button>
-            <button
-              type="button"
-              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
-                activeView === "import" ? "bg-muted font-semibold" : "hover:bg-muted/50"
-              }`}
-              onClick={() => {
-                setActiveView("import");
-                setNavOpen(false);
-              }}
-            >
-              Excel取り込み
-            </button>
-            <button
-              type="button"
-              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
-                activeView === "master" ? "bg-muted font-semibold" : "hover:bg-muted/50"
-              }`}
-              onClick={() => {
-                setActiveView("master");
-                setMasterSection("home");
-                setNavOpen(false);
-              }}
-            >
-              マスタ管理
-            </button>
-            <button
-              type="button"
-              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
-                activeView === "manual" ? "bg-muted font-semibold" : "hover:bg-muted/50"
-              }`}
-              onClick={() => {
-                setActiveView("manual");
-                setNavOpen(false);
-              }}
-            >
-              マニュアル
-            </button>
-          </nav>
+    <ManufacturingPlanLayout
+      navOpen={navOpen}
+      onToggleNav={() => setNavOpen((prev) => !prev)}
+      onCloseNav={() => setNavOpen(false)}
+      activeView={activeView}
+      viewLabel={viewLabel}
+      authUser={authUser}
+      authRoleLabel={authRoleLabel}
+      canEdit={canEdit}
+      onLogout={() => void handleLogout()}
+      onSelectView={handleViewSelect}
+      onSelectMasterHome={handleMasterHomeSelect}
+    >
+      {!canEdit ? (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          閲覧専用ユーザーのため、編集内容は保存されません。
         </div>
-      </aside>
-
-      <div className="min-h-screen">
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b bg-background/95 px-4 py-3 shadow-sm backdrop-blur">
-          <button
-            type="button"
-            className="rounded-md border p-2 hover:bg-muted"
-            onClick={() => setNavOpen((prev) => !prev)}
-            aria-label="メニューを開く"
-          >
-            <span className="block h-0.5 w-5 bg-foreground" />
-            <span className="mt-1 block h-0.5 w-5 bg-foreground" />
-            <span className="mt-1 block h-0.5 w-5 bg-foreground" />
-          </button>
-          <div>
-            <div className="text-sm text-muted-foreground">画面</div>
-            <div className="text-base font-semibold">{viewLabel}</div>
-          </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span className="text-sm text-foreground">{authUser.name}</span>
-            <span>({authRoleLabel})</span>
-            {!canEdit ? <Badge variant="outline">閲覧専用</Badge> : null}
-            <Button variant="outline" size="sm" onClick={() => void handleLogout()}>
-              ログアウト
-            </Button>
-          </div>
-        </header>
-
-        <main className="p-4">
-          {!canEdit ? (
-            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              閲覧専用ユーザーのため、編集内容は保存されません。
-            </div>
-          ) : null}
-          {activeView === "schedule"
+      ) : null}
+      {activeView === "schedule"
+        ? (
+            <ScheduleView
+              scheduleHeader={scheduleHeader}
+              scheduleCard={scheduleCard}
+              chatMessages={chatMessages}
+              chatBusy={chatBusy}
+              chatError={chatError}
+              chatInput={chatInput}
+              onChatInputChange={setChatInput}
+              onSendChatMessage={() => void sendChatMessage()}
+              onOpenConstraints={openConstraintsDialog}
+              canEdit={canEdit}
+              chatScrollRef={chatScrollRef}
+              constraintsOpen={constraintsOpen}
+              onConstraintsOpenChange={setConstraintsOpen}
+              onSaveConstraints={() => void saveConstraints()}
+              constraintsDialogModel={constraintsDialogModel}
+              constraintsDialogActions={constraintsDialogActions}
+              modalBodyClassName={modalBodyClassName}
+              modalWideClassName={modalWideClassName}
+              blockDetailDialogModel={blockDetailDialogModel}
+              blockDetailDialogActions={blockDetailDialogActions}
+              onPlanOpenChange={handlePlanOpenChange}
+              onPlanSave={onPlanSave}
+            />
+          )
+        : activeView === "inventory"
+          ? (
+              <InventoryView
+                inventoryItems={inventoryItems}
+                inventoryDates={inventoryDates}
+                dailyStocks={dailyStocks}
+                dailyStockEntryMap={dailyStockEntryMap}
+              />
+            )
+          : activeView === "master"
             ? (
-                <ScheduleView
-                  scheduleHeader={scheduleHeader}
-                  scheduleCard={scheduleCard}
-                  chatMessages={chatMessages}
-                  chatBusy={chatBusy}
-                  chatError={chatError}
-                  chatInput={chatInput}
-                  onChatInputChange={setChatInput}
-                  onSendChatMessage={() => void sendChatMessage()}
-                  onOpenConstraints={openConstraintsDialog}
+                <MasterView
+                  masterSection={masterSection}
+                  onMasterSectionChange={setMasterSection}
+                  items={items}
+                  materialsMaster={materialsMaster}
+                  managedUsers={managedUsers}
+                  managedUsersNote={managedUsersNote}
+                  managedUsersLoading={managedUsersLoading}
+                  managedUsersError={managedUsersError}
                   canEdit={canEdit}
-                  chatScrollRef={chatScrollRef}
-                  constraintsOpen={constraintsOpen}
-                  onConstraintsOpenChange={setConstraintsOpen}
-                  onSaveConstraints={() => void saveConstraints()}
-                  constraintsDialogModel={constraintsDialogModel}
-                  constraintsDialogActions={constraintsDialogActions}
-                  modalBodyClassName={modalBodyClassName}
-                  modalWideClassName={modalWideClassName}
-                  blockDetailDialogModel={blockDetailDialogModel}
-                  blockDetailDialogActions={blockDetailDialogActions}
-                  onPlanOpenChange={handlePlanOpenChange}
-                  onPlanSave={onPlanSave}
+                  applySafetyStockForTargets={applySafetyStockForTargets}
+                  openCreateItemModal={openCreateItemModal}
+                  applySafetyStockForItem={applySafetyStockForItem}
+                  openRecipeEdit={openRecipeEdit}
+                  openEditItemModal={openEditItemModal}
+                  openCreateMaterialModal={openCreateMaterialModal}
+                  openEditMaterialModal={openEditMaterialModal}
+                  openCreateManagedUserModal={openCreateManagedUserModal}
+                  openEditManagedUserModal={openEditManagedUserModal}
+                  onDeleteManagedUser={handleDeleteManagedUser}
                 />
               )
-            : activeView === "inventory"
+            : activeView === "import"
               ? (
-                  <InventoryView
-                    inventoryItems={inventoryItems}
-                    inventoryDates={inventoryDates}
+                  <ImportView
+                    exportDailyStockCsv={exportDailyStockCsv}
                     dailyStocks={dailyStocks}
-                    dailyStockEntryMap={dailyStockEntryMap}
+                    dailyStockUpdatedAt={dailyStockUpdatedAt}
+                    dailyStockInputKey={dailyStockInputKey}
+                    canEdit={canEdit}
+                    setDailyStockImportFile={setDailyStockImportFile}
+                    setDailyStockImportNote={setDailyStockImportNote}
+                    setDailyStockImportError={setDailyStockImportError}
+                    dailyStockImportFile={dailyStockImportFile}
+                    handleDailyStockImportClick={handleDailyStockImportClick}
+                    saveImportHeaderOverrides={saveImportHeaderOverrides}
+                    importHeaderSaveBusy={importHeaderSaveBusy}
+                    dailyStockHeaderOverrides={dailyStockHeaderOverrides}
+                    setDailyStockHeaderOverrides={setDailyStockHeaderOverrides}
+                    importHeaderSaveNote={importHeaderSaveNote}
+                    importHeaderSaveError={importHeaderSaveError}
+                    dailyStockImportNote={dailyStockImportNote}
+                    dailyStockImportError={dailyStockImportError}
+                    exportItemMasterCsv={exportItemMasterCsv}
+                    items={items}
+                    itemMasterInputKey={itemMasterInputKey}
+                    setItemMasterImportFile={setItemMasterImportFile}
+                    setItemMasterImportNote={setItemMasterImportNote}
+                    setItemMasterImportError={setItemMasterImportError}
+                    itemMasterImportFile={itemMasterImportFile}
+                    handleItemMasterImportClick={handleItemMasterImportClick}
+                    itemMasterImportNote={itemMasterImportNote}
+                    itemMasterImportError={itemMasterImportError}
+                    exportMaterialMasterCsv={exportMaterialMasterCsv}
+                    materialsMaster={materialsMaster}
+                    materialMasterInputKey={materialMasterInputKey}
+                    setMaterialMasterImportFile={setMaterialMasterImportFile}
+                    setMaterialMasterImportNote={setMaterialMasterImportNote}
+                    setMaterialMasterImportError={setMaterialMasterImportError}
+                    materialMasterImportFile={materialMasterImportFile}
+                    handleMaterialMasterImportClick={handleMaterialMasterImportClick}
+                    materialMasterImportNote={materialMasterImportNote}
+                    materialMasterImportError={materialMasterImportError}
                   />
                 )
-              : activeView === "master"
-                ? (
-                    <MasterView
-                      masterSection={masterSection}
-                      onMasterSectionChange={setMasterSection}
-                      items={items}
-                      materialsMaster={materialsMaster}
-                      managedUsers={managedUsers}
-                      managedUsersNote={managedUsersNote}
-                      managedUsersLoading={managedUsersLoading}
-                      managedUsersError={managedUsersError}
-                      canEdit={canEdit}
-                      applySafetyStockForTargets={applySafetyStockForTargets}
-                      openCreateItemModal={openCreateItemModal}
-                      applySafetyStockForItem={applySafetyStockForItem}
-                      openRecipeEdit={openRecipeEdit}
-                      openEditItemModal={openEditItemModal}
-                      openCreateMaterialModal={openCreateMaterialModal}
-                      openEditMaterialModal={openEditMaterialModal}
-                      openCreateManagedUserModal={openCreateManagedUserModal}
-                      openEditManagedUserModal={openEditManagedUserModal}
-                      onDeleteManagedUser={handleDeleteManagedUser}
-                    />
-                  )
-                : activeView === "import"
-                  ? (
-                      <ImportView
-                        exportDailyStockCsv={exportDailyStockCsv}
-                        dailyStocks={dailyStocks}
-                        dailyStockUpdatedAt={dailyStockUpdatedAt}
-                        dailyStockInputKey={dailyStockInputKey}
-                        canEdit={canEdit}
-                        setDailyStockImportFile={setDailyStockImportFile}
-                        setDailyStockImportNote={setDailyStockImportNote}
-                        setDailyStockImportError={setDailyStockImportError}
-                        dailyStockImportFile={dailyStockImportFile}
-                        handleDailyStockImportClick={handleDailyStockImportClick}
-                        saveImportHeaderOverrides={saveImportHeaderOverrides}
-                        importHeaderSaveBusy={importHeaderSaveBusy}
-                        dailyStockHeaderOverrides={dailyStockHeaderOverrides}
-                        setDailyStockHeaderOverrides={setDailyStockHeaderOverrides}
-                        importHeaderSaveNote={importHeaderSaveNote}
-                        importHeaderSaveError={importHeaderSaveError}
-                        dailyStockImportNote={dailyStockImportNote}
-                        dailyStockImportError={dailyStockImportError}
-                        exportItemMasterCsv={exportItemMasterCsv}
-                        items={items}
-                        itemMasterInputKey={itemMasterInputKey}
-                        setItemMasterImportFile={setItemMasterImportFile}
-                        setItemMasterImportNote={setItemMasterImportNote}
-                        setItemMasterImportError={setItemMasterImportError}
-                        itemMasterImportFile={itemMasterImportFile}
-                        handleItemMasterImportClick={handleItemMasterImportClick}
-                        itemMasterImportNote={itemMasterImportNote}
-                        itemMasterImportError={itemMasterImportError}
-                        exportMaterialMasterCsv={exportMaterialMasterCsv}
-                        materialsMaster={materialsMaster}
-                        materialMasterInputKey={materialMasterInputKey}
-                        setMaterialMasterImportFile={setMaterialMasterImportFile}
-                        setMaterialMasterImportNote={setMaterialMasterImportNote}
-                        setMaterialMasterImportError={setMaterialMasterImportError}
-                        materialMasterImportFile={materialMasterImportFile}
-                        handleMaterialMasterImportClick={handleMaterialMasterImportClick}
-                        materialMasterImportNote={materialMasterImportNote}
-                        materialMasterImportError={materialMasterImportError}
-                      />
-                    )
-                  : (
-                      <ManualView
-                        manualAudience={manualAudience}
-                        onManualAudienceChange={setManualAudience}
-                      />
-                    )}
-        </main>
+              : (
+                  <ManualView manualAudience={manualAudience} onManualAudienceChange={setManualAudience} />
+                )}
 
-        {/* ユーザー管理モーダル */}
-        <UserDialog
-          dialogModel={{
-            open: isUserModalOpen,
-            mode: userModalMode,
-            editingUser,
-            modalWideClassName,
-            modalBodyClassName,
-          }}
-          onOpenChange={(open) => {
-            setIsUserModalOpen(open);
-            if (!open) {
-              setEditingUser(null);
-            }
-          }}
-          onCreate={handleCreateManagedUser}
-          onUpdate={handleUpdateManagedUser}
-        />
+      {/* ユーザー管理モーダル */}
+      <UserDialog
+        dialogModel={{
+          open: isUserModalOpen,
+          mode: userModalMode,
+          editingUser,
+          modalWideClassName,
+          modalBodyClassName,
+        }}
+        onOpenChange={(open) => {
+          setIsUserModalOpen(open);
+          if (!open) {
+            setEditingUser(null);
+          }
+        }}
+        onCreate={handleCreateManagedUser}
+        onUpdate={handleUpdateManagedUser}
+      />
 
-        {/* 品目マスタモーダル */}
-        <ItemDialog
-          dialogModel={{
-            open: itemDialogState.open,
-            mode: itemDialogState.mode,
-            editingItemId: itemDialogState.editingItemId,
-            items,
-            modalWideClassName,
-            modalBodyClassName,
-            canEdit,
-          }}
-          onOpenChange={handleItemDialogOpenChange}
-          onSave={handleItemDialogSave}
-        />
+      {/* 品目マスタモーダル */}
+      <ItemDialog
+        dialogModel={{
+          open: itemDialogState.open,
+          mode: itemDialogState.mode,
+          editingItemId: itemDialogState.editingItemId,
+          items,
+          modalWideClassName,
+          modalBodyClassName,
+          canEdit,
+        }}
+        onOpenChange={handleItemDialogOpenChange}
+        onSave={handleItemDialogSave}
+      />
 
-        {/* 原料マスタモーダル */}
-        <MaterialDialog
-          dialogModel={{
-            open: materialDialogState.open,
-            mode: materialDialogMode,
-            editingMaterialId: materialDialogState.editingMaterialId,
-            materialsMaster,
-            setMaterialsMaster,
-            setItems,
-            setRecipeDraft,
-            modalWideClassName,
-            modalBodyClassName,
-            canEdit,
-          }}
-          onOpenChange={handleMaterialDialogOpenChange}
-          onSave={handleMaterialSave}
-        />
+      {/* 原料マスタモーダル */}
+      <MaterialDialog
+        dialogModel={{
+          open: materialDialogState.open,
+          mode: materialDialogMode,
+          editingMaterialId: materialDialogState.editingMaterialId,
+          materialsMaster,
+          setMaterialsMaster,
+          setItems,
+          setRecipeDraft,
+          modalWideClassName,
+          modalBodyClassName,
+          canEdit,
+        }}
+        onOpenChange={handleMaterialDialogOpenChange}
+        onSave={handleMaterialSave}
+      />
 
         {/* レシピ設定モーダル */}
         <Dialog open={openRecipe} onOpenChange={setOpenRecipe}>
@@ -3135,7 +3037,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
-    </div>
+    </ManufacturingPlanLayout>
   );
 }
