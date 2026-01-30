@@ -3079,6 +3079,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const onPlanDelete = () => {
     if (!canEdit) return;
     if (!activeBlockId) return;
+    const target = blocks.find((b) => b.id === activeBlockId);
+    const targetName = target ? itemMap.get(target.itemId)?.name ?? "ブロック" : "ブロック";
+    const confirmed = window.confirm(`${targetName} のブロックを削除しますか？`);
+    if (!confirmed) return;
     setBlocks((prev) => prev.filter((b) => b.id !== activeBlockId));
     setPendingBlockId(null);
     setActiveBlockId(null);
@@ -3862,16 +3866,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             }}
           >
             {/* ヘッダ（時間） */}
-            <div className="sticky left-0 top-0 z-50 bg-white border-b border-r p-3 font-medium">日付</div>
+            <div className="sticky left-0 top-[72px] z-50 bg-white border-b border-r p-3 font-medium">日付</div>
             {slotHeaderLabels.map((label, idx) => (
               <div
                 key={`hour-${label || "blank"}-${idx}`}
-                className="sticky top-0 z-20 bg-white border-b border-r p-2 text-center text-xs text-muted-foreground"
+                className="sticky top-[72px] z-20 bg-white border-b border-r p-2 text-center text-xs text-muted-foreground"
               >
                 {label || (viewDensity === "day" ? "日" : "")}
               </div>
             ))}
-            <div className="sticky top-0 z-30 bg-white border-b p-3 text-center font-medium">在庫（EOD）</div>
+            <div className="sticky top-[72px] z-30 bg-white border-b p-3 text-center font-medium">在庫（EOD）</div>
 
             {/* 行（日付） */}
             {weekDates.map((date, dayIdx) => {
@@ -5502,20 +5506,24 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     <span className="text-xs text-muted-foreground">{itemEfficiencyUnit}/人時</span>
                   </div>
                   <div className="text-sm font-medium text-muted-foreground">包装効率</div>
-                  <Input
-                    inputMode="decimal"
-                    value={isItemEditMode ? editingItemPackagingEfficiency : itemPackagingEfficiencyDraft}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (isItemEditMode) {
-                        setEditingItemPackagingEfficiency(next);
-                      } else {
-                        setItemPackagingEfficiencyDraft(next);
-                      }
-                      setItemFormError(null);
-                    }}
-                    placeholder="例: 0.95"
-                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      className="flex-1"
+                      inputMode="decimal"
+                      value={isItemEditMode ? editingItemPackagingEfficiency : itemPackagingEfficiencyDraft}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (isItemEditMode) {
+                          setEditingItemPackagingEfficiency(next);
+                        } else {
+                          setItemPackagingEfficiencyDraft(next);
+                        }
+                        setItemFormError(null);
+                      }}
+                      placeholder="1人1時間あたりの包装数量"
+                    />
+                    <span className="text-xs text-muted-foreground">{itemEfficiencyUnit}/人時</span>
+                  </div>
                   <div className="text-sm font-medium text-muted-foreground">備考</div>
                   <Textarea
                     value={isItemEditMode ? editingItemNotes : itemNotesDraft}
