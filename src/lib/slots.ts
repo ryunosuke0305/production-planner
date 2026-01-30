@@ -1,6 +1,6 @@
 import { BASE_SLOTS_PER_DAY } from "@/constants/planning";
 import { buildCalendarHours } from "@/lib/calendar";
-import { toMD, toISODate } from "@/lib/datetime";
+import { parseISODateTimeJST, toMD, toISODate } from "@/lib/datetime";
 import type { CalendarDay, CalendarSlots, Density, PlanSnapshot } from "@/types/planning";
 
 export function buildCalendarSlots(calendarDays: CalendarDay[], density: Density): CalendarSlots {
@@ -99,8 +99,8 @@ export function slotToDateTime(
   const day = calendarDays[dayIdx];
   const hour = rawHoursByDay[dayIdx]?.[slotIdx];
   if (!day || hour === undefined) return null;
-  const date = new Date(`${day.date}T${String(hour).padStart(2, "0")}:00:00`);
-  return Number.isNaN(date.getTime()) ? null : date;
+  const date = parseISODateTimeJST(day.date, hour);
+  return date ?? null;
 }
 
 export function slotBoundaryToDateTime(
@@ -117,8 +117,8 @@ export function slotBoundaryToDateTime(
   if (slotIdx > dayHours.length) return null;
   const hour = slotIdx === dayHours.length ? day.workEndHour : dayHours[slotIdx];
   if (hour === undefined) return null;
-  const date = new Date(`${day.date}T${String(hour).padStart(2, "0")}:00:00`);
-  return Number.isNaN(date.getTime()) ? null : date;
+  const date = parseISODateTimeJST(day.date, hour);
+  return date ?? null;
 }
 
 export function slotIndexFromDateTime(
