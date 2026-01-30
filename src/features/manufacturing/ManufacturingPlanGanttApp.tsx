@@ -1,12 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import * as XLSX from "xlsx";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -23,14 +20,18 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { SearchableCombobox } from "@/components/ui/searchable-combobox";
-import { ConditionsDialog } from "@/features/manufacturing/components/dialogs/ConditionsDialog";
-import { BlockDetailDialog } from "@/features/manufacturing/components/dialogs/BlockDetailDialog";
 import {
   ItemDialog,
   type ItemDialogCommitPayload,
 } from "@/features/manufacturing/components/dialogs/ItemDialog";
 import { MaterialDialog } from "@/features/manufacturing/components/dialogs/MaterialDialog";
 import { UserDialog } from "@/features/manufacturing/components/dialogs/UserDialog";
+import { ImportView } from "@/features/manufacturing/views/ImportView";
+import { InventoryView } from "@/features/manufacturing/views/InventoryView";
+import { LoginView } from "@/features/manufacturing/views/LoginView";
+import { ManualView } from "@/features/manufacturing/views/ManualView";
+import { MasterView } from "@/features/manufacturing/views/MasterView";
+import { ScheduleView } from "@/features/manufacturing/views/ScheduleView";
 import {
   DAILY_STOCK_EXPORT_HEADERS,
   DAILY_STOCK_HEADERS,
@@ -51,12 +52,11 @@ import {
   SAMPLE_ITEMS,
   SAMPLE_MATERIALS,
 } from "@/constants/planning";
-import { InfoTooltip } from "@/features/manufacturing/components/InfoTooltip";
 import { buildCalendarDays, buildDefaultCalendarDays, extendCalendarDaysTo } from "@/lib/calendar";
 import { toISODate, addDays, diffDays, getDefaultWeekStart, parseISODateJST, toMD, toWeekday } from "@/lib/datetime";
 import { downloadCsvFile, downloadTextFile } from "@/lib/export/csv";
 import { buildExportPayload } from "@/lib/export/payload";
-import { calcMaterials, durationLabel, formatQuantity, formatUpdatedAt, itemCodeKey } from "@/lib/format";
+import { calcMaterials, durationLabel, itemCodeKey } from "@/lib/format";
 import {
   buildCalendarSlots,
   buildPlanSnapshot,
@@ -114,8 +114,6 @@ import type {
   RecipeLine,
   RecipeUnit,
 } from "@/types/planning";
-import manualAdmin from "../../../data/manual-admin.md?raw";
-import manualUser from "../../../data/manual-user.md?raw";
 
 /**
  * 製造計画ガントチャート（D&D + リサイズ + レシピ編集 + 日区切り強調 + 日次在庫 + JSONエクスポート）
@@ -2664,843 +2662,26 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     </Card>
   );
 
-  const scheduleView = (
-    <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[auto_1fr] lg:items-start lg:gap-4">
-      <div className="min-w-0 lg:col-start-1 lg:row-start-1">{scheduleHeader}</div>
-      <div className="min-w-0 lg:col-start-1 lg:row-start-2">{scheduleCard}</div>
-
-      <div className="w-full shrink-0 lg:col-start-2 lg:row-start-2">
-        <Card className="flex flex-col rounded-2xl shadow-sm lg:h-[calc(100vh-12rem)]">
-          <CardHeader className="flex min-h-[56px] items-center pb-2">
-            <div className="flex w-full items-center justify-between gap-2">
-              <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setConstraintsDraft(constraintsText);
-                  setGeminiHorizonDaysDraft(String(geminiHorizonDays));
-                  setConstraintsError(null);
-                  setConstraintsOpen(true);
-                }}
-                disabled={!canEdit}
-              >
-                条件設定
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-            {chatError ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
-                {chatError}
-              </div>
-            ) : null}
-            <div ref={chatScrollRef} className="flex-1 space-y-2 overflow-y-auto rounded-md border bg-background p-2">
-              {chatMessages.map((msg) => (
-                <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div
-                    className={
-                      "max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm " +
-                      (msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted")
-                    }
-                  >
-                    {msg.content}
-                  </div>
-                </div>
-              ))}
-              {chatBusy ? (
-                <div className="flex justify-start">
-                  <div className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">送信中...</div>
-                </div>
-              ) : null}
-            </div>
-            <div className="space-y-2">
-              <Textarea
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    void sendChatMessage();
-                  }
-                }}
-                placeholder="例：品目コード A を 9/12 10:00から2時間、40ケース 追加して"
-                rows={3}
-                disabled={!canEdit}
-              />
-              <div className="flex items-center justify-between">
-                <div className="text-xs text-muted-foreground">Ctrl+Enter / Cmd+Enter で送信</div>
-                <Button onClick={() => void sendChatMessage()} disabled={chatBusy || !canEdit}>
-                  送信
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <ConditionsDialog
-          open={constraintsOpen}
-          onOpenChange={setConstraintsOpen}
-          onSave={() => void saveConstraints()}
-          dialogModel={constraintsDialogModel}
-          dialogActions={constraintsDialogActions}
-          modalBodyClassName={modalBodyClassName}
-          modalWideClassName={modalWideClassName}
-        />
-      </div>
-      {/* 計画編集モーダル */}
-      <BlockDetailDialog
-        dialogModel={blockDetailDialogModel}
-        dialogActions={blockDetailDialogActions}
-        onOpenChange={handlePlanOpenChange}
-        onSave={onPlanSave}
-      />
-    </div>
-  );
-
-  const inventoryView = (
-    <div className="mx-auto w-full max-w-6xl space-y-4">
-      <div className="space-y-1">
-        <div className="text-2xl font-semibold tracking-tight">在庫データ</div>
-        <div className="text-sm text-muted-foreground">
-          現在取り込まれている日別在庫を、品目×日付の一覧で確認できます。
-        </div>
-      </div>
-      <Card className="rounded-2xl shadow-sm">
-        <CardHeader className="space-y-1 pb-2">
-          <CardTitle className="text-base font-medium">日別在庫一覧</CardTitle>
-          <div className="text-xs text-muted-foreground">
-            品目数: {inventoryItems.length}件 / 日付数: {inventoryDates.length}日
-          </div>
-        </CardHeader>
-        <CardContent>
-          {dailyStocks.length === 0 ? (
-            <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              在庫データが未取り込みです。Excel取り込み画面から日別在庫を登録してください。
-            </div>
-          ) : inventoryItems.length === 0 || inventoryDates.length === 0 ? (
-            <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              在庫データの表示対象がありません。品目コードの整合性を確認してください。
-            </div>
-          ) : (
-            <div className="overflow-auto rounded-xl border border-slate-200 bg-white">
-              <table className="min-w-[720px] border-collapse text-sm">
-                <thead className="sticky top-0 z-20 bg-white">
-                  <tr>
-                    <th className="sticky left-0 z-30 border-b border-r bg-white px-3 py-2 text-left font-medium">
-                      品目
-                    </th>
-                    {inventoryDates.map((date) => (
-                      <th
-                        key={date}
-                        className="border-b px-3 py-2 text-center text-xs font-medium text-muted-foreground"
-                      >
-                        {toMD(date)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {inventoryItems.map((item) => {
-                    const entryMap = dailyStockEntryMap.get(item.id);
-                    return (
-                      <tr key={item.id} className="even:bg-muted/30">
-                        <td className="sticky left-0 z-10 border-b border-r bg-white px-3 py-2 align-top">
-                          <div className="font-medium text-slate-800">{item.name}</div>
-                          <div className="text-xs text-muted-foreground">{item.publicId ?? item.id}</div>
-                        </td>
-                        {inventoryDates.map((date) => {
-                          const entry = entryMap?.get(date);
-                          return (
-                            <td key={`${item.id}-${date}`} className="border-b px-3 py-2 align-top">
-                              {entry ? (
-                                <div className="space-y-1 text-right">
-                                  <div className="font-medium">
-                                    {formatQuantity(entry.stock)}
-                                    <span className="ml-1 text-xs text-muted-foreground">{item.unit}</span>
-                                  </div>
-                                  <div className="text-[10px] text-muted-foreground">
-                                    出荷 {formatQuantity(entry.shipped)}
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="text-center text-xs text-muted-foreground">-</div>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  const masterSectionLabelMap: Record<"home" | "items" | "materials" | "users", string> = {
-    home: "マスタ管理",
-    items: "品目一覧",
-    materials: "原料一覧",
-    users: "ユーザー管理",
+  const openConstraintsDialog = () => {
+    setConstraintsDraft(constraintsText);
+    setGeminiHorizonDaysDraft(String(geminiHorizonDays));
+    setConstraintsError(null);
+    setConstraintsOpen(true);
   };
 
-  const masterSectionDescriptionMap: Record<"home" | "items" | "materials" | "users", string> = {
-    home: "品目・原料マスタの登録・編集・削除を行います。",
-    items: "品目の計画方針・安全在庫（自動計算設定）・賞味期限・製造効率・包装効率などを管理します。",
-    materials: "原料の単位と名称を管理します。",
-    users: "ユーザーID・表示名・権限・パスワードを管理します。",
+  const openCreateMaterialModal = () => {
+    setMaterialDialogState({
+      open: true,
+      editingMaterialId: null,
+    });
   };
 
-  const userRoleLabelMap: Record<AuthRole, string> = {
-    admin: "管理者",
-    viewer: "閲覧者",
+  const openEditMaterialModal = (materialId: string) => {
+    setMaterialDialogState({
+      open: true,
+      editingMaterialId: materialId,
+    });
   };
-
-  const masterView = (
-    <div className="mx-auto w-full max-w-5xl space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <div className="text-2xl font-semibold tracking-tight">{masterSectionLabelMap[masterSection]}</div>
-          <div className="text-sm text-muted-foreground">{masterSectionDescriptionMap[masterSection]}</div>
-        </div>
-        {masterSection !== "home" ? (
-          <Button variant="outline" size="sm" onClick={() => setMasterSection("home")}>
-            マスタ管理へ戻る
-          </Button>
-        ) : null}
-      </div>
-
-      {masterSection === "home" ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <Card className="rounded-2xl">
-            <CardHeader className="space-y-2 pb-2">
-              <CardTitle className="text-base font-medium">品目一覧</CardTitle>
-              <div className="text-sm text-muted-foreground">
-                品目マスタの確認・編集やレシピ登録を行います。
-              </div>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm">
-              <div className="text-muted-foreground">登録件数: {items.length}件</div>
-              <Button onClick={() => setMasterSection("items")}>品目一覧を開く</Button>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-2xl">
-            <CardHeader className="space-y-2 pb-2">
-              <CardTitle className="text-base font-medium">原料一覧</CardTitle>
-              <div className="text-sm text-muted-foreground">原料マスタの確認・編集を行います。</div>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm">
-              <div className="text-muted-foreground">登録件数: {materialsMaster.length}件</div>
-              <Button onClick={() => setMasterSection("materials")}>原料一覧を開く</Button>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-2xl">
-            <CardHeader className="space-y-2 pb-2">
-              <CardTitle className="flex items-center gap-2 text-base font-medium">
-                ユーザー管理
-                {!canEdit ? <Badge variant="outline">管理者専用</Badge> : null}
-              </CardTitle>
-              <div className="text-sm text-muted-foreground">
-                ユーザーID・表示名・権限・パスワードを管理します。
-              </div>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm">
-              <div className="text-muted-foreground">登録件数: {managedUsers.length}件</div>
-              <Button onClick={() => setMasterSection("users")} disabled={!canEdit}>
-                ユーザー管理を開く
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      ) : masterSection === "items" ? (
-        <Card className="rounded-2xl">
-          <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
-            <CardTitle className="text-base font-medium">品目一覧</CardTitle>
-            <Button onClick={openCreateItemModal} disabled={!canEdit}>
-              品目を追加
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/10 px-3 py-2 text-xs">
-              <div className="space-y-1">
-                <div className="font-semibold text-slate-700">安全在庫 自動計算</div>
-                <div className="text-muted-foreground">
-                  出荷数の直近N日分 × 係数で安全在庫を算出します。対象は「自動計算」が「対象」の品目のみです。
-                </div>
-              </div>
-              <Button size="sm" onClick={applySafetyStockForTargets} disabled={!canEdit}>
-                対象を一括計算
-              </Button>
-            </div>
-            {items.length ? (
-              <div className="overflow-x-auto rounded-lg border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/30 text-xs text-muted-foreground">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-medium">品目名</th>
-                      <th className="px-3 py-2 text-left font-medium">品目コード</th>
-                      <th className="px-3 py-2 text-center font-medium">単位</th>
-                      <th className="px-3 py-2 text-left font-medium">計画方針</th>
-                      <th className="px-3 py-2 text-center font-medium">自動計算</th>
-                      <th className="px-3 py-2 text-right font-medium">参照日数</th>
-                      <th className="px-3 py-2 text-right font-medium">係数</th>
-                      <th className="px-3 py-2 text-right font-medium">安全在庫</th>
-                      <th className="px-3 py-2 text-right font-medium">賞味期限(日)</th>
-                      <th className="px-3 py-2 text-right font-medium">製造効率</th>
-                      <th className="px-3 py-2 text-right font-medium">包装効率</th>
-                      <th className="px-3 py-2 text-left font-medium">備考</th>
-                      <th className="px-3 py-2 text-right font-medium">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {items.map((item) => (
-                      <tr key={item.id} className="align-middle">
-                        <td className="px-3 py-2">
-                          <div className="font-medium">{item.name}</div>
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground">{item.publicId || "未設定"}</td>
-                        <td className="px-3 py-2 text-center text-muted-foreground">{item.unit}</td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {PLANNING_POLICY_LABELS[item.planningPolicy] ?? item.planningPolicy}
-                        </td>
-                        <td className="px-3 py-2 text-center text-muted-foreground">
-                          {item.safetyStockAutoEnabled ? "対象" : "対象外"}
-                        </td>
-                        <td className="px-3 py-2 text-right text-muted-foreground">{item.safetyStockLookbackDays}</td>
-                        <td className="px-3 py-2 text-right text-muted-foreground">{item.safetyStockCoefficient}</td>
-                        <td className="px-3 py-2 text-right text-muted-foreground">{item.safetyStock}</td>
-                        <td className="px-3 py-2 text-right text-muted-foreground">{item.shelfLifeDays}</td>
-                        <td className="px-3 py-2 text-right text-muted-foreground">
-                          <span>{item.productionEfficiency}</span>
-                          <span className="ml-1 text-xs text-slate-500">{item.unit}/人時</span>
-                        </td>
-                        <td className="px-3 py-2 text-right text-muted-foreground">
-                          <span>{item.packagingEfficiency}</span>
-                          <span className="ml-1 text-xs text-slate-500">{item.unit}/人時</span>
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          <div className="max-w-[200px] truncate">{item.notes || "-"}</div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex justify-end gap-2">
-                            <Button variant="outline" onClick={() => openRecipeEdit(item.id)} disabled={!canEdit}>
-                              レシピ {item.recipe.length}件
-                            </Button>
-                            <Button variant="outline" onClick={() => applySafetyStockForItem(item.id)} disabled={!canEdit}>
-                              安全在庫計算
-                            </Button>
-                            <Button variant="outline" onClick={() => openEditItemModal(item)} disabled={!canEdit}>
-                              編集
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                品目マスタが未登録です。右上の「品目を追加」ボタンから追加してください。
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ) : masterSection === "materials" ? (
-        <Card className="rounded-2xl">
-          <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
-            <CardTitle className="text-base font-medium">原料一覧</CardTitle>
-            <Button
-              onClick={() =>
-                setMaterialDialogState({
-                  open: true,
-                  editingMaterialId: null,
-                })
-              }
-              disabled={!canEdit}
-            >
-              原料を追加
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {materialsMaster.length ? (
-              <div className="overflow-x-auto rounded-lg border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/30 text-xs text-muted-foreground">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-medium">原料名</th>
-                      <th className="px-3 py-2 text-left font-medium">単位</th>
-                      <th className="px-3 py-2 text-right font-medium">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {materialsMaster.map((material) => (
-                      <tr key={material.id}>
-                        <td className="px-3 py-2">
-                          <div className="font-medium">{material.name}</div>
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground">{material.unit}</td>
-                        <td className="px-3 py-2">
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              variant="outline"
-                              onClick={() =>
-                                setMaterialDialogState({
-                                  open: true,
-                                  editingMaterialId: material.id,
-                                })
-                              }
-                              disabled={!canEdit}
-                            >
-                              編集
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                原料マスタが未登録です。右上の「原料を追加」ボタンから追加してください。
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          <Card className="rounded-2xl">
-            <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
-              <CardTitle className="text-base font-medium">ユーザー管理</CardTitle>
-              <Button onClick={openCreateManagedUserModal} disabled={!canEdit}>
-                ユーザーを追加
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4 text-sm">
-              {managedUsersNote ? (
-                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-                  {managedUsersNote}
-                </div>
-              ) : null}
-              {managedUsersLoading ? (
-                <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  読み込み中...
-                </div>
-              ) : managedUsersError ? (
-                <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                  {managedUsersError}
-                </div>
-              ) : managedUsers.length ? (
-                <div className="overflow-x-auto rounded-lg border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/30 text-xs text-muted-foreground">
-                      <tr>
-                        <th className="px-3 py-2 text-left font-medium">ユーザーID</th>
-                        <th className="px-3 py-2 text-left font-medium">表示名</th>
-                        <th className="px-3 py-2 text-left font-medium">権限</th>
-                        <th className="px-3 py-2 text-right font-medium">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {managedUsers.map((user) => (
-                        <tr key={user.id}>
-                          <td className="px-3 py-2 font-medium">{user.id}</td>
-                          <td className="px-3 py-2 text-muted-foreground">{user.name}</td>
-                          <td className="px-3 py-2 text-muted-foreground">{userRoleLabelMap[user.role]}</td>
-                          <td className="px-3 py-2">
-                            <div className="flex justify-end gap-2">
-                              <Button variant="outline" onClick={() => openEditManagedUserModal(user)}>
-                                編集
-                              </Button>
-                              <Button variant="destructive" onClick={() => void handleDeleteManagedUser(user)}>
-                                削除
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  ユーザーが登録されていません。
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-    </div>
-  );
-
-  const importHeaderTooltips = {
-    dailyStock: {
-      date: "在庫を計上する対象日。\n形式: yyyyMMdd または yyyy-MM-dd",
-      itemCode: "在庫を紐づける品目コード。\n形式: 品目マスタの品目コードと一致する文字列",
-      stock: "対象日の在庫数量。\n形式: 数値（小数可）",
-      shipped: "対象日の出荷数量。\n形式: 数値（小数可）",
-    },
-  };
-
-  const importView = (
-    <div className="mx-auto w-full max-w-3xl space-y-4">
-      <div className="space-y-1">
-        <div className="text-2xl font-semibold tracking-tight">Excel取り込み</div>
-        <div className="text-sm text-muted-foreground">
-          日別在庫・各マスタをExcelから取り込みます。
-        </div>
-      </div>
-      <Card className="rounded-2xl shadow-sm">
-        <CardHeader className="pb-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-base font-medium">日別在庫（yyyyMMdd / 品目コード / 在庫数 / 出荷数）</CardTitle>
-            <Button variant="outline" size="sm" onClick={exportDailyStockCsv} disabled={!dailyStocks.length}>
-              CSVエクスポート
-            </Button>
-          </div>
-          <div className="text-xs text-muted-foreground">最終更新: {formatUpdatedAt(dailyStockUpdatedAt)}</div>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm">
-          <Input
-            key={`daily-stock-${dailyStockInputKey}`}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            disabled={!canEdit}
-            onChange={(e) => {
-              const file = e.target.files?.[0] ?? null;
-              setDailyStockImportFile(file);
-              setDailyStockImportNote(null);
-              setDailyStockImportError(null);
-            }}
-          />
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <div>{dailyStockImportFile ? `選択中: ${dailyStockImportFile.name}` : "ファイル未選択"}</div>
-            <Button
-              size="sm"
-              onClick={() => void handleDailyStockImportClick()}
-              disabled={!dailyStockImportFile || !canEdit}
-            >
-              取り込み
-            </Button>
-          </div>
-          <div className="rounded-lg border bg-muted/10 p-3 text-xs">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="space-y-1">
-                <div className="font-semibold text-slate-700">ヘッダー指定（任意）</div>
-                <div className="text-muted-foreground">
-                  カンマ区切りで列名候補を追加できます。入力した候補を優先的に検索します。
-                </div>
-              </div>
-              <Button
-                size="sm"
-                onClick={() => void saveImportHeaderOverrides()}
-                disabled={importHeaderSaveBusy || !canEdit}
-              >
-                設定を保存
-              </Button>
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
-                  日付
-                  <InfoTooltip text={importHeaderTooltips.dailyStock.date} />
-                </div>
-                <Input
-                  value={dailyStockHeaderOverrides.date}
-                  placeholder="例: 取込日, 入荷日"
-                  onChange={(e) =>
-                    setDailyStockHeaderOverrides((prev) => ({
-                      ...prev,
-                      date: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
-                  品目コード
-                  <InfoTooltip text={importHeaderTooltips.dailyStock.itemCode} />
-                </div>
-                <Input
-                  value={dailyStockHeaderOverrides.itemCode}
-                  placeholder="例: 商品コード, SKU"
-                  onChange={(e) =>
-                    setDailyStockHeaderOverrides((prev) => ({
-                      ...prev,
-                      itemCode: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
-                  在庫数
-                  <InfoTooltip text={importHeaderTooltips.dailyStock.stock} />
-                </div>
-                <Input
-                  value={dailyStockHeaderOverrides.stock}
-                  placeholder="例: 在庫数量, 残数"
-                  onChange={(e) =>
-                    setDailyStockHeaderOverrides((prev) => ({
-                      ...prev,
-                      stock: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-slate-600">
-                  出荷数
-                  <InfoTooltip text={importHeaderTooltips.dailyStock.shipped} />
-                </div>
-                <Input
-                  value={dailyStockHeaderOverrides.shipped}
-                  placeholder="例: 出荷数量, 出庫数"
-                  onChange={(e) =>
-                    setDailyStockHeaderOverrides((prev) => ({
-                      ...prev,
-                      shipped: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-            </div>
-            {importHeaderSaveNote ? (
-              <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-                {importHeaderSaveNote}
-              </div>
-            ) : null}
-            {importHeaderSaveError ? (
-              <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                {importHeaderSaveError}
-              </div>
-            ) : null}
-          </div>
-          {dailyStockImportNote ? (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-              {dailyStockImportNote}
-            </div>
-          ) : null}
-          {dailyStockImportError ? (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-              {dailyStockImportError}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-      <Card className="rounded-2xl shadow-sm">
-        <CardHeader className="pb-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-base font-medium">品目マスタ</CardTitle>
-            <Button variant="outline" size="sm" onClick={exportItemMasterCsv} disabled={!items.length}>
-              CSVエクスポート
-            </Button>
-          </div>
-        </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-          <div className="text-xs text-muted-foreground">
-            必須列: 品目コード / 品目名。任意列: 単位 / 計画方針 / 安全在庫 / 安全在庫自動計算 / 安全在庫参照日数 /
-            安全在庫係数 / 賞味期限日数 / 製造効率 / 包装効率 / 備考
-          </div>
-          <div className="text-xs text-muted-foreground">品目コードをキーに上書き・追加します。</div>
-          <Input
-            key={`item-master-${itemMasterInputKey}`}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            disabled={!canEdit}
-            onChange={(e) => {
-              const file = e.target.files?.[0] ?? null;
-              setItemMasterImportFile(file);
-              setItemMasterImportNote(null);
-              setItemMasterImportError(null);
-            }}
-          />
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <div>{itemMasterImportFile ? `選択中: ${itemMasterImportFile.name}` : "ファイル未選択"}</div>
-            <Button
-              size="sm"
-              onClick={() => void handleItemMasterImportClick()}
-              disabled={!itemMasterImportFile || !canEdit}
-            >
-              取り込み
-            </Button>
-          </div>
-          {itemMasterImportNote ? (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-              {itemMasterImportNote}
-            </div>
-          ) : null}
-          {itemMasterImportError ? (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-              {itemMasterImportError}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-      <Card className="rounded-2xl shadow-sm">
-        <CardHeader className="pb-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-base font-medium">原料マスタ</CardTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={exportMaterialMasterCsv}
-              disabled={!materialsMaster.length}
-            >
-              CSVエクスポート
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm">
-          <div className="text-xs text-muted-foreground">必須列: 原料コード / 原料名。任意列: 単位</div>
-          <div className="text-xs text-muted-foreground">原料コードをキーに上書き・追加します。</div>
-          <Input
-            key={`material-master-${materialMasterInputKey}`}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            disabled={!canEdit}
-            onChange={(e) => {
-              const file = e.target.files?.[0] ?? null;
-              setMaterialMasterImportFile(file);
-              setMaterialMasterImportNote(null);
-              setMaterialMasterImportError(null);
-            }}
-          />
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <div>{materialMasterImportFile ? `選択中: ${materialMasterImportFile.name}` : "ファイル未選択"}</div>
-            <Button
-              size="sm"
-              onClick={() => void handleMaterialMasterImportClick()}
-              disabled={!materialMasterImportFile || !canEdit}
-            >
-              取り込み
-            </Button>
-          </div>
-          {materialMasterImportNote ? (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-              {materialMasterImportNote}
-            </div>
-          ) : null}
-          {materialMasterImportError ? (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-              {materialMasterImportError}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  const manualMarkdown = manualAudience === "user" ? manualUser : manualAdmin;
-
-  const manualView = (
-    <div className="mx-auto w-full max-w-4xl space-y-4">
-      <div className="space-y-1">
-        <div className="text-2xl font-semibold tracking-tight">操作マニュアル</div>
-        <div className="text-sm text-muted-foreground">
-          目的別に必要な操作を確認できます。利用対象を切り替えて参照してください。
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant={manualAudience === "user" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setManualAudience("user")}
-        >
-          一般利用者向け
-        </Button>
-        <Button
-          variant={manualAudience === "admin" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setManualAudience("admin")}
-        >
-          システム管理者向け
-        </Button>
-      </div>
-      <Card className="rounded-2xl shadow-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">
-            {manualAudience === "user" ? "一般利用者向けマニュアル" : "システム管理者向けマニュアル"}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm leading-relaxed">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              h1: ({ children }) => <h2 className="text-lg font-semibold text-slate-800">{children}</h2>,
-              h2: ({ children }) => <h3 className="text-base font-semibold text-slate-800">{children}</h3>,
-              h3: ({ children }) => <h4 className="text-sm font-semibold text-slate-700">{children}</h4>,
-              p: ({ children }) => <p className="text-slate-700">{children}</p>,
-              ul: ({ children }) => <ul className="list-disc space-y-1 pl-5 text-slate-700">{children}</ul>,
-              ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5 text-slate-700">{children}</ol>,
-              li: ({ children }) => <li>{children}</li>,
-              strong: ({ children }) => <strong className="font-semibold text-slate-800">{children}</strong>,
-              code: ({ children }) => (
-                <code className="rounded bg-muted px-1 py-0.5 text-[0.85em] text-slate-800">{children}</code>
-              ),
-            }}
-          >
-            {manualMarkdown}
-          </ReactMarkdown>
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  const loginView = (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
-      <Card className="w-full max-w-md rounded-2xl shadow-sm">
-        <CardHeader className="space-y-2 pb-2">
-          <CardTitle className="text-lg">ログイン</CardTitle>
-          <div className="text-sm text-muted-foreground">
-            ユーザーIDとパスワードを入力してアクセスしてください。
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm">
-          <Input
-            value={loginId}
-            placeholder="ユーザーID"
-            onChange={(e) => setLoginId(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                void handleLogin();
-              }
-            }}
-          />
-          <Input
-            type="password"
-            value={loginPassword}
-            placeholder="パスワード"
-            onChange={(e) => setLoginPassword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                void handleLogin();
-              }
-            }}
-          />
-          {(loginError || authError) && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {loginError || authError}
-            </div>
-          )}
-          <Button
-            className="w-full"
-            onClick={() => void handleLogin()}
-            disabled={loginBusy || !loginId || !loginPassword}
-          >
-            {loginBusy ? "ログイン中..." : "ログイン"}
-          </Button>
-        </CardContent>
-      </Card>
-    </div>
-  );
 
   const viewLabelMap: Record<"schedule" | "inventory" | "master" | "import" | "manual", string> = {
     schedule: "スケジュール",
@@ -3528,7 +2709,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }
 
   if (!authUser) {
-    return loginView;
+    return (
+      <LoginView
+        loginId={loginId}
+        loginPassword={loginPassword}
+        loginError={loginError}
+        authError={authError}
+        loginBusy={loginBusy}
+        onLoginIdChange={setLoginId}
+        onLoginPasswordChange={setLoginPassword}
+        onLogin={() => void handleLogin()}
+      />
+    );
   }
 
   return (
@@ -3654,14 +2846,114 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             </div>
           ) : null}
           {activeView === "schedule"
-            ? scheduleView
+            ? (
+                <ScheduleView
+                  scheduleHeader={scheduleHeader}
+                  scheduleCard={scheduleCard}
+                  chatMessages={chatMessages}
+                  chatBusy={chatBusy}
+                  chatError={chatError}
+                  chatInput={chatInput}
+                  onChatInputChange={setChatInput}
+                  onSendChatMessage={() => void sendChatMessage()}
+                  onOpenConstraints={openConstraintsDialog}
+                  canEdit={canEdit}
+                  chatScrollRef={chatScrollRef}
+                  constraintsOpen={constraintsOpen}
+                  onConstraintsOpenChange={setConstraintsOpen}
+                  onSaveConstraints={() => void saveConstraints()}
+                  constraintsDialogModel={constraintsDialogModel}
+                  constraintsDialogActions={constraintsDialogActions}
+                  modalBodyClassName={modalBodyClassName}
+                  modalWideClassName={modalWideClassName}
+                  blockDetailDialogModel={blockDetailDialogModel}
+                  blockDetailDialogActions={blockDetailDialogActions}
+                  onPlanOpenChange={handlePlanOpenChange}
+                  onPlanSave={onPlanSave}
+                />
+              )
             : activeView === "inventory"
-              ? inventoryView
+              ? (
+                  <InventoryView
+                    inventoryItems={inventoryItems}
+                    inventoryDates={inventoryDates}
+                    dailyStocks={dailyStocks}
+                    dailyStockEntryMap={dailyStockEntryMap}
+                  />
+                )
               : activeView === "master"
-                ? masterView
+                ? (
+                    <MasterView
+                      masterSection={masterSection}
+                      onMasterSectionChange={setMasterSection}
+                      items={items}
+                      materialsMaster={materialsMaster}
+                      managedUsers={managedUsers}
+                      managedUsersNote={managedUsersNote}
+                      managedUsersLoading={managedUsersLoading}
+                      managedUsersError={managedUsersError}
+                      canEdit={canEdit}
+                      applySafetyStockForTargets={applySafetyStockForTargets}
+                      openCreateItemModal={openCreateItemModal}
+                      applySafetyStockForItem={applySafetyStockForItem}
+                      openRecipeEdit={openRecipeEdit}
+                      openEditItemModal={openEditItemModal}
+                      openCreateMaterialModal={openCreateMaterialModal}
+                      openEditMaterialModal={openEditMaterialModal}
+                      openCreateManagedUserModal={openCreateManagedUserModal}
+                      openEditManagedUserModal={openEditManagedUserModal}
+                      onDeleteManagedUser={handleDeleteManagedUser}
+                    />
+                  )
                 : activeView === "import"
-                  ? importView
-                  : manualView}
+                  ? (
+                      <ImportView
+                        exportDailyStockCsv={exportDailyStockCsv}
+                        dailyStocks={dailyStocks}
+                        dailyStockUpdatedAt={dailyStockUpdatedAt}
+                        dailyStockInputKey={dailyStockInputKey}
+                        canEdit={canEdit}
+                        setDailyStockImportFile={setDailyStockImportFile}
+                        setDailyStockImportNote={setDailyStockImportNote}
+                        setDailyStockImportError={setDailyStockImportError}
+                        dailyStockImportFile={dailyStockImportFile}
+                        handleDailyStockImportClick={handleDailyStockImportClick}
+                        saveImportHeaderOverrides={saveImportHeaderOverrides}
+                        importHeaderSaveBusy={importHeaderSaveBusy}
+                        dailyStockHeaderOverrides={dailyStockHeaderOverrides}
+                        setDailyStockHeaderOverrides={setDailyStockHeaderOverrides}
+                        importHeaderSaveNote={importHeaderSaveNote}
+                        importHeaderSaveError={importHeaderSaveError}
+                        dailyStockImportNote={dailyStockImportNote}
+                        dailyStockImportError={dailyStockImportError}
+                        exportItemMasterCsv={exportItemMasterCsv}
+                        items={items}
+                        itemMasterInputKey={itemMasterInputKey}
+                        setItemMasterImportFile={setItemMasterImportFile}
+                        setItemMasterImportNote={setItemMasterImportNote}
+                        setItemMasterImportError={setItemMasterImportError}
+                        itemMasterImportFile={itemMasterImportFile}
+                        handleItemMasterImportClick={handleItemMasterImportClick}
+                        itemMasterImportNote={itemMasterImportNote}
+                        itemMasterImportError={itemMasterImportError}
+                        exportMaterialMasterCsv={exportMaterialMasterCsv}
+                        materialsMaster={materialsMaster}
+                        materialMasterInputKey={materialMasterInputKey}
+                        setMaterialMasterImportFile={setMaterialMasterImportFile}
+                        setMaterialMasterImportNote={setMaterialMasterImportNote}
+                        setMaterialMasterImportError={setMaterialMasterImportError}
+                        materialMasterImportFile={materialMasterImportFile}
+                        handleMaterialMasterImportClick={handleMaterialMasterImportClick}
+                        materialMasterImportNote={materialMasterImportNote}
+                        materialMasterImportError={materialMasterImportError}
+                      />
+                    )
+                  : (
+                      <ManualView
+                        manualAudience={manualAudience}
+                        onManualAudienceChange={setManualAudience}
+                      />
+                    )}
         </main>
 
         {/* ユーザー管理モーダル */}
