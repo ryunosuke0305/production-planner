@@ -79,6 +79,43 @@ function parsePlanPayload(raw) {
       if (!id || !name || !unit) return null;
       const planningPolicy = asString(item.planningPolicy || item.planning_policy).trim();
       const safetyStock = asNumber(item.safetyStock ?? item.safety_stock, 0);
+      const safetyStockAutoEnabled = asBoolean(
+        item.safetyStockAutoEnabled ??
+          item.safety_stock_auto_enabled ??
+          item.safetyStockAuto ??
+          item.safety_stock_auto ??
+          item.safetyStockAutoCalc ??
+          item.safety_stock_auto_calc,
+        false
+      );
+      const safetyStockLookbackDays = asNumber(
+        item.safetyStockLookbackDays ??
+          item.safety_stock_lookback_days ??
+          item.safetyStockDays ??
+          item.safety_stock_days ??
+          item.safetyStockRefDays ??
+          item.safety_stock_ref_days,
+        7
+      );
+      const safetyStockCoefficient = asNumber(
+        item.safetyStockCoefficient ??
+          item.safety_stock_coefficient ??
+          item.safetyStockFactor ??
+          item.safety_stock_factor ??
+          item.safetyStockMultiplier ??
+          item.safety_stock_multiplier,
+        1
+      );
+      const shelfLifeDays = asNumber(
+        item.shelfLifeDays ?? item.shelf_life_days ?? item.expirationDays ?? item.expiration_days ?? item.shelfLife,
+        0
+      );
+      const productionEfficiency = asNumber(item.productionEfficiency ?? item.production_efficiency ?? item.efficiency, 0);
+      const packagingEfficiency = asNumber(
+        item.packagingEfficiency ?? item.packaging_efficiency ?? item.packEfficiency ?? item.pack_efficiency,
+        1
+      );
+      const notes = asString(item.notes ?? item.note ?? item.memo ?? item.remark ?? item.remarks);
       const reorderPoint = asNumber(item.reorderPoint ?? item.reorder_point, 0);
       const lotSize = asNumber(item.lotSize ?? item.lot_size, 0);
       const recipe = asArray(item.recipe)
@@ -103,6 +140,13 @@ function parsePlanPayload(raw) {
         stock: asNumber(item.stock, 0),
         planningPolicy: planningPolicy === "make_to_order" ? "make_to_order" : "make_to_stock",
         safetyStock: Math.max(0, safetyStock),
+        safetyStockAutoEnabled,
+        safetyStockLookbackDays: Math.max(0, safetyStockLookbackDays),
+        safetyStockCoefficient: Math.max(0, safetyStockCoefficient),
+        shelfLifeDays: Math.max(0, shelfLifeDays),
+        productionEfficiency: Math.max(0, productionEfficiency),
+        packagingEfficiency: Math.max(0, packagingEfficiency),
+        notes,
         reorderPoint: Math.max(0, reorderPoint),
         lotSize: Math.max(0, lotSize),
         recipe,
