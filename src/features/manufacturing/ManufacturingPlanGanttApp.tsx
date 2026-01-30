@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { SearchableCombobox } from "@/components/ui/searchable-combobox";
+import { ConditionsDialog } from "@/features/manufacturing/components/dialogs/ConditionsDialog";
 import {
   DAILY_STOCK_EXPORT_HEADERS,
   DAILY_STOCK_HEADERS,
@@ -615,6 +616,27 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const modalBodyClassName = "px-6 py-4";
   const modalWideClassName = "max-w-2xl";
+
+  const handleConstraintsDraftChange = (value: string) => {
+    setConstraintsDraft(value);
+  };
+
+  const handleGeminiHorizonDaysDraftChange = (value: string) => {
+    setGeminiHorizonDaysDraft(value);
+  };
+
+  const constraintsDialogModel = {
+    constraintsDraft,
+    geminiHorizonDaysDraft,
+    constraintsError,
+    constraintsBusy,
+    canEdit,
+  };
+
+  const constraintsDialogActions = {
+    onChangeConstraintsDraft: handleConstraintsDraftChange,
+    onChangeGeminiHorizonDaysDraft: handleGeminiHorizonDaysDraftChange,
+  };
 
   const dragStateRef = useRef<DragState | null>(null);
   const suppressClickRef = useRef(false);
@@ -2968,58 +2990,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             </div>
           </CardContent>
         </Card>
-        <Dialog open={constraintsOpen} onOpenChange={setConstraintsOpen}>
-          <DialogContent className={modalWideClassName}>
-            <DialogHeader>
-              <DialogTitle>条件設定</DialogTitle>
-            </DialogHeader>
-            <div className={modalBodyClassName}>
-              <div className="space-y-3">
-                <div className="text-sm text-muted-foreground">
-                  Geminiへ送る追加の制約条件を入力してください。
-                </div>
-                <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="text-sm font-medium">計画データの対象日数</div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Input
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={geminiHorizonDaysDraft}
-                      onChange={(e) => setGeminiHorizonDaysDraft(e.target.value)}
-                      className="w-28"
-                      disabled={!canEdit}
-                    />
-                    <span className="text-sm text-muted-foreground">日先まで</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    今日を起点に、指定日数分の計画データのみをGeminiへ渡します。
-                  </div>
-                </div>
-                <Textarea
-                  value={constraintsDraft}
-                  onChange={(e) => setConstraintsDraft(e.target.value)}
-                  className="min-h-[220px]"
-                  placeholder="例：設備Xは午前のみ稼働、残業は不可、最小ロットは50ケース など"
-                  disabled={!canEdit}
-                />
-                {constraintsError ? (
-                  <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
-                    {constraintsError}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setConstraintsOpen(false)} disabled={constraintsBusy}>
-                キャンセル
-              </Button>
-              <Button onClick={() => void saveConstraints()} disabled={constraintsBusy || !canEdit}>
-                保存
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <ConditionsDialog
+          open={constraintsOpen}
+          onOpenChange={setConstraintsOpen}
+          onSave={() => void saveConstraints()}
+          dialogModel={constraintsDialogModel}
+          dialogActions={constraintsDialogActions}
+          modalBodyClassName={modalBodyClassName}
+          modalWideClassName={modalWideClassName}
+        />
       </div>
       {/* 計画編集モーダル */}
       <Dialog open={openPlan} onOpenChange={handlePlanOpenChange}>
