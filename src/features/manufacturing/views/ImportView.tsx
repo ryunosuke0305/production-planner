@@ -11,7 +11,8 @@ type ImportViewProps = {
   dailyStocks: DailyStockEntry[];
   dailyStockUpdatedAt: string | null;
   dailyStockInputKey: number;
-  canEdit: boolean;
+  canImportDailyStock: boolean;
+  canManageMasters: boolean;
   setDailyStockImportFile: (file: File | null) => void;
   setDailyStockImportNote: (note: string | null) => void;
   setDailyStockImportError: (error: string | null) => void;
@@ -61,7 +62,8 @@ export function ImportView({
   dailyStocks,
   dailyStockUpdatedAt,
   dailyStockInputKey,
-  canEdit,
+  canImportDailyStock,
+  canManageMasters,
   setDailyStockImportFile,
   setDailyStockImportNote,
   setDailyStockImportError,
@@ -117,7 +119,7 @@ export function ImportView({
             key={`daily-stock-${dailyStockInputKey}`}
             type="file"
             accept=".xlsx,.xls,.csv"
-            disabled={!canEdit}
+            disabled={!canImportDailyStock}
             onChange={(event) => {
               const file = event.target.files?.[0] ?? null;
               setDailyStockImportFile(file);
@@ -127,7 +129,11 @@ export function ImportView({
           />
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
             <div>{dailyStockImportFile ? `選択中: ${dailyStockImportFile.name}` : "ファイル未選択"}</div>
-            <Button size="sm" onClick={() => void handleDailyStockImportClick()} disabled={!dailyStockImportFile || !canEdit}>
+            <Button
+              size="sm"
+              onClick={() => void handleDailyStockImportClick()}
+              disabled={!dailyStockImportFile || !canImportDailyStock}
+            >
               取り込み
             </Button>
           </div>
@@ -139,7 +145,11 @@ export function ImportView({
                   カンマ区切りで列名候補を追加できます。入力した候補を優先的に検索します。
                 </div>
               </div>
-              <Button size="sm" onClick={() => void saveImportHeaderOverrides()} disabled={importHeaderSaveBusy || !canEdit}>
+              <Button
+                size="sm"
+                onClick={() => void saveImportHeaderOverrides()}
+                disabled={importHeaderSaveBusy || !canImportDailyStock}
+              >
                 設定を保存
               </Button>
             </div>
@@ -251,7 +261,7 @@ export function ImportView({
             key={`item-master-${itemMasterInputKey}`}
             type="file"
             accept=".xlsx,.xls,.csv"
-            disabled={!canEdit}
+            disabled={!canManageMasters}
             onChange={(event) => {
               const file = event.target.files?.[0] ?? null;
               setItemMasterImportFile(file);
@@ -261,7 +271,11 @@ export function ImportView({
           />
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
             <div>{itemMasterImportFile ? `選択中: ${itemMasterImportFile.name}` : "ファイル未選択"}</div>
-            <Button size="sm" onClick={() => void handleItemMasterImportClick()} disabled={!itemMasterImportFile || !canEdit}>
+            <Button
+              size="sm"
+              onClick={() => void handleItemMasterImportClick()}
+              disabled={!itemMasterImportFile || !canManageMasters}
+            >
               取り込み
             </Button>
           </div>
@@ -293,7 +307,7 @@ export function ImportView({
             key={`material-master-${materialMasterInputKey}`}
             type="file"
             accept=".xlsx,.xls,.csv"
-            disabled={!canEdit}
+            disabled={!canManageMasters}
             onChange={(event) => {
               const file = event.target.files?.[0] ?? null;
               setMaterialMasterImportFile(file);
@@ -306,7 +320,7 @@ export function ImportView({
             <Button
               size="sm"
               onClick={() => void handleMaterialMasterImportClick()}
-              disabled={!materialMasterImportFile || !canEdit}
+              disabled={!materialMasterImportFile || !canManageMasters}
             >
               取り込み
             </Button>

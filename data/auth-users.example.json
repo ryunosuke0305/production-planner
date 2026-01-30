@@ -11,6 +11,12 @@
       "name": "閲覧者",
       "role": "viewer",
       "passwordHash": "scrypt$Hp7YhsvYnuEl8b6xgadHGw==$RZvHNKQ6f/g0kNVOuvXvAntXvBWFPjSSe6C5i91eudZ8H0SBjpTf4XY/D0PNtSDOJb+N0f3Ncfmj+aYydb7cDA=="
+    },
+    {
+      "id": "requester",
+      "name": "依頼者",
+      "role": "requester",
+      "passwordHash": "scrypt$zOfHDilQbkibWfUfRPHIjQ==$B7xM99RxVd1pSZmMSEZaDygrGbDy2RwbJVwnhhkIkEBPfbbfUHAchomCAQvyK6CRH9SjetToHxajI6RT3cB+qA=="
     }
   ]
 }

@@ -51,6 +51,7 @@ export type BlockDetailDialogModel = {
   activeManufactureDate: string | null;
   activeExpirationDate: string | null;
   canEdit: boolean;
+  canApprove: boolean;
 };
 
 export type BlockDetailDialogActions = {
@@ -97,10 +98,11 @@ export function BlockDetailDialog({
     activeManufactureDate,
     activeExpirationDate,
     canEdit,
+    canApprove,
   } = dialogModel;
 
   const toggleBlockApproval = () => {
-    if (!canEdit) return;
+    if (!canApprove) return;
     if (!activeBlock) return;
     dialogActions.setFormApproved((prev) => !prev);
   };
@@ -231,7 +233,7 @@ export function BlockDetailDialog({
                       >
                         {formApproved ? "承認済み" : "未承認"}
                       </Badge>
-                      <Button variant="outline" size="sm" onClick={toggleBlockApproval} disabled={!canEdit}>
+                      <Button variant="outline" size="sm" onClick={toggleBlockApproval} disabled={!canApprove}>
                         {formApproved ? "未承認に戻す" : "承認する"}
                       </Button>
                     </div>

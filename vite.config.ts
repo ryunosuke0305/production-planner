@@ -44,7 +44,7 @@ type ChatHistoryMessage = {
   createdAt?: string;
 };
 
-type AuthRole = "admin" | "viewer";
+type AuthRole = "admin" | "requester" | "viewer";
 
 type AuthUser = {
   id: string;
@@ -169,7 +169,8 @@ const hashPassword = async (password: string) => {
   return `scrypt$${salt.toString("base64")}$${digest.toString("base64")}`;
 };
 
-const isAuthRole = (value: string): value is AuthRole => value === "admin" || value === "viewer";
+const isAuthRole = (value: string): value is AuthRole =>
+  value === "admin" || value === "requester" || value === "viewer";
 
 const base64UrlEncode = (value: string | Buffer) => Buffer.from(value).toString("base64url");
 
@@ -644,10 +645,17 @@ const createAuthGuardMiddleware = (jwtSecret: string) => {
     const session = await ensureAuthSession(req, res, jwtSecret);
     if (!session) return;
     if (isWriteMethod(req.method) && session.role !== "admin") {
-      res.statusCode = 403;
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ error: "Forbidden" }));
-      return;
+      const canRequesterWrite =
+        session.role === "requester" &&
+        (req.url.startsWith("/api/plan") ||
+          req.url.startsWith("/api/daily-stocks") ||
+          req.url.startsWith("/api/import-headers"));
+      if (!canRequesterWrite) {
+        res.statusCode = 403;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "Forbidden" }));
+        return;
+      }
     }
     next();
   };

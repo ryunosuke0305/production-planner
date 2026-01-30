@@ -82,13 +82,15 @@ cp data/auth-users.example.json data/auth-users.json
 {
   "users": [
     { "id": "admin", "name": "管理者", "role": "admin", "passwordHash": "scrypt$..." },
+    { "id": "requester", "name": "依頼者", "role": "requester", "passwordHash": "scrypt$..." },
     { "id": "viewer", "name": "閲覧者", "role": "viewer", "passwordHash": "scrypt$..." }
   ]
 }
 ```
 
-- `role` は `admin`（編集可）または `viewer`（閲覧専用）。
-- `viewer` はブロックの追加/移動/リサイズ、承認、保存/削除、JSONエクスポートなどの操作が無効化されます。
+- `role` は `admin`（全機能）, `requester`（未承認ブロックの作成/編集/削除 + 日別在庫の取り込み）, `viewer`（閲覧専用）の3種類です。
+- `requester` は承認済みブロックの編集/削除やマスタ管理はできません。
+- `viewer` はブロックの追加/移動/リサイズ、承認、保存/削除、JSONエクスポート、日別在庫の取り込みなどの操作が無効化されます。
 - ログイン後のセッションは `auth_session` Cookie に署名付きJWTとして保存されます（期限付き）。
 - JWT の署名鍵は `AUTH_JWT_SECRET`（例: `data/.env`）で設定してください。
 - 管理者は「マスタ管理 → ユーザー管理」からユーザーの追加・更新・削除が行えます（変更内容は `data/auth-users.json` に保存されます）。

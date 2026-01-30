@@ -142,7 +142,7 @@ export type ChatResponsePayload = {
   actions?: ChatAction[];
 };
 
-export type AuthRole = "admin" | "viewer";
+export type AuthRole = "admin" | "requester" | "viewer";
 
 export type AuthUser = {
   id: string;
