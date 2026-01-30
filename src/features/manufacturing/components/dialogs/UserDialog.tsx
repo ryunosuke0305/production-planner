@@ -189,6 +189,7 @@ export function UserDialog({ dialogModel, onOpenChange, onCreate, onUpdate }: Us
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="admin">管理者</SelectItem>
+                  <SelectItem value="requester">依頼者</SelectItem>
                   <SelectItem value="viewer">閲覧者</SelectItem>
                 </SelectContent>
               </Select>

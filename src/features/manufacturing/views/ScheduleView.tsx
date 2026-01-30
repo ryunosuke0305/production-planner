@@ -14,7 +14,7 @@ type ScheduleViewProps = {
   onChatInputChange: (value: string) => void;
   onSendChatMessage: () => void | Promise<void>;
   onOpenConstraints: () => void;
-  canEdit: boolean;
+  canUseChat: boolean;
   chatScrollRef: React.RefObject<HTMLDivElement>;
 };
 
@@ -28,7 +28,7 @@ export function ScheduleView({
   onChatInputChange,
   onSendChatMessage,
   onOpenConstraints,
-  canEdit,
+  canUseChat,
   chatScrollRef,
 }: ScheduleViewProps): JSX.Element {
   return (
@@ -41,7 +41,7 @@ export function ScheduleView({
           <CardHeader className="flex min-h-[56px] items-center pb-2">
             <div className="flex w-full items-center justify-between gap-2">
               <CardTitle className="text-base font-medium">Gemini チャット</CardTitle>
-              <Button variant="outline" size="sm" onClick={onOpenConstraints} disabled={!canEdit}>
+              <Button variant="outline" size="sm" onClick={onOpenConstraints} disabled={!canUseChat}>
                 条件設定
               </Button>
             </div>
@@ -83,11 +83,11 @@ export function ScheduleView({
                 }}
                 placeholder="例：品目コード A を 9/12 10:00から2時間、40ケース 追加して"
                 rows={3}
-                disabled={!canEdit}
+                disabled={!canUseChat}
               />
               <div className="flex items-center justify-between">
                 <div className="text-xs text-muted-foreground">Ctrl+Enter / Cmd+Enter で送信</div>
-                <Button onClick={() => void onSendChatMessage()} disabled={chatBusy || !canEdit}>
+                <Button onClick={() => void onSendChatMessage()} disabled={chatBusy || !canUseChat}>
                   送信
                 </Button>
               </div>

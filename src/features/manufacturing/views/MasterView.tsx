@@ -43,6 +43,7 @@ const masterSectionDescriptionMap: Record<MasterViewProps["masterSection"], stri
 
 const userRoleLabelMap: Record<AuthRole, string> = {
   admin: "管理者",
+  requester: "依頼者",
   viewer: "閲覧者",
 };
 

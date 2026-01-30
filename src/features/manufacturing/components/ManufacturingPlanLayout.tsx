@@ -13,7 +13,7 @@ type ManufacturingPlanLayoutProps = {
   viewLabel: string;
   authUser: AuthUser;
   authRoleLabel: string;
-  canEdit: boolean;
+  isReadOnly: boolean;
   onLogout: () => void;
   onSelectMasterHome?: () => void;
   children: React.ReactNode;
@@ -27,7 +27,7 @@ export function ManufacturingPlanLayout({
   viewLabel,
   authUser,
   authRoleLabel,
-  canEdit,
+  isReadOnly,
   onLogout,
   onSelectMasterHome,
   children,
@@ -135,7 +135,7 @@ export function ManufacturingPlanLayout({
           <div className="ml-auto flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="text-sm text-foreground">{authUser.name}</span>
             <span>({authRoleLabel})</span>
-            {!canEdit ? <Badge variant="outline">閲覧専用</Badge> : null}
+            {isReadOnly ? <Badge variant="outline">閲覧専用</Badge> : null}
             <Button variant="outline" size="sm" onClick={onLogout}>
               ログアウト
             </Button>

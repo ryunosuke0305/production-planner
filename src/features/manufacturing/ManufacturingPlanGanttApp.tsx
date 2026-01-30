@@ -271,9 +271,21 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [activeRecipeItemId, setActiveRecipeItemId] = useState<string | null>(null);
   const [recipeDraft, setRecipeDraft] = useState<RecipeLine[]>([]);
 
-  const canEdit = authUser?.role === "admin";
-  const authRoleLabel = authUser?.role === "admin" ? "管理者" : authUser ? "閲覧者" : "";
-  const readOnlyMessage = "閲覧専用ユーザーのため操作できません。";
+  const isAdmin = authUser?.role === "admin";
+  const isRequester = authUser?.role === "requester";
+  const isViewer = authUser?.role === "viewer";
+  const canEditBlocks = isAdmin || isRequester;
+  const canImportDailyStock = isAdmin || isRequester;
+  const canManageMaster = isAdmin;
+  const canUseChat = isAdmin;
+  const canExportJson = isAdmin;
+  const authRoleLabelMap: Record<NonNullable<AuthUser>["role"], string> = {
+    admin: "管理者",
+    requester: "依頼者",
+    viewer: "閲覧者",
+  };
+  const authRoleLabel = authUser ? authRoleLabelMap[authUser.role] : "";
+  const readOnlyMessage = "権限がないため操作できません。";
   const resolveOperatorName = () => {
     const displayName = authUser?.name?.trim() ?? "";
     if (displayName) return displayName;
@@ -340,7 +352,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const fetchManagedUsers = async () => {
-    if (!canEdit) return;
+    if (!canManageMaster) return;
     setManagedUsersLoading(true);
     setManagedUsersError(null);
     try {
@@ -360,7 +372,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   useEffect(() => {
-    if (!authUser || !canEdit || masterSection !== "users") return;
+    if (!authUser || !canManageMaster || masterSection !== "users") return;
     let cancelled = false;
     const load = async () => {
       setManagedUsersLoading(true);
@@ -390,7 +402,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [authUser, canEdit, masterSection]);
+  }, [authUser, canManageMaster, masterSection]);
 
   const handleCreateManagedUser = async (payload: {
     id: string;
@@ -398,7 +410,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     role: AuthRole;
     password: string;
   }): Promise<{ error?: string } | undefined> => {
-    if (!canEdit) return { error: "ユーザーの追加に失敗しました。" };
+    if (!canManageMaster) return { error: "ユーザーの追加に失敗しました。" };
     setManagedUsersNote(null);
     try {
       const trimmedId = payload.id.trim();
@@ -443,7 +455,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     role: AuthRole;
     password?: string;
   }): Promise<{ error?: string } | undefined> => {
-    if (!canEdit) return { error: "ユーザーの更新に失敗しました。" };
+    if (!canManageMaster) return { error: "ユーザーの更新に失敗しました。" };
     setManagedUsersNote(null);
     try {
       const trimmedName = payload.name.trim();
@@ -472,7 +484,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const handleDeleteManagedUser = async (user: ManagedUser) => {
-    if (!canEdit) return;
+    if (!canManageMaster) return;
     setManagedUsersNote(null);
     if (!window.confirm(`ユーザー「${user.name}」を削除しますか？`)) return;
     try {
@@ -539,7 +551,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     geminiHorizonDaysDraft,
     constraintsError,
     constraintsBusy,
-    canEdit,
+    canEdit: canUseChat,
   };
 
   const constraintsDialogActions = {
@@ -635,6 +647,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return blocks.find((b) => b.id === activeBlockId) ?? null;
   }, [activeBlockId, blocks]);
 
+  const canEditActiveBlock = isAdmin || (isRequester && !activeBlock?.approved);
+
   const [formItemId, setFormItemId] = useState("");
 
   const activeItem = useMemo(() => {
@@ -687,7 +701,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     formApproved,
     activeManufactureDate,
     activeExpirationDate,
-    canEdit,
+    canEdit: canEditActiveBlock,
+    canApprove: isAdmin,
   };
 
   const blockDetailDialogActions = {
@@ -949,7 +964,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const saveImportHeaderOverrides = async () => {
-    if (!canEdit) {
+    if (!canImportDailyStock) {
       setImportHeaderSaveError(readOnlyMessage);
       return;
     }
@@ -976,7 +991,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const handleDailyStockImport = async (file: File): Promise<boolean> => {
-    if (!canEdit) {
+    if (!canImportDailyStock) {
       setDailyStockImportError(readOnlyMessage);
       return false;
     }
@@ -999,7 +1014,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const handleItemMasterImport = async (file: File): Promise<boolean> => {
-    if (!canEdit) {
+    if (!canManageMaster) {
       setItemMasterImportError(readOnlyMessage);
       return false;
     }
@@ -1073,7 +1088,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const handleMaterialMasterImport = async (file: File): Promise<boolean> => {
-    if (!canEdit) {
+    if (!canManageMaster) {
       setMaterialMasterImportError(readOnlyMessage);
       return false;
     }
@@ -1332,7 +1347,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }, [authUser]);
 
   useEffect(() => {
-    if (!isPlanLoaded || !canEdit) return;
+    if (!isPlanLoaded || !canEditBlocks) return;
     const controller = new AbortController();
     const savePlan = async () => {
       try {
@@ -1379,7 +1394,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     };
   }, [
     blocks,
-    canEdit,
+    canEditBlocks,
     isPlanLoaded,
     items,
     materialsMaster,
@@ -1437,7 +1452,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }, [authUser]);
 
   const appendChatHistory = async (messages: ChatMessage[]) => {
-    if (!canEdit) return;
+    if (!canUseChat) return;
     if (!messages.length) return;
     try {
       await fetch("/api/chat", {
@@ -1653,7 +1668,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const sendChatMessage = async () => {
-    if (!canEdit) {
+    if (!canUseChat) {
       setChatError(readOnlyMessage);
       return;
     }
@@ -1831,7 +1846,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const saveConstraints = async () => {
-    if (!canEdit) {
+    if (!canUseChat) {
       setConstraintsError(readOnlyMessage);
       return;
     }
@@ -1871,7 +1886,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const onPlanSave = () => {
-    if (!canEdit) return;
+    if (!canEditActiveBlock) return;
     if (!activeBlockId) return;
     const amount = Math.max(0, safeNumber(formAmount));
     const operatorName = resolveOperatorName();
@@ -1883,7 +1898,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               itemId: formItemId || b.itemId,
               amount,
               memo: formMemo,
-              approved: formApproved,
+              approved: isAdmin ? formApproved : b.approved,
               createdBy: b.createdBy ?? operatorName,
               updatedBy: operatorName,
             }
@@ -1908,7 +1923,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const createBlockAt = (dayIndex: number, slot: number) => {
-    if (!canEdit) return;
+    if (!canEditBlocks) return;
     if (!isPlanWeekView) return;
     const workingSlot = clampToWorkingSlot(dayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
@@ -1953,7 +1968,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const beginPointer = (p: { kind: DragKind; blockId: string; dayIndex: number; clientX: number }) => {
-    if (!canEdit) return;
+    if (!canEditBlocks) return;
     if (!isPlanWeekView) return;
     const laneEl = laneRefs.current[String(p.dayIndex)];
     if (!laneEl) return;
@@ -2149,7 +2164,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const applySafetyStockForItem = (itemId: string) => {
-    if (!canEdit) return;
+    if (!canManageMaster) return;
     const item = items.find((it) => it.id === itemId);
     if (!item) return;
     const result = computeSafetyStockFromDaily(item);
@@ -2163,7 +2178,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const applySafetyStockForTargets = () => {
-    if (!canEdit) return;
+    if (!canManageMaster) return;
     const targets = items.filter((item) => item.safetyStockAutoEnabled);
     if (!targets.length) {
       window.alert("自動計算の対象となる品目がありません。");
@@ -2287,7 +2302,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   // JSONエクスポート
   const exportPlanAsJson = () => {
-    if (!canEdit) return;
+    if (!canExportJson) return;
     const payload = buildExportPayload({
       weekStart: planWeekStart,
       timezone,
@@ -2432,7 +2447,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" onClick={exportPlanAsJson} disabled={!canEdit}>
+        <Button variant="outline" onClick={exportPlanAsJson} disabled={!canExportJson}>
           JSONエクスポート
         </Button>
         <Button variant="outline" onClick={() => shiftWeek(-7)}>
@@ -2528,7 +2543,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       laneRefs.current[String(dayIdx)] = el;
                     }}
                     onClick={(e) => {
-                      if (!canEdit) return;
+                      if (!canEditBlocks) return;
                       if (suppressClickRef.current) return;
                       if (e.defaultPrevented) return;
 
@@ -2570,7 +2585,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                             <div
                               className="absolute left-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-l-xl touch-none"
                               onPointerDown={(ev) => {
-                                if (!canEdit) return;
+                                if (!canEditBlocks) return;
                                 ev.preventDefault();
                                 ev.stopPropagation();
                                 beginPointer({ kind: "resizeL", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
@@ -2583,7 +2598,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                             <div
                               className="absolute right-0 top-0 z-30 h-full w-2 cursor-ew-resize rounded-r-xl touch-none"
                               onPointerDown={(ev) => {
-                                if (!canEdit) return;
+                                if (!canEditBlocks) return;
                                 ev.preventDefault();
                                 ev.stopPropagation();
                                 beginPointer({ kind: "resizeR", blockId: block.id, dayIndex: dayIdx, clientX: ev.clientX });
@@ -2597,7 +2612,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                               isApproved ? "cursor-default" : "cursor-grab"
                             }`}
                             onPointerDown={(ev) => {
-                              if (!canEdit || isApproved) return;
+                              if (!canEditBlocks || isApproved) return;
                               const r = ev.currentTarget.getBoundingClientRect();
                               const x = ev.clientX - r.left;
                               if (x <= 8 || x >= r.width - 8) return;
@@ -2723,11 +2738,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       viewLabel={viewLabel}
       authUser={authUser}
       authRoleLabel={authRoleLabel}
-      canEdit={canEdit}
+      isReadOnly={isViewer}
       onLogout={() => void handleLogout()}
       onSelectMasterHome={handleMasterHomeSelect}
     >
-      {!canEdit ? (
+      {isViewer ? (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
           閲覧専用ユーザーのため、編集内容は保存されません。
         </div>
@@ -2744,7 +2759,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               onChatInputChange={setChatInput}
               onSendChatMessage={() => void sendChatMessage()}
               onOpenConstraints={openConstraintsDialog}
-              canEdit={canEdit}
+              canUseChat={canUseChat}
               chatScrollRef={chatScrollRef}
             />
           )
@@ -2768,7 +2783,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   managedUsersNote={managedUsersNote}
                   managedUsersLoading={managedUsersLoading}
                   managedUsersError={managedUsersError}
-                  canEdit={canEdit}
+                  canEdit={canManageMaster}
                   applySafetyStockForTargets={applySafetyStockForTargets}
                   openCreateItemModal={openCreateItemModal}
                   applySafetyStockForItem={applySafetyStockForItem}
@@ -2788,7 +2803,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                     dailyStocks={dailyStocks}
                     dailyStockUpdatedAt={dailyStockUpdatedAt}
                     dailyStockInputKey={dailyStockInputKey}
-                    canEdit={canEdit}
+                    canImportDailyStock={canImportDailyStock}
+                    canManageMasters={canManageMaster}
                     setDailyStockImportFile={setDailyStockImportFile}
                     setDailyStockImportNote={setDailyStockImportNote}
                     setDailyStockImportError={setDailyStockImportError}
@@ -2851,7 +2867,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           items,
           modalWideClassName,
           modalBodyClassName,
-          canEdit,
+          canEdit: canManageMaster,
         }}
         onItemDialogOpenChange={handleItemDialogOpenChange}
         onItemDialogSave={handleItemDialogSave}
@@ -2865,7 +2881,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           setRecipeDraft,
           modalWideClassName,
           modalBodyClassName,
-          canEdit,
+          canEdit: canManageMaster,
         }}
         onMaterialDialogOpenChange={handleMaterialDialogOpenChange}
         onMaterialDialogSave={handleMaterialSave}
@@ -2878,7 +2894,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         materialOptions={materialOptions}
         materialMap={materialMap}
         materialsMaster={materialsMaster}
-        canEdit={canEdit}
+        canEdit={canManageMaster}
         modalWideClassName={modalWideClassName}
         modalBodyClassName={modalBodyClassName}
         onRecipeSave={onRecipeSave}
