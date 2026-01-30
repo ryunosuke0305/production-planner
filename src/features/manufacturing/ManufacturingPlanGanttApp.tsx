@@ -25,7 +25,7 @@ import {
 } from "@/features/manufacturing/components/dialogs/ItemDialog";
 import { MaterialDialog } from "@/features/manufacturing/components/dialogs/MaterialDialog";
 import { UserDialog } from "@/features/manufacturing/components/dialogs/UserDialog";
-import { ManufacturingPlanLayout } from "@/features/manufacturing/components/layout/ManufacturingPlanLayout";
+import { ManufacturingPlanLayout } from "@/features/manufacturing/components/ManufacturingPlanLayout";
 import { ImportView } from "@/features/manufacturing/views/ImportView";
 import { InventoryView } from "@/features/manufacturing/views/InventoryView";
 import { LoginView } from "@/features/manufacturing/views/LoginView";
@@ -2699,14 +2699,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const viewLabel = activeView === "master" ? masterViewLabelMap[masterSection] : viewLabelMap[activeView];
-  const handleViewSelect = (view: "schedule" | "inventory" | "master" | "import" | "manual") => {
-    setActiveView(view);
-    setNavOpen(false);
-  };
   const handleMasterHomeSelect = () => {
     setActiveView("master");
     setMasterSection("home");
-    setNavOpen(false);
   };
 
   if (authLoading) {
@@ -2735,15 +2730,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   return (
     <ManufacturingPlanLayout
       navOpen={navOpen}
-      onToggleNav={() => setNavOpen((prev) => !prev)}
-      onCloseNav={() => setNavOpen(false)}
+      setNavOpen={setNavOpen}
       activeView={activeView}
+      setActiveView={setActiveView}
       viewLabel={viewLabel}
       authUser={authUser}
       authRoleLabel={authRoleLabel}
       canEdit={canEdit}
       onLogout={() => void handleLogout()}
-      onSelectView={handleViewSelect}
       onSelectMasterHome={handleMasterHomeSelect}
     >
       {!canEdit ? (
