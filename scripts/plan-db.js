@@ -70,6 +70,8 @@ function ensureSchema(db) {
       amount REAL NOT NULL,
       memo TEXT NOT NULL,
       approved INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT,
+      updated_by TEXT,
       FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS daily_stocks (
@@ -114,6 +116,18 @@ function ensureBlocksDateColumns(db) {
   }
 }
 
+function ensureBlocksOperatorColumns(db) {
+  const columns = db.prepare("PRAGMA table_info(blocks)").all();
+  const hasCreatedBy = columns.some((column) => column.name === "created_by");
+  const hasUpdatedBy = columns.some((column) => column.name === "updated_by");
+  if (!hasCreatedBy) {
+    db.exec("ALTER TABLE blocks ADD COLUMN created_by TEXT");
+  }
+  if (!hasUpdatedBy) {
+    db.exec("ALTER TABLE blocks ADD COLUMN updated_by TEXT");
+  }
+}
+
 function ensureItemsPlanningColumns(db) {
   const columns = db.prepare("PRAGMA table_info(items)").all();
   const hasPublicId = columns.some((column) => column.name === "public_id");
@@ -154,6 +168,7 @@ export async function openPlanDatabase() {
   ensureSchema(db);
   ensureBlocksApprovedColumn(db);
   ensureBlocksDateColumns(db);
+  ensureBlocksOperatorColumns(db);
   ensureItemsPlanningColumns(db);
   ensureDailyStocksShippedColumn(db);
   return db;
@@ -292,7 +307,7 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     }
   }
 
-  const sql = `SELECT id, item_id, start, len, start_at, end_at, amount, memo, approved FROM blocks${
+  const sql = `SELECT id, item_id, start, len, start_at, end_at, amount, memo, approved, created_by, updated_by FROM blocks${
     conditions.length ? ` WHERE ${conditions.join(" AND ")}` : ""
   } ORDER BY start, id`;
 
@@ -306,6 +321,8 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     amount: row.amount,
     memo: row.memo,
     approved: Boolean(row.approved),
+    createdBy: row.created_by ?? undefined,
+    updatedBy: row.updated_by ?? undefined,
   }));
 
   return {
@@ -371,7 +388,7 @@ export function savePlanPayload(db, payload) {
     "INSERT INTO calendar_days (date, is_holiday, work_start, work_end) VALUES (?, ?, ?, ?)"
   );
   const insertBlock = db.prepare(
-    "INSERT INTO blocks (id, item_id, start, len, start_at, end_at, amount, memo, approved) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO blocks (id, item_id, start, len, start_at, end_at, amount, memo, approved, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   const transaction = db.transaction(() => {
@@ -426,7 +443,9 @@ export function savePlanPayload(db, payload) {
         block.endAt ?? null,
         block.amount ?? 0,
         block.memo ?? "",
-        block.approved ? 1 : 0
+        block.approved ? 1 : 0,
+        block.createdBy ?? null,
+        block.updatedBy ?? null
       );
     });
   });

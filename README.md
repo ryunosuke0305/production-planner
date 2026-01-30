@@ -261,13 +261,23 @@ API でやり取りする JSON は従来と同じ構造で、保存先は SQLite
     }
   ],
   "blocks": [
-    { "id": "b_xxx", "itemId": "A", "start": 1, "len": 2, "amount": 40, "memo": "" }
+    {
+      "id": "b_xxx",
+      "itemId": "A",
+      "start": 1,
+      "len": 2,
+      "amount": 40,
+      "memo": "",
+      "createdBy": "山田太郎",
+      "updatedBy": "佐藤花子"
+    }
   ]
 }
 ```
 
 - `density`: `"hour" | "2hour" | "day"`
 - `start`: 0 始まりのスロット番号
+- `createdBy` / `updatedBy`: ブロックの登録者 / 更新者（任意）
 - `len`: スロット長（`density` に依存）
 
 ### SQLite スキーマ（`data/plan.sqlite`）
@@ -277,7 +287,7 @@ meta(key TEXT PRIMARY KEY, value TEXT)
 materials(id TEXT PRIMARY KEY, name TEXT, unit TEXT)
 items(id TEXT PRIMARY KEY, public_id TEXT, name TEXT, unit TEXT, planning_policy TEXT, safety_stock REAL, shelf_life_days REAL, production_efficiency REAL, notes TEXT)
 item_recipes(item_id TEXT, material_id TEXT, per_unit REAL, unit TEXT, PRIMARY KEY(item_id, material_id))
-blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, amount REAL, memo TEXT)
+blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, start_at TEXT, end_at TEXT, amount REAL, memo TEXT, approved INTEGER, created_by TEXT, updated_by TEXT)
 daily_stocks(date TEXT, item_id TEXT, item_code TEXT, stock REAL, shipped REAL, PRIMARY KEY(date, item_id))
 ```
 

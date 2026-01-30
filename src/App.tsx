@@ -100,6 +100,8 @@ type Block = {
   amount: number;
   memo: string;
   approved: boolean;
+  createdBy?: string;
+  updatedBy?: string;
   startAt?: string;
   endAt?: string;
 };
@@ -876,6 +878,8 @@ function sanitizeBlocks(raw: unknown): Block[] {
         amount: asNumber(record.amount),
         memo: asString(record.memo),
         approved: asBoolean(record.approved, false),
+        createdBy: asString(record.createdBy || record.created_by),
+        updatedBy: asString(record.updatedBy || record.updated_by),
         startAt: asString(record.startAt || record.start_at),
         endAt: asString(record.endAt || record.end_at),
       } satisfies Block;
@@ -1469,6 +1473,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const canEdit = authUser?.role === "admin";
   const authRoleLabel = authUser?.role === "admin" ? "管理者" : authUser ? "閲覧者" : "";
   const readOnlyMessage = "閲覧専用ユーザーのため操作できません。";
+  const resolveOperatorName = () => {
+    const displayName = authUser?.name?.trim() ?? "";
+    if (displayName) return displayName;
+    const fallbackId = authUser?.id?.trim() ?? "";
+    return fallbackId || "未設定";
+  };
+  const formatOperatorName = (value?: string) => (value && value.trim() ? value : "未設定");
 
   useEffect(() => {
     let cancelled = false;
@@ -2757,6 +2768,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   ) => {
     const warnings: string[] = [];
     if (!actions.length) return warnings;
+    const operatorName = resolveOperatorName();
     const slotCount = contextOverrides?.slotCount ?? planSlotCount;
     const slotIndexToLabel = contextOverrides?.slotIndexToLabel ?? planSlotIndexToLabel;
     const context: SlotResolveContext = { slotCount, slotIndexToLabel, warnings };
@@ -2776,6 +2788,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             amount: Math.max(0, action.amount ?? 0),
             memo: action.memo ?? "",
             approved: false,
+            createdBy: operatorName,
+            updatedBy: operatorName,
           };
           next = [...next, resolveOverlap(candidate, next)];
         }
@@ -2799,6 +2813,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 amount: action.amount ?? b.amount,
                 memo: action.memo ?? b.memo,
                 approved: false,
+                createdBy: b.createdBy ?? operatorName,
+                updatedBy: operatorName,
               },
               next
             );
@@ -3040,6 +3056,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (!canEdit) return;
     if (!activeBlockId) return;
     const amount = Math.max(0, safeNumber(formAmount));
+    const operatorName = resolveOperatorName();
     setBlocks((prev) =>
       prev.map((b) =>
         b.id === activeBlockId
@@ -3049,6 +3066,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
               amount,
               memo: formMemo,
               approved: formApproved,
+              createdBy: b.createdBy ?? operatorName,
+              updatedBy: operatorName,
             }
           : b
       )
@@ -3093,6 +3112,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const absoluteSlot = (viewStartOffsetDays + dayIndex) * slotsPerDay + workingSlot;
     const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
     const fallbackItemId = items[0]?.id ?? "";
+    const operatorName = resolveOperatorName();
     const b: Block = {
       id: uid("b"),
       itemId: fallbackItemId,
@@ -3101,6 +3121,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       amount: 0,
       memo: "",
       approved: false,
+      createdBy: operatorName,
+      updatedBy: operatorName,
     };
     setBlocks((prev) => [...prev, b]);
     openPlanEdit(b, { isNew: true });
@@ -3224,6 +3246,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const endPointer = () => {
+    const currentDrag = dragStateRef.current;
+    if (currentDrag?.moved) {
+      const operatorName = resolveOperatorName();
+      setBlocks((prev) =>
+        prev.map((b) =>
+          b.id === currentDrag.blockId
+            ? { ...b, createdBy: b.createdBy ?? operatorName, updatedBy: operatorName }
+            : b
+        )
+      );
+    }
     dragStateRef.current = null;
     setTimeout(() => {
       suppressClickRef.current = false;
@@ -4263,6 +4296,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                           slotIndex: Math.min(planSlotCount - 1, activeBlock.start + activeBlock.len - 1),
                         })}
                       </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-12 gap-2 text-xs">
+                      <div className="col-span-4 text-muted-foreground">登録者</div>
+                      <div className="col-span-8 font-medium">{formatOperatorName(activeBlock.createdBy)}</div>
+                      <div className="col-span-4 text-muted-foreground">更新者</div>
+                      <div className="col-span-8 font-medium">{formatOperatorName(activeBlock.updatedBy)}</div>
                     </div>
                   </motion.div>
                 ) : null}
