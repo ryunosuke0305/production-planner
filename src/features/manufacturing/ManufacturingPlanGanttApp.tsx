@@ -24,6 +24,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { SearchableCombobox } from "@/components/ui/searchable-combobox";
 import { ConditionsDialog } from "@/features/manufacturing/components/dialogs/ConditionsDialog";
+import {
+  ItemDialog,
+  type ItemDialogCommitPayload,
+} from "@/features/manufacturing/components/dialogs/ItemDialog";
 import { MaterialDialog } from "@/features/manufacturing/components/dialogs/MaterialDialog";
 import { UserDialog } from "@/features/manufacturing/components/dialogs/UserDialog";
 import {
@@ -101,13 +105,11 @@ import type {
   ImportHeaderOverrides,
   Item,
   ItemImportRow,
-  ItemUnit,
   ManagedUser,
   Material,
   MaterialImportRow,
   PlanPayload,
   PlanSnapshot,
-  PlanningPolicy,
   RecipeLine,
   RecipeUnit,
 } from "@/types/planning";
@@ -181,46 +183,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [importHeaderSaveNote, setImportHeaderSaveNote] = useState<string | null>(null);
   const [importHeaderSaveError, setImportHeaderSaveError] = useState<string | null>(null);
   const [importHeaderSaveBusy, setImportHeaderSaveBusy] = useState(false);
-  const [itemNameDraft, setItemNameDraft] = useState("");
-  const [itemPublicIdDraft, setItemPublicIdDraft] = useState("");
-  const [itemUnitDraft, setItemUnitDraft] = useState<ItemUnit>(DEFAULT_ITEM_UNIT);
-  const [itemPlanningPolicyDraft, setItemPlanningPolicyDraft] = useState<PlanningPolicy>("make_to_stock");
-  const [itemSafetyStockDraft, setItemSafetyStockDraft] = useState("0");
-  const [itemSafetyStockAutoEnabledDraft, setItemSafetyStockAutoEnabledDraft] = useState(false);
-  const [itemSafetyStockLookbackDaysDraft, setItemSafetyStockLookbackDaysDraft] = useState(
-    String(DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS)
-  );
-  const [itemSafetyStockCoefficientDraft, setItemSafetyStockCoefficientDraft] = useState(
-    String(DEFAULT_SAFETY_STOCK_COEFFICIENT)
-  );
-  const [itemShelfLifeDaysDraft, setItemShelfLifeDaysDraft] = useState("0");
-  const [itemProductionEfficiencyDraft, setItemProductionEfficiencyDraft] = useState("0");
-  const [itemPackagingEfficiencyDraft, setItemPackagingEfficiencyDraft] = useState(
-    String(DEFAULT_PACKAGING_EFFICIENCY)
-  );
-  const [itemNotesDraft, setItemNotesDraft] = useState("");
-  const [itemFormError, setItemFormError] = useState<string | null>(null);
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
-  const [editingItemName, setEditingItemName] = useState("");
-  const [editingItemPublicId, setEditingItemPublicId] = useState("");
-  const [editingItemUnit, setEditingItemUnit] = useState<ItemUnit>(DEFAULT_ITEM_UNIT);
-  const [editingItemPlanningPolicy, setEditingItemPlanningPolicy] = useState<PlanningPolicy>("make_to_stock");
-  const [editingItemSafetyStock, setEditingItemSafetyStock] = useState("0");
-  const [editingItemSafetyStockAutoEnabled, setEditingItemSafetyStockAutoEnabled] = useState(false);
-  const [editingItemSafetyStockLookbackDays, setEditingItemSafetyStockLookbackDays] = useState(
-    String(DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS)
-  );
-  const [editingItemSafetyStockCoefficient, setEditingItemSafetyStockCoefficient] = useState(
-    String(DEFAULT_SAFETY_STOCK_COEFFICIENT)
-  );
-  const [editingItemShelfLifeDays, setEditingItemShelfLifeDays] = useState("0");
-  const [editingItemProductionEfficiency, setEditingItemProductionEfficiency] = useState("0");
-  const [editingItemPackagingEfficiency, setEditingItemPackagingEfficiency] = useState(
-    String(DEFAULT_PACKAGING_EFFICIENCY)
-  );
-  const [editingItemNotes, setEditingItemNotes] = useState("");
-  const [isItemModalOpen, setIsItemModalOpen] = useState(false);
-  const [itemModalMode, setItemModalMode] = useState<"create" | "edit">("create");
+  const [itemDialogState, setItemDialogState] = useState<{
+    open: boolean;
+    mode: "create" | "edit";
+    editingItemId: string | null;
+  }>({
+    open: false,
+    mode: "create",
+    editingItemId: null,
+  });
 
   const viewStartISO = toISODate(viewWeekStart);
   const planStartISO = planCalendarDays[0]?.date ?? toISODate(planWeekStart);
@@ -2148,181 +2119,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setOpenRecipe(false);
   };
 
-  const resetItemDrafts = () => {
-    setItemNameDraft("");
-    setItemPublicIdDraft("");
-    setItemUnitDraft(DEFAULT_ITEM_UNIT);
-    setItemPlanningPolicyDraft("make_to_stock");
-    setItemSafetyStockDraft("0");
-    setItemSafetyStockAutoEnabledDraft(false);
-    setItemSafetyStockLookbackDaysDraft(String(DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS));
-    setItemSafetyStockCoefficientDraft(String(DEFAULT_SAFETY_STOCK_COEFFICIENT));
-    setItemShelfLifeDaysDraft("0");
-    setItemProductionEfficiencyDraft("0");
-    setItemPackagingEfficiencyDraft(String(DEFAULT_PACKAGING_EFFICIENCY));
-    setItemNotesDraft("");
-  };
-
   const openCreateItemModal = () => {
-    setItemModalMode("create");
-    resetItemDrafts();
-    setItemFormError(null);
-    setIsItemModalOpen(true);
-  };
-
-  const onCreateItem = () => {
-    const name = itemNameDraft.trim();
-    const publicId = itemPublicIdDraft.trim();
-    if (!name) {
-      setItemFormError("品目名を入力してください。");
-      return false;
-    }
-    if (items.some((it) => it.name === name)) {
-      setItemFormError("同じ品目名がすでに登録されています。");
-      return false;
-    }
-    if (publicId && items.some((it) => it.id === publicId || (it.publicId ?? "").trim() === publicId)) {
-      setItemFormError("同じ品目コードがすでに登録されています。");
-      return false;
-    }
-    const safetyStock = Math.max(0, safeNumber(itemSafetyStockDraft));
-    const safetyStockLookbackDays = Math.max(0, safeNumber(itemSafetyStockLookbackDaysDraft));
-    const safetyStockCoefficient = Math.max(0, safeNumber(itemSafetyStockCoefficientDraft));
-    const shelfLifeDays = Math.max(0, safeNumber(itemShelfLifeDaysDraft));
-    const productionEfficiency = Math.max(0, safeNumber(itemProductionEfficiencyDraft));
-    const packagingEfficiency = Math.max(0, safeNumber(itemPackagingEfficiencyDraft));
-    const newItem: Item = {
-      id: uid("item"),
-      publicId: publicId || undefined,
-      name,
-      unit: itemUnitDraft,
-      planningPolicy: itemPlanningPolicyDraft,
-      safetyStock,
-      safetyStockAutoEnabled: itemSafetyStockAutoEnabledDraft,
-      safetyStockLookbackDays,
-      safetyStockCoefficient,
-      shelfLifeDays,
-      productionEfficiency,
-      packagingEfficiency,
-      notes: itemNotesDraft.trim(),
-      recipe: [],
-    };
-    setItems((prev) => [...prev, newItem]);
-    resetItemDrafts();
-    setItemFormError(null);
-    return true;
-  };
-
-  const onStartEditItem = (item: Item) => {
-    setEditingItemId(item.id);
-    setEditingItemName(item.name);
-    setEditingItemPublicId(item.publicId ?? "");
-    setEditingItemUnit(item.unit);
-    setEditingItemPlanningPolicy(item.planningPolicy ?? "make_to_stock");
-    setEditingItemSafetyStock(String(item.safetyStock ?? 0));
-    setEditingItemSafetyStockAutoEnabled(item.safetyStockAutoEnabled ?? false);
-    setEditingItemSafetyStockLookbackDays(String(item.safetyStockLookbackDays ?? DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS));
-    setEditingItemSafetyStockCoefficient(String(item.safetyStockCoefficient ?? DEFAULT_SAFETY_STOCK_COEFFICIENT));
-    setEditingItemShelfLifeDays(String(item.shelfLifeDays ?? 0));
-    setEditingItemProductionEfficiency(String(item.productionEfficiency ?? 0));
-    setEditingItemPackagingEfficiency(String(item.packagingEfficiency ?? DEFAULT_PACKAGING_EFFICIENCY));
-    setEditingItemNotes(item.notes ?? "");
-    setItemFormError(null);
-  };
-
-  const onCancelEditItem = () => {
-    setEditingItemId(null);
-    setEditingItemName("");
-    setEditingItemPublicId("");
-    setEditingItemUnit(DEFAULT_ITEM_UNIT);
-    setEditingItemPlanningPolicy("make_to_stock");
-    setEditingItemSafetyStock("0");
-    setEditingItemSafetyStockAutoEnabled(false);
-    setEditingItemSafetyStockLookbackDays(String(DEFAULT_SAFETY_STOCK_LOOKBACK_DAYS));
-    setEditingItemSafetyStockCoefficient(String(DEFAULT_SAFETY_STOCK_COEFFICIENT));
-    setEditingItemShelfLifeDays("0");
-    setEditingItemProductionEfficiency("0");
-    setEditingItemPackagingEfficiency(String(DEFAULT_PACKAGING_EFFICIENCY));
-    setEditingItemNotes("");
-    setItemFormError(null);
-  };
-
-  const onSaveEditItem = () => {
-    if (!editingItemId) return;
-    const nextName = editingItemName.trim();
-    const nextPublicId = editingItemPublicId.trim();
-    if (!nextName) {
-      setItemFormError("品目名を入力してください。");
-      return false;
-    }
-    if (items.some((it) => it.name === nextName && it.id !== editingItemId)) {
-      setItemFormError("同じ品目名がすでに登録されています。");
-      return false;
-    }
-    if (
-      nextPublicId &&
-      items.some(
-        (it) => it.id !== editingItemId && (it.id === nextPublicId || (it.publicId ?? "").trim() === nextPublicId)
-      )
-    ) {
-      setItemFormError("同じ品目コードがすでに登録されています。");
-      return false;
-    }
-    const nextSafetyStock = Math.max(0, safeNumber(editingItemSafetyStock));
-    const nextSafetyStockLookbackDays = Math.max(0, safeNumber(editingItemSafetyStockLookbackDays));
-    const nextSafetyStockCoefficient = Math.max(0, safeNumber(editingItemSafetyStockCoefficient));
-    const nextShelfLifeDays = Math.max(0, safeNumber(editingItemShelfLifeDays));
-    const nextProductionEfficiency = Math.max(0, safeNumber(editingItemProductionEfficiency));
-    const nextPackagingEfficiency = Math.max(0, safeNumber(editingItemPackagingEfficiency));
-    const nextNotes = editingItemNotes.trim();
-    setItems((prev) =>
-      prev.map((it) =>
-        it.id === editingItemId
-          ? {
-              ...it,
-              publicId: nextPublicId || undefined,
-              name: nextName,
-              unit: editingItemUnit,
-              planningPolicy: editingItemPlanningPolicy,
-              safetyStock: nextSafetyStock,
-              safetyStockAutoEnabled: editingItemSafetyStockAutoEnabled,
-              safetyStockLookbackDays: nextSafetyStockLookbackDays,
-              safetyStockCoefficient: nextSafetyStockCoefficient,
-              shelfLifeDays: nextShelfLifeDays,
-              productionEfficiency: nextProductionEfficiency,
-              packagingEfficiency: nextPackagingEfficiency,
-              notes: nextNotes,
-            }
-          : it
-      )
-    );
-    setItemFormError(null);
-    onCancelEditItem();
-    return true;
-  };
-
-  const onDeleteItem = (itemId: string) => {
-    const target = items.find((it) => it.id === itemId);
-    if (!target) return false;
-    const confirmed = window.confirm(`${target.name} を削除しますか？`);
-    if (!confirmed) return false;
-    setItems((prev) => prev.filter((it) => it.id !== itemId));
-    setBlocks((prev) => prev.filter((b) => b.itemId !== itemId));
-    if (activeBlockId) {
-      const hasActive = blocks.some((b) => b.id === activeBlockId && b.itemId === itemId);
-      if (hasActive) {
-        setActiveBlockId(null);
-        setOpenPlan(false);
-      }
-    }
-    if (activeRecipeItemId === itemId) {
-      setActiveRecipeItemId(null);
-      setOpenRecipe(false);
-    }
-    if (editingItemId === itemId) {
-      onCancelEditItem();
-    }
-    return true;
+    setItemDialogState({
+      open: true,
+      mode: "create",
+      editingItemId: null,
+    });
   };
 
   const computeSafetyStockFromDaily = (item: Item) => {
@@ -2395,21 +2197,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const openEditItemModal = (item: Item) => {
-    setItemModalMode("edit");
-    onStartEditItem(item);
-    setIsItemModalOpen(true);
+    setItemDialogState({
+      open: true,
+      mode: "edit",
+      editingItemId: item.id,
+    });
   };
 
-  const handleItemModalOpenChange = (open: boolean) => {
-    setIsItemModalOpen(open);
-    if (!open) {
-      setItemFormError(null);
-      if (itemModalMode === "edit") {
-        onCancelEditItem();
-      } else {
-        resetItemDrafts();
-      }
-    }
+  const handleItemDialogOpenChange = (open: boolean) => {
+    setItemDialogState((prev) => ({
+      ...prev,
+      open,
+      editingItemId: open ? prev.editingItemId : null,
+    }));
   };
 
   const handleMaterialDialogOpenChange = (open: boolean) => {
@@ -2524,15 +2324,78 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     colW - 1
   }px, rgba(148, 163, 184, 0.4) ${colW - 1}px, rgba(148, 163, 184, 0.4) ${colW}px)`;
 
-  const isItemEditMode = itemModalMode === "edit";
   const materialDialogMode: "create" | "edit" = materialDialogState.editingMaterialId ? "edit" : "create";
-  const itemEfficiencyUnit = isItemEditMode ? editingItemUnit : itemUnitDraft;
-
-  const handleItemModalSave = () => {
-    const didSave = isItemEditMode ? onSaveEditItem() : onCreateItem();
-    if (didSave) {
-      setIsItemModalOpen(false);
+  const handleItemDialogSave = (payload: ItemDialogCommitPayload) => {
+    if (payload.action === "delete") {
+      const itemId = payload.itemId;
+      setItems((prev) => prev.filter((it) => it.id !== itemId));
+      setBlocks((prev) => prev.filter((b) => b.itemId !== itemId));
+      if (activeBlockId) {
+        const hasActive = blocks.some((b) => b.id === activeBlockId && b.itemId === itemId);
+        if (hasActive) {
+          setActiveBlockId(null);
+          setOpenPlan(false);
+        }
+      }
+      if (activeRecipeItemId === itemId) {
+        setActiveRecipeItemId(null);
+        setOpenRecipe(false);
+      }
+      return true;
     }
+
+    const values = payload.values;
+    const safetyStock = Math.max(0, safeNumber(values.safetyStock));
+    const safetyStockLookbackDays = Math.max(0, safeNumber(values.safetyStockLookbackDays));
+    const safetyStockCoefficient = Math.max(0, safeNumber(values.safetyStockCoefficient));
+    const shelfLifeDays = Math.max(0, safeNumber(values.shelfLifeDays));
+    const productionEfficiency = Math.max(0, safeNumber(values.productionEfficiency));
+    const packagingEfficiency = Math.max(0, safeNumber(values.packagingEfficiency));
+    const notes = values.notes.trim();
+
+    if (payload.action === "create") {
+      const newItem: Item = {
+        id: uid("item"),
+        publicId: values.publicId || undefined,
+        name: values.name,
+        unit: values.unit,
+        planningPolicy: values.planningPolicy,
+        safetyStock,
+        safetyStockAutoEnabled: values.safetyStockAutoEnabled,
+        safetyStockLookbackDays,
+        safetyStockCoefficient,
+        shelfLifeDays,
+        productionEfficiency,
+        packagingEfficiency,
+        notes,
+        recipe: [],
+      };
+      setItems((prev) => [...prev, newItem]);
+      return true;
+    }
+
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === payload.itemId
+          ? {
+              ...it,
+              publicId: values.publicId || undefined,
+              name: values.name,
+              unit: values.unit,
+              planningPolicy: values.planningPolicy,
+              safetyStock,
+              safetyStockAutoEnabled: values.safetyStockAutoEnabled,
+              safetyStockLookbackDays,
+              safetyStockCoefficient,
+              shelfLifeDays,
+              productionEfficiency,
+              packagingEfficiency,
+              notes,
+            }
+          : it
+      )
+    );
+    return true;
   };
 
   const handleMaterialSave = (payload: {
@@ -3963,259 +3826,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         />
 
         {/* 品目マスタモーダル */}
-        <Dialog open={isItemModalOpen} onOpenChange={handleItemModalOpenChange}>
-          <DialogContent className={modalWideClassName}>
-            <DialogHeader>
-              <DialogTitle>{isItemEditMode ? "品目を編集" : "品目を追加"}</DialogTitle>
-            </DialogHeader>
-
-            <div className={modalBodyClassName}>
-              <div className="rounded-xl border bg-white p-4 shadow-sm">
-                <div className="grid gap-3 md:grid-cols-[180px_1fr] md:items-center">
-                  <div className="text-sm font-medium text-muted-foreground">品目名</div>
-                  <Input
-                    value={isItemEditMode ? editingItemName : itemNameDraft}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (isItemEditMode) {
-                        setEditingItemName(next);
-                      } else {
-                        setItemNameDraft(next);
-                      }
-                      setItemFormError(null);
-                    }}
-                    placeholder="品目名"
-                  />
-                  <div className="text-sm font-medium text-muted-foreground">品目コード</div>
-                  <Input
-                    value={isItemEditMode ? editingItemPublicId : itemPublicIdDraft}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (isItemEditMode) {
-                        setEditingItemPublicId(next);
-                      } else {
-                        setItemPublicIdDraft(next);
-                      }
-                      setItemFormError(null);
-                    }}
-                    placeholder="品目コード"
-                  />
-                  <div className="text-sm font-medium text-muted-foreground">単位</div>
-                  <Select
-                    value={isItemEditMode ? editingItemUnit : itemUnitDraft}
-                    onValueChange={(value) => {
-                      if (isItemEditMode) {
-                        setEditingItemUnit(value as ItemUnit);
-                      } else {
-                        setItemUnitDraft(value as ItemUnit);
-                      }
-                      setItemFormError(null);
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="単位" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ITEM_UNITS.map((unit) => (
-                        <SelectItem key={unit} value={unit}>
-                          {unit}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="text-sm font-medium text-muted-foreground">計画方針</div>
-                  <Select
-                    value={isItemEditMode ? editingItemPlanningPolicy : itemPlanningPolicyDraft}
-                    onValueChange={(value) => {
-                      if (isItemEditMode) {
-                        setEditingItemPlanningPolicy(value as PlanningPolicy);
-                      } else {
-                        setItemPlanningPolicyDraft(value as PlanningPolicy);
-                      }
-                      setItemFormError(null);
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="計画方針" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="make_to_stock">見込生産</SelectItem>
-                      <SelectItem value="make_to_order">受注生産</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <div className="text-sm font-medium text-muted-foreground">安全在庫</div>
-                  <Input
-                    inputMode="decimal"
-                    value={isItemEditMode ? editingItemSafetyStock : itemSafetyStockDraft}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (isItemEditMode) {
-                        setEditingItemSafetyStock(next);
-                      } else {
-                        setItemSafetyStockDraft(next);
-                      }
-                      setItemFormError(null);
-                    }}
-                    placeholder="安全在庫"
-                  />
-                  <div className="text-sm font-medium text-muted-foreground">安全在庫 自動計算</div>
-                  <Select
-                    value={
-                      isItemEditMode
-                        ? editingItemSafetyStockAutoEnabled
-                          ? "enabled"
-                          : "disabled"
-                        : itemSafetyStockAutoEnabledDraft
-                          ? "enabled"
-                          : "disabled"
-                    }
-                    onValueChange={(value) => {
-                      const enabled = value === "enabled";
-                      if (isItemEditMode) {
-                        setEditingItemSafetyStockAutoEnabled(enabled);
-                      } else {
-                        setItemSafetyStockAutoEnabledDraft(enabled);
-                      }
-                      setItemFormError(null);
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="自動計算対象" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="enabled">対象</SelectItem>
-                      <SelectItem value="disabled">対象外</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <div className="text-sm font-medium text-muted-foreground">安全在庫 参照日数</div>
-                  <Input
-                    inputMode="numeric"
-                    value={isItemEditMode ? editingItemSafetyStockLookbackDays : itemSafetyStockLookbackDaysDraft}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (isItemEditMode) {
-                        setEditingItemSafetyStockLookbackDays(next);
-                      } else {
-                        setItemSafetyStockLookbackDaysDraft(next);
-                      }
-                      setItemFormError(null);
-                    }}
-                    placeholder="例: 14"
-                  />
-                  <div className="text-sm font-medium text-muted-foreground">安全在庫 係数</div>
-                  <Input
-                    inputMode="decimal"
-                    value={isItemEditMode ? editingItemSafetyStockCoefficient : itemSafetyStockCoefficientDraft}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (isItemEditMode) {
-                        setEditingItemSafetyStockCoefficient(next);
-                      } else {
-                        setItemSafetyStockCoefficientDraft(next);
-                      }
-                      setItemFormError(null);
-                    }}
-                    placeholder="例: 1.1"
-                  />
-                  <div className="text-sm font-medium text-muted-foreground">賞味期限（日数）</div>
-                  <Input
-                    inputMode="decimal"
-                    value={isItemEditMode ? editingItemShelfLifeDays : itemShelfLifeDaysDraft}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (isItemEditMode) {
-                        setEditingItemShelfLifeDays(next);
-                      } else {
-                        setItemShelfLifeDaysDraft(next);
-                      }
-                      setItemFormError(null);
-                    }}
-                    placeholder="賞味期限（日数）"
-                  />
-                  <div className="text-sm font-medium text-muted-foreground">製造効率</div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      className="flex-1"
-                      inputMode="decimal"
-                      value={isItemEditMode ? editingItemProductionEfficiency : itemProductionEfficiencyDraft}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        if (isItemEditMode) {
-                          setEditingItemProductionEfficiency(next);
-                        } else {
-                          setItemProductionEfficiencyDraft(next);
-                        }
-                        setItemFormError(null);
-                      }}
-                      placeholder="1人1時間あたりの製造数量"
-                    />
-                    <span className="text-xs text-muted-foreground">{itemEfficiencyUnit}/人時</span>
-                  </div>
-                  <div className="text-sm font-medium text-muted-foreground">包装効率</div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      className="flex-1"
-                      inputMode="decimal"
-                      value={isItemEditMode ? editingItemPackagingEfficiency : itemPackagingEfficiencyDraft}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        if (isItemEditMode) {
-                          setEditingItemPackagingEfficiency(next);
-                        } else {
-                          setItemPackagingEfficiencyDraft(next);
-                        }
-                        setItemFormError(null);
-                      }}
-                      placeholder="1人1時間あたりの包装数量"
-                    />
-                    <span className="text-xs text-muted-foreground">{itemEfficiencyUnit}/人時</span>
-                  </div>
-                  <div className="text-sm font-medium text-muted-foreground">備考</div>
-                  <Textarea
-                    value={isItemEditMode ? editingItemNotes : itemNotesDraft}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (isItemEditMode) {
-                        setEditingItemNotes(next);
-                      } else {
-                        setItemNotesDraft(next);
-                      }
-                      setItemFormError(null);
-                    }}
-                    placeholder="自由記入（長文可）"
-                  />
-                </div>
-                {itemFormError ? <div className="mt-4 text-sm text-destructive">{itemFormError}</div> : null}
-              </div>
-            </div>
-
-            <DialogFooter className="flex flex-wrap items-center justify-between gap-2">
-              <Button variant="outline" onClick={() => handleItemModalOpenChange(false)}>
-                キャンセル
-              </Button>
-              <div className="flex flex-wrap items-center gap-2">
-                {isItemEditMode ? (
-                  <Button
-                    variant="destructive"
-                    onClick={() => {
-                      if (!editingItemId) return;
-                      const didDelete = onDeleteItem(editingItemId);
-                      if (didDelete) {
-                        setIsItemModalOpen(false);
-                      }
-                    }}
-                    disabled={!canEdit}
-                  >
-                    削除
-                  </Button>
-                ) : null}
-                <Button onClick={handleItemModalSave} disabled={!canEdit}>
-                  {isItemEditMode ? "保存" : "追加"}
-                </Button>
-              </div>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <ItemDialog
+          dialogModel={{
+            open: itemDialogState.open,
+            mode: itemDialogState.mode,
+            editingItemId: itemDialogState.editingItemId,
+            items,
+            modalWideClassName,
+            modalBodyClassName,
+            canEdit,
+          }}
+          onOpenChange={handleItemDialogOpenChange}
+          onSave={handleItemDialogSave}
+        />
 
         {/* 原料マスタモーダル */}
         <MaterialDialog
