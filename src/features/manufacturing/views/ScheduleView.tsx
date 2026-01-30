@@ -2,16 +2,6 @@ import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  BlockDetailDialog,
-  type BlockDetailDialogActions,
-  type BlockDetailDialogModel,
-} from "@/features/manufacturing/components/dialogs/BlockDetailDialog";
-import {
-  ConditionsDialog,
-  type ConditionsDialogActions,
-  type ConditionsDialogModel,
-} from "@/features/manufacturing/components/dialogs/ConditionsDialog";
 import type { ChatMessage } from "@/types/planning";
 
 type ScheduleViewProps = {
@@ -26,17 +16,6 @@ type ScheduleViewProps = {
   onOpenConstraints: () => void;
   canEdit: boolean;
   chatScrollRef: React.RefObject<HTMLDivElement>;
-  constraintsOpen: boolean;
-  onConstraintsOpenChange: (open: boolean) => void;
-  onSaveConstraints: () => void | Promise<void>;
-  constraintsDialogModel: ConditionsDialogModel;
-  constraintsDialogActions: ConditionsDialogActions;
-  modalBodyClassName: string;
-  modalWideClassName: string;
-  blockDetailDialogModel: BlockDetailDialogModel;
-  blockDetailDialogActions: BlockDetailDialogActions;
-  onPlanOpenChange: (open: boolean) => void;
-  onPlanSave: () => void;
 };
 
 export function ScheduleView({
@@ -51,17 +30,6 @@ export function ScheduleView({
   onOpenConstraints,
   canEdit,
   chatScrollRef,
-  constraintsOpen,
-  onConstraintsOpenChange,
-  onSaveConstraints,
-  constraintsDialogModel,
-  constraintsDialogActions,
-  modalBodyClassName,
-  modalWideClassName,
-  blockDetailDialogModel,
-  blockDetailDialogActions,
-  onPlanOpenChange,
-  onPlanSave,
 }: ScheduleViewProps): JSX.Element {
   return (
     <div className="mx-auto flex max-w-[1440px] flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[auto_1fr] lg:items-start lg:gap-4">
@@ -126,22 +94,7 @@ export function ScheduleView({
             </div>
           </CardContent>
         </Card>
-        <ConditionsDialog
-          open={constraintsOpen}
-          onOpenChange={onConstraintsOpenChange}
-          onSave={() => void onSaveConstraints()}
-          dialogModel={constraintsDialogModel}
-          dialogActions={constraintsDialogActions}
-          modalBodyClassName={modalBodyClassName}
-          modalWideClassName={modalWideClassName}
-        />
       </div>
-      <BlockDetailDialog
-        dialogModel={blockDetailDialogModel}
-        dialogActions={blockDetailDialogActions}
-        onOpenChange={onPlanOpenChange}
-        onSave={onPlanSave}
-      />
     </div>
   );
 }
