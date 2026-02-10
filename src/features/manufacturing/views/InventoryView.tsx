@@ -1,4 +1,3 @@
-import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toMD } from "@/lib/datetime";
 import { formatQuantity } from "@/lib/format";
@@ -62,7 +61,10 @@ export function InventoryView({
                     return (
                       <tr key={item.id} className="even:bg-muted/30">
                         <td className="sticky left-0 z-10 border-b border-r bg-white px-3 py-2 align-top">
-                          <div className="font-medium text-slate-800">{item.name}</div>
+                          <div className="font-medium text-slate-800">
+                            {item.name}
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">({item.unit})</span>
+                          </div>
                           <div className="text-xs text-muted-foreground">{item.publicId ?? item.id}</div>
                         </td>
                         {inventoryDates.map((date) => {
@@ -73,7 +75,6 @@ export function InventoryView({
                                 <div className="space-y-1 text-right">
                                   <div className="font-medium">
                                     {formatQuantity(entry.stock)}
-                                    <span className="ml-1 text-xs text-muted-foreground">{item.unit}</span>
                                   </div>
                                   <div className="text-[10px] text-muted-foreground">
                                     出荷 {formatQuantity(entry.shipped)}
