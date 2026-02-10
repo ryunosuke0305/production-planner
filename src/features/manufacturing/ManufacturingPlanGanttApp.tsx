@@ -2157,21 +2157,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const coefficient = Math.max(0, item.safetyStockCoefficient);
     const dailyForItem = dailyStocks.filter((entry) => entry.itemId === item.id);
     if (!dailyForItem.length) return null;
-    const latestDate = dailyForItem.reduce(
-      (latest, entry) => (entry.date > latest ? entry.date : latest),
-      dailyForItem[0].date
-    );
-    const latestDateValue = parseISODateJST(latestDate);
-    if (!latestDateValue) return null;
-    const startISO = toISODate(addDays(latestDateValue, -(lookbackDays - 1)));
+    const baseDateISO = toISODate(new Date());
+    const baseDateValue = parseISODateJST(baseDateISO);
+    if (!baseDateValue) return null;
+    const startISO = toISODate(addDays(baseDateValue, -(lookbackDays - 1)));
     const shippedTotal = dailyForItem.reduce((sum, entry) => {
-      if (entry.date < startISO || entry.date > latestDate) return sum;
+      if (entry.date < startISO || entry.date > baseDateISO) return sum;
       return sum + (Number.isFinite(entry.shipped) ? entry.shipped : 0);
     }, 0);
     return {
       safetyStock: Math.max(0, shippedTotal * coefficient),
       rangeStartISO: startISO,
-      rangeEndISO: latestDate,
+      rangeEndISO: baseDateISO,
     };
   };
 
