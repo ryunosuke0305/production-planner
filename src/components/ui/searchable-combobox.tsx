@@ -55,9 +55,16 @@ export function SearchableCombobox({
     setOpen(false);
   };
 
+  const handleClear = () => {
+    onChange("");
+    setQuery("");
+    setOpen(false);
+  };
+
   return (
     <div className="relative">
       <Input
+        className="pr-10"
         value={query}
         disabled={disabled}
         placeholder={placeholder}
@@ -87,6 +94,19 @@ export function SearchableCombobox({
           }, 120);
         }}
       />
+      {!disabled && query ? (
+        <button
+          type="button"
+          className="absolute right-2 top-1/2 z-10 -translate-y-1/2 rounded p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            handleClear();
+          }}
+          aria-label="品目入力をクリア"
+        >
+          ×
+        </button>
+      ) : null}
       {open ? (
         <div className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-md border bg-white shadow">
           {filteredOptions.length ? (
