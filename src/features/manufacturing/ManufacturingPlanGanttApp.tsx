@@ -271,6 +271,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [blocks, setBlocks] = useState<Block[]>(() => DEFAULT_BLOCKS());
 
   const [isPlanLoaded, setIsPlanLoaded] = useState(false);
+  const [hasHydratedPlan, setHasHydratedPlan] = useState(false);
+  const [planLoadError, setPlanLoadError] = useState<string | null>(null);
   const [planSaveStatus, setPlanSaveStatus] = useState<"idle" | "saving" | "success" | "error">("idle");
   const [planSaveError, setPlanSaveError] = useState<string | null>(null);
 
@@ -279,6 +281,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const planSaveInFlightRef = useRef(false);
   const queuedPlanPayloadRef = useRef<PlanPayload | null>(null);
   const hasQueuedPlanPayloadRef = useRef(false);
+  const lastAutoSaveSkipReasonRef = useRef<string | null>(null);
 
   const [openPlan, setOpenPlan] = useState(false);
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
@@ -1320,12 +1323,28 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (!authUser) return;
     let cancelled = false;
     const loadPlan = async () => {
+      setHasHydratedPlan(false);
+      setPlanLoadError(null);
       try {
         const response = await fetch("/api/plan");
-        if (!response.ok || response.status === 204) return;
-        const raw = (await response.json()) as unknown;
+        if (response.status === 204) {
+          setPlanLoadError("保存済み計画が未作成のため、自動保存は無効です。明示的に操作してから保存してください。");
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`読込失敗: 計画データの取得に失敗しました。（HTTP ${response.status}）`);
+        }
+        let raw: unknown;
+        try {
+          raw = (await response.json()) as unknown;
+        } catch {
+          throw new Error("読込失敗: サーバー応答JSONの解析に失敗しました。自動保存は停止しています。");
+        }
         const payload = parsePlanPayload(raw);
-        if (!payload || cancelled) return;
+        if (!payload) {
+          throw new Error("読込失敗: 計画データ形式が不正です。自動保存は停止しています。");
+        }
+        if (cancelled) return;
 
         const parsedWeekStart = parseISODateJST(payload.weekStartISO) ?? new Date(payload.weekStartISO);
         const effectiveWeekStart = Number.isNaN(parsedWeekStart.getTime()) ? getDefaultWeekStart() : parsedWeekStart;
@@ -1380,8 +1399,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         });
         const fallbackBlocks = mappedBlocks.length ? mappedBlocks : DEFAULT_BLOCKS();
         setBlocks(assignLaneRowsByDay(fallbackBlocks));
-      } catch {
-        // 読み込み失敗時は既定値を維持
+        setHasHydratedPlan(true);
+        setPlanLoadError(null);
+        console.info("[plan:load] 計画データの取り込み完了。自動保存を有効化します。");
+      } catch (error) {
+        if (cancelled) return;
+        const message =
+          error instanceof Error
+            ? error.message
+            : "読込失敗: 計画データの読込中に不明なエラーが発生しました。自動保存は停止しています。";
+        setHasHydratedPlan(false);
+        setPlanLoadError(message);
+        console.warn("[plan:load] 計画データの取り込み失敗。再読込中の上書き保存を防ぐため自動保存を無効のまま維持します。", {
+          message,
+        });
       } finally {
         if (!cancelled) setIsPlanLoaded(true);
       }
@@ -1442,22 +1473,41 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }, [authUser]);
 
   useEffect(() => {
-    if (!isPlanLoaded || !canEditBlocks) return;
+    const skipReason = !isPlanLoaded
+      ? "plan-not-loaded"
+      : !hasHydratedPlan
+        ? "plan-not-hydrated"
+        : !canEditBlocks
+          ? "permission-denied"
+          : null;
+    if (skipReason) {
+      if (lastAutoSaveSkipReasonRef.current !== skipReason) {
+        if (skipReason === "plan-not-hydrated") {
+          console.info("[plan:auto-save] 再読込中または読込失敗のため自動保存を停止中。上書き保存は実行しません。");
+        }
+        lastAutoSaveSkipReasonRef.current = skipReason;
+      }
+      return;
+    }
+    lastAutoSaveSkipReasonRef.current = null;
 
-    const blocksWithDates = blocks.map((block) => {
-      const startAt = slotToDateTime(block.start, planCalendarDays, planCalendar.rawHoursByDay, planCalendar.slotsPerDay);
-      const endAt = slotBoundaryToDateTime(
-        block.start + block.len,
-        planCalendarDays,
-        planCalendar.rawHoursByDay,
-        planCalendar.slotsPerDay
-      );
-      return {
-        ...block,
-        startAt: startAt?.toISOString(),
-        endAt: endAt?.toISOString(),
-      };
-    });
+    const blocksWithDates = blocks
+      .map((block) => {
+        const startAt = slotToDateTime(block.start, planCalendarDays, planCalendar.rawHoursByDay, planCalendar.slotsPerDay);
+        const endAt = slotBoundaryToDateTime(
+          block.start + block.len,
+          planCalendarDays,
+          planCalendar.rawHoursByDay,
+          planCalendar.slotsPerDay
+        );
+        if (!startAt || !endAt) return null;
+        return {
+          ...block,
+          startAt: startAt.toISOString(),
+          endAt: endAt.toISOString(),
+        };
+      })
+      .filter((block): block is Block => block !== null);
 
     queuedPlanPayloadRef.current = {
       version: 1,
@@ -1490,6 +1540,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }, [
     blocks,
     canEditBlocks,
+    hasHydratedPlan,
     isPlanLoaded,
     items,
     materialsMaster,
@@ -1733,6 +1784,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             approved: false,
             createdBy: operatorName,
             updatedBy: operatorName,
+            startAt: "",
+            endAt: "",
           };
           next = [...next, placeBlockInLane(candidate)];
         }
@@ -2124,6 +2177,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       approved: false,
       createdBy: operatorName,
       updatedBy: operatorName,
+      startAt: "",
+      endAt: "",
     };
     const placedBlock = placeBlockInLane(b);
     setBlocks((prev) => assignLaneRowsByDay([...prev, placedBlock]));
@@ -2604,14 +2659,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
       <div className="space-y-1">
         <div className="text-2xl font-semibold tracking-tight">製造計画</div>
+        {planLoadError ? <div className="text-xs text-amber-700">{planLoadError}</div> : null}
         {canEditBlocks && isPlanLoaded ? (
           <div className="text-xs">
-            {planSaveStatus === "saving" ? (
+            {!hasHydratedPlan ? (
+              <span className="text-amber-700">計画読込が未完了のため、自動保存を停止中です。</span>
+            ) : planSaveStatus === "saving" ? (
               <span className="text-blue-600">保存中...</span>
             ) : planSaveStatus === "success" ? (
               <span className="text-emerald-600">保存完了</span>
             ) : planSaveStatus === "error" ? (
-              <span className="text-red-600">保存失敗: {planSaveError ?? "再度お試しください。"}</span>
+              <span className="text-red-600">自動保存失敗: {planSaveError ?? "再試行してください。"}</span>
             ) : (
               <span className="text-muted-foreground">未保存の変更は自動で保存されます。</span>
             )}
