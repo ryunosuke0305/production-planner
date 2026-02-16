@@ -53,8 +53,8 @@ export type Block = {
   approved: boolean;
   createdBy?: string;
   updatedBy?: string;
-  startAt?: string;
-  endAt?: string;
+  startAt: string;
+  endAt: string;
 };
 
 export type ExportPayloadV1 = {

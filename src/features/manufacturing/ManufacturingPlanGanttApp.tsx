@@ -1491,20 +1491,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
     lastAutoSaveSkipReasonRef.current = null;
 
-    const blocksWithDates = blocks.map((block) => {
-      const startAt = slotToDateTime(block.start, planCalendarDays, planCalendar.rawHoursByDay, planCalendar.slotsPerDay);
-      const endAt = slotBoundaryToDateTime(
-        block.start + block.len,
-        planCalendarDays,
-        planCalendar.rawHoursByDay,
-        planCalendar.slotsPerDay
-      );
-      return {
-        ...block,
-        startAt: startAt?.toISOString(),
-        endAt: endAt?.toISOString(),
-      };
-    });
+    const blocksWithDates = blocks
+      .map((block) => {
+        const startAt = slotToDateTime(block.start, planCalendarDays, planCalendar.rawHoursByDay, planCalendar.slotsPerDay);
+        const endAt = slotBoundaryToDateTime(
+          block.start + block.len,
+          planCalendarDays,
+          planCalendar.rawHoursByDay,
+          planCalendar.slotsPerDay
+        );
+        if (!startAt || !endAt) return null;
+        return {
+          ...block,
+          startAt: startAt.toISOString(),
+          endAt: endAt.toISOString(),
+        };
+      })
+      .filter((block): block is Block => block !== null);
 
     queuedPlanPayloadRef.current = {
       version: 1,
@@ -1781,6 +1784,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             approved: false,
             createdBy: operatorName,
             updatedBy: operatorName,
+            startAt: "",
+            endAt: "",
           };
           next = [...next, placeBlockInLane(candidate)];
         }
@@ -2172,6 +2177,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       approved: false,
       createdBy: operatorName,
       updatedBy: operatorName,
+      startAt: "",
+      endAt: "",
     };
     const placedBlock = placeBlockInLane(b);
     setBlocks((prev) => assignLaneRowsByDay([...prev, placedBlock]));

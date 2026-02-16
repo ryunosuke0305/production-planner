@@ -34,8 +34,8 @@ export function uid(prefix = "b"): string {
 }
 
 export const DEFAULT_BLOCKS = (): Block[] => [
-  { id: uid("b"), itemId: "A", start: 1, len: 2, amount: 40, memo: "", approved: false },
-  { id: uid("b"), itemId: "B", start: 6, len: 2, amount: 30, memo: "段取り注意", approved: false },
+  { id: uid("b"), itemId: "A", start: 1, len: 2, amount: 40, memo: "", approved: false, startAt: "", endAt: "" },
+  { id: uid("b"), itemId: "B", start: 6, len: 2, amount: 30, memo: "段取り注意", approved: false, startAt: "", endAt: "" },
 ];
 
 export function asString(value: unknown, fallback = ""): string {
@@ -325,6 +325,9 @@ export function sanitizeBlocks(raw: unknown): Block[] {
       const id = asString(record.id).trim();
       const itemId = asString(record.itemId).trim();
       if (!id || !itemId) return null;
+      const startAt = asString(record.startAt || record.start_at).trim();
+      const endAt = asString(record.endAt || record.end_at).trim();
+      if (!startAt || !endAt) return null;
       const block: Block = {
         id,
         itemId,
@@ -339,8 +342,8 @@ export function sanitizeBlocks(raw: unknown): Block[] {
         approved: asBoolean(record.approved, false),
         createdBy: asString(record.createdBy || record.created_by),
         updatedBy: asString(record.updatedBy || record.updated_by),
-        startAt: asString(record.startAt || record.start_at),
-        endAt: asString(record.endAt || record.end_at),
+        startAt,
+        endAt,
       };
       return block;
     })
