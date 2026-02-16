@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -177,16 +177,28 @@ export function ItemDialog({ dialogModel, onOpenChange, onSave }: ItemDialogProp
       setItemFormError("同じ品目コードがすでに登録されています。");
       return;
     }
-    if (isEditMode && !dialogModel.editingItemId) return;
-    const didSave = onSave({
-      action: isEditMode ? "update" : "create",
-      itemId: isEditMode ? dialogModel.editingItemId ?? "" : undefined,
-      values: {
-        ...formValues,
-        name: nextName,
-        publicId: nextPublicId,
-      },
-    });
+    const nextValues = {
+      ...formValues,
+      name: nextName,
+      publicId: nextPublicId,
+    } satisfies ItemDialogValues;
+
+    let didSave = false;
+    if (isEditMode) {
+      if (!dialogModel.editingItemId) {
+        return;
+      }
+      didSave = onSave({
+        action: "update",
+        itemId: dialogModel.editingItemId,
+        values: nextValues,
+      } satisfies ItemDialogCommitPayload);
+    } else {
+      didSave = onSave({
+        action: "create",
+        values: nextValues,
+      } satisfies ItemDialogCommitPayload);
+    }
     if (didSave) {
       onOpenChange(false);
     }

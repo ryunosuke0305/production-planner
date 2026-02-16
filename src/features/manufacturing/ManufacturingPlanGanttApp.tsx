@@ -1,9 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -35,7 +34,6 @@ import {
   ITEM_MASTER_EXPORT_HEADERS,
   MATERIAL_HEADERS,
   MATERIAL_MASTER_EXPORT_HEADERS,
-  PLANNING_POLICY_LABELS,
   SAMPLE_ITEMS,
   SAMPLE_MATERIALS,
 } from "@/constants/planning";
