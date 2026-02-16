@@ -1,4 +1,4 @@
-import React from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,7 +37,7 @@ export type BlockDetailDialogModel = {
   modalBodyClassName: string;
   planDensity: Density;
   planCalendarDays: CalendarDay[];
-  planHoursByDay: number[];
+  planHoursByDay: Array<Array<number | null>>;
   planSlotCount: number;
   activeBlock: Block | null;
   activeItem: Item | null;
@@ -58,10 +58,10 @@ export type BlockDetailDialogActions = {
   onChangeItemId: (value: string) => void;
   onChangeAmount: (value: string) => void;
   onChangeMemo: (value: string) => void;
-  setFormApproved: React.Dispatch<React.SetStateAction<boolean>>;
-  setBlocks: React.Dispatch<React.SetStateAction<Block[]>>;
-  setActiveBlockId: React.Dispatch<React.SetStateAction<string | null>>;
-  setPendingBlockId: React.Dispatch<React.SetStateAction<string | null>>;
+  setFormApproved: Dispatch<SetStateAction<boolean>>;
+  setBlocks: Dispatch<SetStateAction<Block[]>>;
+  setActiveBlockId: Dispatch<SetStateAction<string | null>>;
+  setPendingBlockId: Dispatch<SetStateAction<string | null>>;
 };
 
 type BlockDetailDialogProps = {
