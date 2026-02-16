@@ -2535,6 +2535,29 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 .filter((entry) => entry.viewDayIdx === dayIdx)
                 .sort((a, b) => a.viewStartInDay - b.viewStartInDay);
 
+              const laneRows: number[] = [];
+              const stackedLaneBlocks = laneBlocks.map((entry) => {
+                let rowIndex = laneRows.findIndex((rowEnd) => entry.viewStartInDay >= rowEnd);
+                if (rowIndex < 0) {
+                  laneRows.push(entry.viewStartInDay + entry.viewLen);
+                  rowIndex = laneRows.length - 1;
+                } else {
+                  laneRows[rowIndex] = entry.viewStartInDay + entry.viewLen;
+                }
+
+                return {
+                  ...entry,
+                  rowIndex,
+                };
+              });
+
+              const laneTopPadding = 8;
+              const laneBottomPadding = 12;
+              const laneRowGap = 8;
+              const blockHeight = 52;
+              const laneRowCount = Math.max(1, laneRows.length);
+              const laneHeight = laneTopPadding + laneBottomPadding + laneRowCount * blockHeight + (laneRowCount - 1) * laneRowGap;
+
               return (
                 <React.Fragment key={date}>
                   <div className="sticky left-0 z-40 bg-white border-b border-r p-3">
@@ -2547,7 +2570,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
                   <div
                     className="relative border-b overflow-hidden"
-                    style={{ gridColumn: `span ${slotsPerDay}`, height: 72 }}
+                    style={{ gridColumn: `span ${slotsPerDay}`, height: laneHeight }}
                     ref={(el) => {
                       laneRefs.current[String(dayIdx)] = el;
                     }}
@@ -2563,9 +2586,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   >
                     <div className="absolute inset-0" style={{ backgroundImage: slotGridBg, opacity: 0.8 }} />
 
-                    {laneBlocks.map(({ block, viewStartInDay, viewLen }) => {
+                    {stackedLaneBlocks.map(({ block, viewStartInDay, viewLen, rowIndex }) => {
                       const left = viewStartInDay * colW;
                       const width = viewLen * colW;
+                      const top = laneTopPadding + rowIndex * (blockHeight + laneRowGap);
                       const isActive = block.id === activeBlockId;
                       const item = itemMap.get(block.itemId);
                       const toneClass = block.approved
@@ -2580,8 +2604,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       return (
                         <motion.div
                           key={block.id}
-                          className={"absolute top-[8px] h-[52px] rounded-xl border shadow-sm touch-none" + toneClass}
-                          style={{ left, width }}
+                          className={"absolute h-[52px] rounded-xl border shadow-sm touch-none" + toneClass}
+                          style={{ left, width, top }}
                           whileTap={{ scale: 0.99 }}
                           onClick={(ev) => {
                             if (suppressClickRef.current) return;
