@@ -270,6 +270,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [blocks, setBlocks] = useState<Block[]>(() => DEFAULT_BLOCKS());
 
   const [isPlanLoaded, setIsPlanLoaded] = useState(false);
+  const [planSaveStatus, setPlanSaveStatus] = useState<"idle" | "saving" | "success" | "error">("idle");
+  const [planSaveError, setPlanSaveError] = useState<string | null>(null);
+
+  const planSaveDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const planSaveAbortControllerRef = useRef<AbortController | null>(null);
+  const planSaveInFlightRef = useRef(false);
+  const queuedPlanPayloadRef = useRef<PlanPayload | null>(null);
+  const hasQueuedPlanPayloadRef = useRef(false);
 
   const [openPlan, setOpenPlan] = useState(false);
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
@@ -310,6 +318,51 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       ...headers,
       "X-CSRF-Token": csrfToken,
     };
+  };
+
+  const postPlanPayload = async (payload: PlanPayload) => {
+    if (planSaveInFlightRef.current) {
+      queuedPlanPayloadRef.current = payload;
+      hasQueuedPlanPayloadRef.current = true;
+      return;
+    }
+
+    planSaveInFlightRef.current = true;
+    setPlanSaveStatus("saving");
+    setPlanSaveError(null);
+    const controller = new AbortController();
+    planSaveAbortControllerRef.current = controller;
+
+    try {
+      const response = await fetch("/api/plan", {
+        method: "POST",
+        headers: withCsrfHeader({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`保存に失敗しました。（HTTP ${response.status}）`);
+      }
+      setPlanSaveStatus("success");
+      setPlanSaveError(null);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      const message = error instanceof Error ? error.message : "保存に失敗しました。";
+      setPlanSaveStatus("error");
+      setPlanSaveError(message);
+    } finally {
+      if (planSaveAbortControllerRef.current === controller) {
+        planSaveAbortControllerRef.current = null;
+      }
+      planSaveInFlightRef.current = false;
+
+      if (hasQueuedPlanPayloadRef.current && queuedPlanPayloadRef.current) {
+        const latestPayload = queuedPlanPayloadRef.current;
+        hasQueuedPlanPayloadRef.current = false;
+        queuedPlanPayloadRef.current = null;
+        void postPlanPayload(latestPayload);
+      }
+    }
   };
 
   const fetchCsrfToken = async () => {
@@ -1384,49 +1437,49 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   useEffect(() => {
     if (!isPlanLoaded || !canEditBlocks) return;
-    const controller = new AbortController();
-    const savePlan = async () => {
-      try {
-        const blocksWithDates = blocks.map((block) => {
-          const startAt = slotToDateTime(
-            block.start,
-            planCalendarDays,
-            planCalendar.rawHoursByDay,
-            planCalendar.slotsPerDay
-          );
-          const endAt = slotBoundaryToDateTime(
-            block.start + block.len,
-            planCalendarDays,
-            planCalendar.rawHoursByDay,
-            planCalendar.slotsPerDay
-          );
-          return {
-            ...block,
-            startAt: startAt?.toISOString(),
-            endAt: endAt?.toISOString(),
-          };
-        });
-        await fetch("/api/plan", {
-          method: "POST",
-          headers: withCsrfHeader({ "Content-Type": "application/json" }),
-          body: JSON.stringify({
-            version: 1,
-            weekStartISO: planCalendarDays[0]?.date ?? toISODate(planWeekStart),
-            density: planDensity,
-            calendarDays: planCalendarDays,
-            materials: materialsMaster,
-            items,
-            blocks: blocksWithDates,
-          } satisfies PlanPayload),
-          signal: controller.signal,
-        });
-      } catch {
-        // 保存失敗時は再度の変更で再送される
-      }
-    };
-    void savePlan();
+
+    const blocksWithDates = blocks.map((block) => {
+      const startAt = slotToDateTime(block.start, planCalendarDays, planCalendar.rawHoursByDay, planCalendar.slotsPerDay);
+      const endAt = slotBoundaryToDateTime(
+        block.start + block.len,
+        planCalendarDays,
+        planCalendar.rawHoursByDay,
+        planCalendar.slotsPerDay
+      );
+      return {
+        ...block,
+        startAt: startAt?.toISOString(),
+        endAt: endAt?.toISOString(),
+      };
+    });
+
+    queuedPlanPayloadRef.current = {
+      version: 1,
+      weekStartISO: planCalendarDays[0]?.date ?? toISODate(planWeekStart),
+      density: planDensity,
+      calendarDays: planCalendarDays,
+      materials: materialsMaster,
+      items,
+      blocks: blocksWithDates,
+    } satisfies PlanPayload;
+    hasQueuedPlanPayloadRef.current = true;
+
+    if (planSaveDebounceTimerRef.current) {
+      clearTimeout(planSaveDebounceTimerRef.current);
+    }
+    planSaveDebounceTimerRef.current = setTimeout(() => {
+      if (!hasQueuedPlanPayloadRef.current || !queuedPlanPayloadRef.current) return;
+      const latestPayload = queuedPlanPayloadRef.current;
+      hasQueuedPlanPayloadRef.current = false;
+      queuedPlanPayloadRef.current = null;
+      void postPlanPayload(latestPayload);
+    }, 500);
+
     return () => {
-      controller.abort();
+      if (planSaveDebounceTimerRef.current) {
+        clearTimeout(planSaveDebounceTimerRef.current);
+        planSaveDebounceTimerRef.current = null;
+      }
     };
   }, [
     blocks,
@@ -1439,6 +1492,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     planDensity,
     planWeekStart,
   ]);
+
+  useEffect(
+    () => () => {
+      if (planSaveDebounceTimerRef.current) {
+        clearTimeout(planSaveDebounceTimerRef.current);
+        planSaveDebounceTimerRef.current = null;
+      }
+      if (planSaveAbortControllerRef.current) {
+        planSaveAbortControllerRef.current.abort();
+        planSaveAbortControllerRef.current = null;
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (!chatScrollRef.current) return;
@@ -2477,6 +2544,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
       <div className="space-y-1">
         <div className="text-2xl font-semibold tracking-tight">製造計画</div>
+        {canEditBlocks && isPlanLoaded ? (
+          <div className="text-xs">
+            {planSaveStatus === "saving" ? (
+              <span className="text-blue-600">保存中...</span>
+            ) : planSaveStatus === "success" ? (
+              <span className="text-emerald-600">保存完了</span>
+            ) : planSaveStatus === "error" ? (
+              <span className="text-red-600">保存失敗: {planSaveError ?? "再度お試しください。"}</span>
+            ) : (
+              <span className="text-muted-foreground">未保存の変更は自動で保存されます。</span>
+            )}
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
