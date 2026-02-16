@@ -45,8 +45,14 @@ export type CalendarDay = {
 export type Block = {
   id: string;
   itemId: string;
-  start: number;
-  len: number;
+  /**
+   * @deprecated 旧フォーマット互換（読込専用）。新規保存では startAt/endAt を使用すること。
+   */
+  start?: number;
+  /**
+   * @deprecated 旧フォーマット互換（読込専用）。新規保存では startAt/endAt を使用すること。
+   */
+  len?: number;
   laneRow?: number;
   amount: number;
   memo: string;

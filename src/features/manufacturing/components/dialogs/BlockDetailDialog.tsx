@@ -132,7 +132,7 @@ export function BlockDetailDialog({
                   density: planDensity,
                   calendarDays: planCalendarDays,
                   hoursByDay: planHoursByDay,
-                  slotIndex: activeBlock.start,
+                  slotIndex: activeBlock.start ?? 0,
                 })}
                 {activeBlock.len ? `（${durationLabel(activeBlock.len, planDensity)}）` : ""}
               </span>
@@ -245,14 +245,14 @@ export function BlockDetailDialog({
                         density: planDensity,
                         calendarDays: planCalendarDays,
                         hoursByDay: planHoursByDay,
-                        slotIndex: activeBlock.start,
+                        slotIndex: activeBlock.start ?? 0,
                       })}
                       <span className="mx-1 text-muted-foreground">→</span>
                       {slotLabelFromCalendar({
                         density: planDensity,
                         calendarDays: planCalendarDays,
                         hoursByDay: planHoursByDay,
-                        slotIndex: Math.min(planSlotCount - 1, activeBlock.start + activeBlock.len - 1),
+                        slotIndex: Math.min(planSlotCount - 1, (activeBlock.start ?? 0) + (activeBlock.len ?? 1) - 1),
                       })}
                     </div>
                   </div>

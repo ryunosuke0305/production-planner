@@ -4,6 +4,37 @@ import { openPlanDatabase, savePlanPayload } from "./plan-db.js";
 
 const planJsonPath = path.resolve(process.cwd(), "data", "plan.json");
 
+const SLOT_HOURS = {
+  hour: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+  "2hour": [8, 10, 12, 14, 16],
+  day: [8],
+};
+
+function slotsPerDay(density) {
+  return SLOT_HOURS[density]?.length ?? SLOT_HOURS.hour.length;
+}
+
+function addDaysISO(baseISO, days) {
+  const base = new Date(`${baseISO}T00:00:00`);
+  if (Number.isNaN(base.getTime())) return null;
+  const d = new Date(base);
+  d.setDate(base.getDate() + days);
+  return toISODate(d);
+}
+
+function legacySlotToISODateTime(weekStartISO, density, slotIndex, asBoundary = false) {
+  const perDay = slotsPerDay(density);
+  const safeSlot = Math.max(0, Math.trunc(slotIndex));
+  const dayIndex = Math.floor(safeSlot / perDay);
+  const slotInDay = safeSlot % perDay;
+  const dateISO = addDaysISO(weekStartISO, dayIndex);
+  if (!dateISO) return null;
+  const dayHours = SLOT_HOURS[density] ?? SLOT_HOURS.hour;
+  const hour = asBoundary ? (slotInDay >= dayHours.length ? 18 : dayHours[slotInDay]) : dayHours[slotInDay];
+  if (!Number.isFinite(hour)) return null;
+  return new Date(`${dateISO}T${String(hour).padStart(2, "0")}:00:00.000Z`).toISOString();
+}
+
 function asString(value) {
   return typeof value === "string" ? value : "";
 }
@@ -161,11 +192,17 @@ function parsePlanPayload(raw) {
       const id = asString(block.id).trim();
       const itemId = asString(block.itemId).trim();
       if (!id || !itemId) return null;
+      const start = Math.trunc(asNumber(block.start, 0));
+      const len = Math.max(1, Math.trunc(asNumber(block.len, 1)));
       return {
         id,
         itemId,
-        start: Math.trunc(asNumber(block.start, 0)),
-        len: Math.max(1, Math.trunc(asNumber(block.len, 1))),
+        start,
+        len,
+        startAt: asString(block.startAt || block.start_at).trim() || legacySlotToISODateTime(weekStartISO, normalizeDensity(record.density), start, false),
+        endAt:
+          asString(block.endAt || block.end_at).trim() ||
+          legacySlotToISODateTime(weekStartISO, normalizeDensity(record.density), start + len, true),
         amount: asNumber(block.amount, 0),
         memo: asString(block.memo),
         approved: asBoolean(block.approved, false),

@@ -34,8 +34,28 @@ export function uid(prefix = "b"): string {
 }
 
 export const DEFAULT_BLOCKS = (): Block[] => [
-  { id: uid("b"), itemId: "A", start: 1, len: 2, amount: 40, memo: "", approved: false, startAt: "", endAt: "" },
-  { id: uid("b"), itemId: "B", start: 6, len: 2, amount: 30, memo: "段取り注意", approved: false, startAt: "", endAt: "" },
+  {
+    id: uid("b"),
+    itemId: "A",
+    start: 1,
+    len: 2,
+    amount: 40,
+    memo: "",
+    approved: false,
+    startAt: "2026-01-12T09:00:00.000Z",
+    endAt: "2026-01-12T11:00:00.000Z",
+  },
+  {
+    id: uid("b"),
+    itemId: "B",
+    start: 6,
+    len: 2,
+    amount: 30,
+    memo: "段取り注意",
+    approved: false,
+    startAt: "2026-01-12T14:00:00.000Z",
+    endAt: "2026-01-12T16:00:00.000Z",
+  },
 ];
 
 export function asString(value: unknown, fallback = ""): string {
@@ -316,18 +336,33 @@ export function sanitizeCalendarDays(raw: unknown): CalendarDay[] {
     .filter((day): day is CalendarDay => day !== null);
 }
 
-export function sanitizeBlocks(raw: unknown): Block[] {
+export function sanitizeBlocks(
+  raw: unknown,
+  options?: { onError?: (message: string, context?: Record<string, unknown>) => void }
+): Block[] {
   if (!Array.isArray(raw)) return [];
+  const onError = options?.onError;
   return raw
-    .map((entry): Block | null => {
+    .map((entry, index): Block | null => {
       if (!entry || typeof entry !== "object") return null;
       const record = entry as Record<string, unknown>;
       const id = asString(record.id).trim();
       const itemId = asString(record.itemId).trim();
-      if (!id || !itemId) return null;
+      if (!id || !itemId) {
+        onError?.("ブロックの id または itemId が不足しています。", { index });
+        return null;
+      }
       const startAt = asString(record.startAt || record.start_at).trim();
       const endAt = asString(record.endAt || record.end_at).trim();
-      if (!startAt || !endAt) return null;
+      if (!startAt || !endAt) {
+        onError?.("ブロックの startAt/endAt が不足しているためスキップしました。", {
+          id,
+          index,
+          hasStartAt: Boolean(startAt),
+          hasEndAt: Boolean(endAt),
+        });
+        return null;
+      }
       const block: Block = {
         id,
         itemId,
@@ -364,7 +399,11 @@ export function parsePlanPayload(raw: unknown): PlanPayload | null {
     calendarDays,
     materials: sanitizeMaterials(record.materials),
     items: sanitizeItems(record.items),
-    blocks: sanitizeBlocks(record.blocks),
+    blocks: sanitizeBlocks(record.blocks, {
+      onError: (message, context) => {
+        console.warn("[sanitizeBlocks]", message, context ?? {});
+      },
+    }),
   };
 }
 
