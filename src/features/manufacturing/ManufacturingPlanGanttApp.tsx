@@ -247,7 +247,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         const planWeekStartDate = parseISODateJST(viewStartISO) ?? new Date(viewStartISO);
         setPlanWeekStart(planWeekStartDate);
         if (shiftSlots > 0) {
-          setBlocks((prev) => prev.map((b) => ({ ...b, start: b.start + shiftSlots })));
+          setBlocks((prev) => assignLaneRowsByDay(prev.map((b) => ({ ...b, start: b.start + shiftSlots }))));
         }
       }
       return;
@@ -1377,7 +1377,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             len,
           };
         });
-        setBlocks(mappedBlocks.length ? mappedBlocks : DEFAULT_BLOCKS());
+        const fallbackBlocks = mappedBlocks.length ? mappedBlocks : DEFAULT_BLOCKS();
+        setBlocks(assignLaneRowsByDay(fallbackBlocks));
       } catch {
         // 読み込み失敗時は既定値を維持
       } finally {
@@ -1598,6 +1599,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       amount: b.amount,
       memo: b.memo,
       approved: b.approved,
+      laneRow: b.laneRow,
       startAt: slotToDateTime(
         b.start,
         snapshot.calendarDays,
@@ -1731,7 +1733,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             createdBy: operatorName,
             updatedBy: operatorName,
           };
-          next = [...next, resolveOverlap(candidate, next)];
+          next = [...next, placeBlockInLane(candidate)];
         }
 
         if (action.type === "update_block") {
@@ -1744,20 +1746,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             const itemId = resolveItemId(action) ?? b.itemId;
             const start = resolveSlotIndex(action, context) ?? b.start;
             const len = clamp(action.len ?? b.len, 1, slotCount - start);
-            return resolveOverlap(
-              {
-                ...b,
-                itemId,
-                start,
-                len,
-                amount: action.amount ?? b.amount,
-                memo: action.memo ?? b.memo,
-                approved: false,
-                createdBy: b.createdBy ?? operatorName,
-                updatedBy: operatorName,
-              },
-              next
-            );
+            return placeBlockInLane({
+              ...b,
+              itemId,
+              start,
+              len,
+              amount: action.amount ?? b.amount,
+              memo: action.memo ?? b.memo,
+              approved: false,
+              createdBy: b.createdBy ?? operatorName,
+              updatedBy: operatorName,
+            });
           });
         }
 
@@ -1769,7 +1768,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           next = next.filter((b) => b.id !== targetId);
         }
       });
-      return next;
+      return assignLaneRowsByDay(next);
     });
     return warnings;
   };
@@ -1825,7 +1824,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       "startSlotかstartLabelのどちらかは必ず指定してください。",
       "既存ブロックの更新/削除ではblockIdを優先してください。",
       "承認済みのブロックは編集・削除できません。",
-      "ユーザーが「空いてるところ」「空き枠」「この日までに」などの曖昧な指示を出した場合は、blocksの重複を避けつつ、条件に合う最も早いスロットを選んでstartSlotを必ず指定してください。",
+      "ユーザーが「空いてるところ」「空き枠」「この日までに」などの曖昧な指示を出した場合は、条件に合う最も早いスロットを選び、必要に応じて同時間帯の重なり配置も許容したうえでstartSlotを必ず指定してください。",
       "ブロックを作成または移動する場合は、なぜそのスロットを選んだかの根拠をmemoに必ず記載してください。",
       "計画データの対象期間はrangeStartISO〜rangeEndISOです。範囲外の指示は避けてください。",
     ].join("\n");
@@ -2029,6 +2028,82 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setOpenPlan(false);
   };
 
+  const resolvePlanDayWindow = (slotIndex: number) => {
+    const maxDayIndex = Math.max(0, planCalendar.rawHoursByDay.length - 1);
+    const planDayIndex = clamp(Math.floor(slotIndex / planSlotsPerDay), 0, maxDayIndex);
+    const daySlots = planCalendar.rawHoursByDay[planDayIndex]?.length ?? 0;
+    const dayStart = planDayIndex * planSlotsPerDay;
+    const dayEnd = dayStart + daySlots;
+    return { planDayIndex, daySlots, dayStart, dayEnd };
+  };
+
+  const placeBlockInLane = (candidate: Block): Block => {
+    let start = clamp(candidate.start, 0, planSlotCount - 1);
+    const { daySlots, dayStart, dayEnd } = resolvePlanDayWindow(start);
+    if (!daySlots) {
+      return {
+        ...candidate,
+        start,
+        len: clamp(candidate.len, 1, planSlotCount - start),
+      };
+    }
+    start = clamp(start, dayStart, dayEnd - 1);
+    const len = clamp(candidate.len, 1, dayEnd - start);
+    return { ...candidate, start, len };
+  };
+
+  const assignLaneRowsByDay = (currentBlocks: Block[]) => {
+    const normalized = currentBlocks.map((block) => placeBlockInLane(block));
+    const blocksByDay = new Map<number, Block[]>();
+
+    normalized.forEach((block) => {
+      const { planDayIndex } = resolvePlanDayWindow(block.start);
+      const list = blocksByDay.get(planDayIndex) ?? [];
+      list.push(block);
+      blocksByDay.set(planDayIndex, list);
+    });
+
+    const laneRowById = new Map<string, number>();
+
+    blocksByDay.forEach((dayBlocks) => {
+      const sortedDayBlocks = [...dayBlocks]
+        .sort((a, b) => {
+          if (a.start !== b.start) return a.start - b.start;
+          if (a.len !== b.len) return a.len - b.len;
+          if ((a.laneRow ?? Number.MAX_SAFE_INTEGER) !== (b.laneRow ?? Number.MAX_SAFE_INTEGER)) {
+            return (a.laneRow ?? Number.MAX_SAFE_INTEGER) - (b.laneRow ?? Number.MAX_SAFE_INTEGER);
+          }
+          return a.id.localeCompare(b.id);
+        });
+
+      const rowEnds: number[] = [];
+      for (const block of sortedDayBlocks) {
+        const blockStart = block.start;
+        const blockEnd = block.start + block.len;
+        const availableRows: number[] = [];
+        rowEnds.forEach((rowEnd, index) => {
+          if (blockStart >= rowEnd) availableRows.push(index);
+        });
+
+        const existingRow = block.laneRow;
+        const preferred =
+          typeof existingRow === "number" && Number.isFinite(existingRow) && existingRow >= 0
+            ? Math.trunc(existingRow)
+            : -1;
+        const rowIndex = availableRows.includes(preferred)
+          ? preferred
+          : availableRows[0] ?? rowEnds.length;
+        rowEnds[rowIndex] = blockEnd;
+        laneRowById.set(block.id, rowIndex);
+      }
+    });
+
+    return normalized.map((block) => ({
+      ...block,
+      laneRow: laneRowById.get(block.id),
+    }));
+  };
+
   const createBlockAt = (dayIndex: number, slot: number) => {
     if (!canEditBlocks) return;
     if (!isPlanWeekView) return;
@@ -2049,29 +2124,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       createdBy: operatorName,
       updatedBy: operatorName,
     };
-    setBlocks((prev) => [...prev, b]);
-    openPlanEdit(b, { isNew: true });
-  };
-
-  const resolveOverlap = (candidate: Block, allBlocks: Block[]): Block => {
-    const sameLane = allBlocks.filter((x) => x.id !== candidate.id).sort((a, b) => a.start - b.start);
-
-    let start = candidate.start;
-    let len = candidate.len;
-
-    for (const b of sameLane) {
-      const a1 = start;
-      const a2 = start + len;
-      const b1 = b.start;
-      const b2 = b.start + b.len;
-      const overlap = Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
-      if (overlap > 0) start = clamp(b2, 0, planSlotCount - 1);
-    }
-
-    start = clamp(start, 0, planSlotCount - 1);
-    len = clamp(len, 1, planSlotCount - start);
-
-    return { ...candidate, start, len };
+    const placedBlock = placeBlockInLane(b);
+    setBlocks((prev) => assignLaneRowsByDay([...prev, placedBlock]));
+    openPlanEdit(placedBlock, { isNew: true });
   };
 
   const beginPointer = (p: { kind: DragKind; blockId: string; dayIndex: number; clientX: number }) => {
@@ -2152,21 +2207,21 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           const maxStart = Math.max(dayStart, dayEnd - s.originLen);
           const start = clamp(planSlot - s.pointerOffset, dayStart, maxStart);
           const len = clamp(s.originLen, 1, planSlotCount - start);
-          return resolveOverlap({ ...b, start, len }, prev);
+          return placeBlockInLane({ ...b, start, len });
         }
 
         if (s.kind === "resizeL") {
           const end = s.originStart + s.originLen;
           const newStart = clamp(planSlot, dayStart, end - 1);
           const newLen = clamp(end - newStart, 1, planSlotCount - newStart);
-          return resolveOverlap({ ...b, start: newStart, len: newLen }, prev);
+          return placeBlockInLane({ ...b, start: newStart, len: newLen });
         }
 
         const newEnd = clamp(planSlotEnd, b.start + 1, dayEnd);
         const newLen = clamp(newEnd - b.start, 1, planSlotCount - b.start);
-        return resolveOverlap({ ...b, len: newLen }, prev);
+        return placeBlockInLane({ ...b, len: newLen });
       });
-      return next;
+      return assignLaneRowsByDay(next);
     });
   };
 
@@ -2648,12 +2703,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
               const laneRows: number[] = [];
               const stackedLaneBlocks = laneBlocks.map((entry) => {
-                let rowIndex = laneRows.findIndex((rowEnd) => entry.viewStartInDay >= rowEnd);
+                const preferredRow = entry.block.laneRow;
+                const hasPreferredRow = Number.isFinite(preferredRow) && (preferredRow ?? -1) >= 0;
+                let rowIndex = hasPreferredRow
+                  ? Math.trunc(preferredRow ?? 0)
+                  : laneRows.findIndex((rowEnd) => entry.viewStartInDay >= rowEnd);
+
                 if (rowIndex < 0) {
                   laneRows.push(entry.viewStartInDay + entry.viewLen);
                   rowIndex = laneRows.length - 1;
                 } else {
-                  laneRows[rowIndex] = entry.viewStartInDay + entry.viewLen;
+                  while (laneRows.length <= rowIndex) {
+                    laneRows.push(0);
+                  }
+                  laneRows[rowIndex] = Math.max(laneRows[rowIndex] ?? 0, entry.viewStartInDay + entry.viewLen);
                 }
 
                 return {
