@@ -246,7 +246,7 @@ Gemini API との通信をサーバー側で中継し、クライアントに AP
 
 ### 計画保存データ（`/api/plan`）
 
-API でやり取りする JSON は従来と同じ構造で、保存先は SQLite です。
+API でやり取りする JSON は `startAt` / `endAt` を正とする日時基準スキーマです（保存先は SQLite）。
 
 ```json
 {
@@ -276,8 +276,8 @@ API でやり取りする JSON は従来と同じ構造で、保存先は SQLite
     {
       "id": "b_xxx",
       "itemId": "A",
-      "start": 1,
-      "len": 2,
+      "startAt": "2026-01-12T09:00:00.000Z",
+      "endAt": "2026-01-12T11:00:00.000Z",
       "amount": 40,
       "memo": "",
       "createdBy": "山田太郎",
@@ -288,9 +288,9 @@ API でやり取りする JSON は従来と同じ構造で、保存先は SQLite
 ```
 
 - `density`: `"hour" | "2hour" | "day"`
-- `start`: 0 始まりのスロット番号
+- `startAt` / `endAt`: ISO-8601 形式の開始・終了日時（永続データの必須項目）
 - `createdBy` / `updatedBy`: ブロックの登録者 / 更新者（任意）
-- `len`: スロット長（`density` に依存）
+- 互換ポリシー: 旧 `start` / `len` は移行期間の読込互換として受理しますが、保存時は `startAt` / `endAt` を正とします。
 
 ### SQLite スキーマ（`data/plan.sqlite`）
 
@@ -356,8 +356,8 @@ daily_stocks(date TEXT, item_id TEXT, item_code TEXT, stock REAL, shipped REAL, 
     {
       "id": "b_xxx",
       "itemId": "A",
-      "start": 1,
-      "len": 2,
+      "startAt": "2026-01-12T09:00:00.000Z",
+      "endAt": "2026-01-12T11:00:00.000Z",
       "startLabel": "1/12 9:00",
       "endLabel": "1/12 10:00",
       "amount": 40,

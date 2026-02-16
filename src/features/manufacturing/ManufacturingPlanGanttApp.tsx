@@ -120,6 +120,13 @@ import type {
  * 型は TypeScript の interface/type を使用しています。
  */
 
+type DerivedBlock = {
+  block: Block;
+  start: number;
+  len: number;
+  end: number;
+};
+
 export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [navOpen, setNavOpen] = useState(false);
   const [activeView, setActiveView] = useState<"schedule" | "inventory" | "plan-list" | "master" | "import" | "manual">(
@@ -248,7 +255,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         const planWeekStartDate = parseISODateJST(viewStartISO) ?? new Date(viewStartISO);
         setPlanWeekStart(planWeekStartDate);
         if (shiftSlots > 0) {
-          setBlocks((prev) => assignLaneRowsByDay(prev.map((b) => ({ ...b, start: b.start + shiftSlots }))));
+          setBlocks((prev) =>
+            assignLaneRowsByDay(
+              prev.map((b) => {
+                const range = resolveBlockRange(
+                  b,
+                  planCalendarDays,
+                  planCalendar.rawHoursByDay,
+                  planCalendar.slotsPerDay,
+                  planSlotCount
+                );
+                return applyRangeToBlock(b, range.start + shiftSlots, range.len);
+              })
+            )
+          );
         }
       }
       return;
@@ -282,6 +302,57 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const queuedPlanPayloadRef = useRef<PlanPayload | null>(null);
   const hasQueuedPlanPayloadRef = useRef(false);
   const lastAutoSaveSkipReasonRef = useRef<string | null>(null);
+
+  const resolveBlockRange = (block: Block, calendarDays: CalendarDay[], rawHoursByDay: Array<number[]>, slotsPerDayValue: number, slotCountValue: number) => {
+    const startFromDate = block.startAt
+      ? slotIndexFromDateTime(block.startAt, calendarDays, rawHoursByDay, slotsPerDayValue)
+      : null;
+    const endBoundaryFromDate = block.endAt
+      ? slotIndexFromDateTime(block.endAt, calendarDays, rawHoursByDay, slotsPerDayValue, true)
+      : null;
+    const fallbackStart = Math.max(0, Math.trunc(block.start ?? 0));
+    const fallbackLen = Math.max(1, Math.trunc(block.len ?? 1));
+    const start = clamp(startFromDate ?? fallbackStart, 0, Math.max(0, slotCountValue - 1));
+    const len =
+      startFromDate !== null && endBoundaryFromDate !== null
+        ? Math.max(1, endBoundaryFromDate - startFromDate)
+        : Math.max(1, Math.min(fallbackLen, slotCountValue - start));
+    return { start, len, end: start + len };
+  };
+
+  const applyRangeToBlock = (block: Block, start: number, len: number): Block => {
+    const normalizedStart = clamp(start, 0, Math.max(0, planSlotCount - 1));
+    const normalizedLen = clamp(len, 1, Math.max(1, planSlotCount - normalizedStart));
+    const startAt = slotToDateTime(
+      normalizedStart,
+      planCalendarDays,
+      planCalendar.rawHoursByDay,
+      planCalendar.slotsPerDay
+    )?.toISOString();
+    const endAt = slotBoundaryToDateTime(
+      normalizedStart + normalizedLen,
+      planCalendarDays,
+      planCalendar.rawHoursByDay,
+      planCalendar.slotsPerDay
+    )?.toISOString();
+    return {
+      ...block,
+      start: normalizedStart,
+      len: normalizedLen,
+      startAt: startAt ?? block.startAt,
+      endAt: endAt ?? block.endAt,
+    };
+  };
+
+  const derivedBlocks = useMemo<DerivedBlock[]>(() =>
+    blocks.map((block) => ({
+      block,
+      ...resolveBlockRange(block, planCalendarDays, planCalendar.rawHoursByDay, planCalendar.slotsPerDay, planSlotCount),
+    })),
+    [blocks, planCalendar.rawHoursByDay, planCalendar.slotsPerDay, planCalendarDays, planSlotCount]
+  );
+
+  const derivedBlockMap = useMemo(() => new Map(derivedBlocks.map((entry) => [entry.block.id, entry])), [derivedBlocks]);
 
   const [openPlan, setOpenPlan] = useState(false);
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
@@ -758,15 +829,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   }, [activeItem, formAmount, materialMap]);
 
   const activeManufactureDate = useMemo(() => {
-    if (!activeBlock) return null;
-    const dateTime = slotToDateTime(
-      activeBlock.start,
-      planCalendarDays,
-      planCalendar.rawHoursByDay,
-      planCalendar.slotsPerDay
-    );
-    return dateTime ? toISODate(dateTime) : null;
-  }, [activeBlock, planCalendar.rawHoursByDay, planCalendar.slotsPerDay, planCalendarDays]);
+    if (!activeBlock?.startAt) return null;
+    const dateTime = new Date(activeBlock.startAt);
+    if (Number.isNaN(dateTime.getTime())) return null;
+    return toISODate(dateTime);
+  }, [activeBlock]);
 
   const activeExpirationDate = useMemo(() => {
     if (!activeItem || !activeManufactureDate) return null;
@@ -1311,13 +1378,18 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     setBlocks((prev) =>
       prev
         .map((b) => {
-          const start = clamp(b.start, 0, planSlotCount - 1);
-          const len = clamp(b.len, 1, planSlotCount - start);
-          return { ...b, start, len };
+          const range = resolveBlockRange(
+            b,
+            planCalendarDays,
+            planCalendar.rawHoursByDay,
+            planCalendar.slotsPerDay,
+            planSlotCount
+          );
+          return applyRangeToBlock(b, range.start, range.len);
         })
-        .filter((b) => b.len >= 1)
+        .filter((b) => Boolean(b.startAt && b.endAt))
     );
-  }, [planSlotCount]);
+  }, [planCalendar.rawHoursByDay, planCalendar.slotsPerDay, planCalendarDays, planSlotCount]);
 
   useEffect(() => {
     if (!authUser) return;
@@ -1369,32 +1441,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         setMaterialsMaster(mergeMaterialsFromItems(loadedItems, loadedMaterials));
         setItems(loadedItems);
         const mappedBlocks = payload.blocks.map((block) => {
-          const startAtIndex = block.startAt
-            ? slotIndexFromDateTime(
-                block.startAt,
-                nextCalendarDays,
-                calendarSlots.rawHoursByDay,
-                calendarSlots.slotsPerDay
-              )
-            : null;
-          const endAtIndex = block.endAt
-            ? slotIndexFromDateTime(
-                block.endAt,
-                nextCalendarDays,
-                calendarSlots.rawHoursByDay,
-                calendarSlots.slotsPerDay,
-                true
-              )
-            : null;
-          const start = startAtIndex ?? block.start ?? 0;
-          const len =
-            startAtIndex !== null && endAtIndex !== null
-              ? Math.max(1, endAtIndex - startAtIndex)
-              : Math.max(1, block.len ?? 1);
+          const range = resolveBlockRange(
+            block,
+            nextCalendarDays,
+            calendarSlots.rawHoursByDay,
+            calendarSlots.slotsPerDay,
+            calendarSlots.slotCount
+          );
           return {
             ...block,
-            start,
-            len,
+            start: range.start,
+            len: range.len,
           };
         });
         const fallbackBlocks = mappedBlocks.length ? mappedBlocks : DEFAULT_BLOCKS();
@@ -1491,24 +1548,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
     lastAutoSaveSkipReasonRef.current = null;
 
-    const blocksWithDates = blocks
-      .map((block) => {
-        const startAt = slotToDateTime(block.start, planCalendarDays, planCalendar.rawHoursByDay, planCalendar.slotsPerDay);
-        const endAt = slotBoundaryToDateTime(
-          block.start + block.len,
-          planCalendarDays,
-          planCalendar.rawHoursByDay,
-          planCalendar.slotsPerDay
-        );
-        if (!startAt || !endAt) return null;
-        return {
-          ...block,
-          startAt: startAt.toISOString(),
-          endAt: endAt.toISOString(),
-        };
-      })
-      .filter((block): block is Block => block !== null);
-
     queuedPlanPayloadRef.current = {
       version: 1,
       weekStartISO: planCalendarDays[0]?.date ?? toISODate(planWeekStart),
@@ -1516,7 +1555,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       calendarDays: planCalendarDays,
       materials: materialsMaster,
       items,
-      blocks: blocksWithDates,
+      blocks,
     } satisfies PlanPayload;
     hasQueuedPlanPayloadRef.current = true;
 
@@ -1544,7 +1583,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     isPlanLoaded,
     items,
     materialsMaster,
-    planCalendar,
     planCalendarDays,
     planDensity,
     planWeekStart,
@@ -1637,33 +1675,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const horizonWeekDates = horizonCalendarDays.map((day) => day.date);
     const horizonSlotCount = horizonCalendarDays.length * snapshot.calendarSlots.slotsPerDay;
     const horizonSlotIndexToLabel = snapshot.slotIndexToLabel.slice(0, horizonSlotCount);
-    const blockSummaries = blocks.map((b) => ({
-      id: b.id,
-      itemId: (itemMap.get(b.itemId)?.publicId ?? "").trim() || b.itemId,
-      startSlot: b.start,
+    const blockSummaries = derivedBlocks.map(({ block, start, len }) => ({
+      id: block.id,
+      itemId: (itemMap.get(block.itemId)?.publicId ?? "").trim() || block.itemId,
+      startSlot: start,
       startLabel: slotLabelFromCalendar({
         density: planDensity,
         calendarDays: snapshot.calendarDays,
         hoursByDay: snapshot.calendarSlots.hoursByDay,
-        slotIndex: b.start,
+        slotIndex: start,
       }),
-      len: b.len,
-      amount: b.amount,
-      memo: b.memo,
-      approved: b.approved,
-      laneRow: b.laneRow,
-      startAt: slotToDateTime(
-        b.start,
-        snapshot.calendarDays,
-        snapshot.calendarSlots.rawHoursByDay,
-        snapshot.calendarSlots.slotsPerDay
-      )?.toISOString(),
-      endAt: slotBoundaryToDateTime(
-        b.start + b.len,
-        snapshot.calendarDays,
-        snapshot.calendarSlots.rawHoursByDay,
-        snapshot.calendarSlots.slotsPerDay
-      )?.toISOString(),
+      len,
+      amount: block.amount,
+      memo: block.memo,
+      approved: block.approved,
+      laneRow: block.laneRow,
+      startAt: block.startAt,
+      endAt: block.endAt,
     }));
     const filteredBlocks = blockSummaries.filter((block) => {
       if (!block.startAt) return false;
@@ -1752,7 +1780,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const itemId = resolveItemId(action);
     const start = resolveSlotIndex(action, context);
     if (!itemId || start === null) return null;
-    const found = currentBlocks.find((b) => b.itemId === itemId && b.start === start);
+    const found = currentBlocks.find((b) => {
+      const range = resolveBlockRange(b, planCalendarDays, planCalendar.rawHoursByDay, planCalendar.slotsPerDay, planSlotCount);
+      return b.itemId === itemId && range.start === start;
+    });
     return found?.id ?? null;
   };
 
@@ -1787,7 +1818,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             startAt: "",
             endAt: "",
           };
-          next = [...next, placeBlockInLane(candidate)];
+          next = [...next, placeBlockInLane(applyRangeToBlock(candidate, start, len))];
         }
 
         if (action.type === "update_block") {
@@ -1798,8 +1829,15 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           next = next.map((b) => {
             if (b.id !== targetId) return b;
             const itemId = resolveItemId(action) ?? b.itemId;
-            const start = resolveSlotIndex(action, context) ?? b.start;
-            const len = clamp(action.len ?? b.len, 1, slotCount - start);
+            const currentRange = resolveBlockRange(
+              b,
+              planCalendarDays,
+              planCalendar.rawHoursByDay,
+              planCalendar.slotsPerDay,
+              planSlotCount
+            );
+            const start = resolveSlotIndex(action, context) ?? currentRange.start;
+            const len = clamp(action.len ?? currentRange.len, 1, slotCount - start);
             return placeBlockInLane({
               ...b,
               itemId,
@@ -2092,28 +2130,37 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const placeBlockInLane = (candidate: Block): Block => {
-    let start = clamp(candidate.start, 0, planSlotCount - 1);
+    let { start, len } = resolveBlockRange(
+      candidate,
+      planCalendarDays,
+      planCalendar.rawHoursByDay,
+      planCalendar.slotsPerDay,
+      planSlotCount
+    );
     const { daySlots, dayStart, dayEnd } = resolvePlanDayWindow(start);
     if (!daySlots) {
-      return {
-        ...candidate,
-        start,
-        len: clamp(candidate.len, 1, planSlotCount - start),
-      };
+      return applyRangeToBlock(candidate, start, clamp(len, 1, planSlotCount - start));
     }
     start = clamp(start, dayStart, dayEnd - 1);
-    const len = clamp(candidate.len, 1, dayEnd - start);
-    return { ...candidate, start, len };
+    len = clamp(len, 1, dayEnd - start);
+    return applyRangeToBlock(candidate, start, len);
   };
 
   const assignLaneRowsByDay = (currentBlocks: Block[]) => {
     const normalized = currentBlocks.map((block) => placeBlockInLane(block));
-    const blocksByDay = new Map<number, Block[]>();
+    const blocksByDay = new Map<number, Array<DerivedBlock>>();
 
     normalized.forEach((block) => {
-      const { planDayIndex } = resolvePlanDayWindow(block.start);
+      const range = resolveBlockRange(
+        block,
+        planCalendarDays,
+        planCalendar.rawHoursByDay,
+        planCalendar.slotsPerDay,
+        planSlotCount
+      );
+      const { planDayIndex } = resolvePlanDayWindow(range.start);
       const list = blocksByDay.get(planDayIndex) ?? [];
-      list.push(block);
+      list.push({ block, ...range });
       blocksByDay.set(planDayIndex, list);
     });
 
@@ -2124,22 +2171,22 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         .sort((a, b) => {
           if (a.start !== b.start) return a.start - b.start;
           if (a.len !== b.len) return a.len - b.len;
-          if ((a.laneRow ?? Number.MAX_SAFE_INTEGER) !== (b.laneRow ?? Number.MAX_SAFE_INTEGER)) {
-            return (a.laneRow ?? Number.MAX_SAFE_INTEGER) - (b.laneRow ?? Number.MAX_SAFE_INTEGER);
+          if ((a.block.laneRow ?? Number.MAX_SAFE_INTEGER) !== (b.block.laneRow ?? Number.MAX_SAFE_INTEGER)) {
+            return (a.block.laneRow ?? Number.MAX_SAFE_INTEGER) - (b.block.laneRow ?? Number.MAX_SAFE_INTEGER);
           }
-          return a.id.localeCompare(b.id);
+          return a.block.id.localeCompare(b.block.id);
         });
 
       const rowEnds: number[] = [];
-      for (const block of sortedDayBlocks) {
-        const blockStart = block.start;
-        const blockEnd = block.start + block.len;
+      for (const entry of sortedDayBlocks) {
+        const blockStart = entry.start;
+        const blockEnd = entry.end;
         const availableRows: number[] = [];
         rowEnds.forEach((rowEnd, index) => {
           if (blockStart >= rowEnd) availableRows.push(index);
         });
 
-        const existingRow = block.laneRow;
+        const existingRow = entry.block.laneRow;
         const preferred =
           typeof existingRow === "number" && Number.isFinite(existingRow) && existingRow >= 0
             ? Math.trunc(existingRow)
@@ -2148,7 +2195,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           ? preferred
           : availableRows[0] ?? rowEnds.length;
         rowEnds[rowIndex] = blockEnd;
-        laneRowById.set(block.id, rowIndex);
+        laneRowById.set(entry.block.id, rowIndex);
       }
     });
 
@@ -2180,7 +2227,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       startAt: "",
       endAt: "",
     };
-    const placedBlock = placeBlockInLane(b);
+    const placedBlock = placeBlockInLane(applyRangeToBlock(b, planSlot, 1));
     setBlocks((prev) => assignLaneRowsByDay([...prev, placedBlock]));
     openPlanEdit(placedBlock, { isNew: true });
   };
@@ -2191,22 +2238,23 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const laneEl = laneRefs.current[String(p.dayIndex)];
     if (!laneEl) return;
     const rect = laneEl.getBoundingClientRect();
-    const block = blocks.find((b) => b.id === p.blockId);
-    if (!block || block.approved) return;
+    const derivedBlock = derivedBlockMap.get(p.blockId);
+    const block = derivedBlock?.block;
+    if (!derivedBlock || !block || block.approved) return;
     const slot = xToSlot(p.clientX, { left: rect.left, width: rect.width }, slotsPerDay);
     const workingSlot = clampToWorkingSlot(p.dayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
     const absoluteSlot = (viewStartOffsetDays + p.dayIndex) * slotsPerDay + workingSlot;
     const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
-    const pointerOffset = clamp(planSlot - block.start, 0, Math.max(0, block.len - 1));
+    const pointerOffset = clamp(planSlot - derivedBlock.start, 0, Math.max(0, derivedBlock.len - 1));
 
     suppressClickRef.current = true;
 
     dragStateRef.current = {
       kind: p.kind,
       blockId: p.blockId,
-      originStart: block.start,
-      originLen: block.len,
+      originStart: derivedBlock.start,
+      originLen: derivedBlock.len,
       pointerOffset,
       laneRect: { left: rect.left, width: rect.width },
       dayIndex: p.dayIndex,
@@ -2273,9 +2321,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           return placeBlockInLane({ ...b, start: newStart, len: newLen });
         }
 
-        const newEnd = clamp(planSlotEnd, b.start + 1, dayEnd);
-        const newLen = clamp(newEnd - b.start, 1, planSlotCount - b.start);
-        return placeBlockInLane({ ...b, len: newLen });
+        const currentRange = resolveBlockRange(
+          b,
+          planCalendarDays,
+          planCalendar.rawHoursByDay,
+          planCalendar.slotsPerDay,
+          planSlotCount
+        );
+        const newEnd = clamp(planSlotEnd, currentRange.start + 1, dayEnd);
+        const newLen = clamp(newEnd - currentRange.start, 1, planSlotCount - currentRange.start);
+        return placeBlockInLane({ ...b, start: currentRange.start, len: newLen });
       });
       return assignLaneRowsByDay(next);
     });
@@ -2447,16 +2502,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   };
 
   const eodStockByItem = useMemo(() => {
-    const blocksForEod = isPlanWeekView ? blocks : [];
+    const blocksForEod = isPlanWeekView ? derivedBlocks : [];
     const out: Record<string, number[]> = {};
     const weekDatesForEod = weekDates;
     const todayISO = toISODate(new Date());
 
     for (const it of items) {
       const addByDay = new Array(7).fill(0);
-      for (const b of blocksForEod) {
+      for (const entry of blocksForEod) {
+        const b = entry.block;
         if (b.itemId !== it.id) continue;
-        const dayIndex = endDayIndex(b, planSlotsPerDay) - viewStartOffsetDays;
+        const dayIndex = endDayIndex({ start: entry.start, len: entry.len }, planSlotsPerDay) - viewStartOffsetDays;
         if (dayIndex < 0 || dayIndex >= 7) continue;
         const blockDate = weekDatesForEod[dayIndex];
         if (!blockDate || blockDate < todayISO) continue;
@@ -2488,17 +2544,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     }
 
     return out;
-  }, [blocks, dailyStockMap, isPlanWeekView, items, planSlotsPerDay, viewStartOffsetDays, weekDates]);
+  }, [dailyStockMap, derivedBlocks, isPlanWeekView, items, planSlotsPerDay, viewStartOffsetDays, weekDates]);
 
   const eodSummaryByDay = useMemo(() => {
-    const blocksForEod = isPlanWeekView ? blocks : [];
+    const blocksForEod = isPlanWeekView ? derivedBlocks : [];
     const itemsByDay: Record<number, Set<string>> = {};
 
-    for (const b of blocksForEod) {
-      const d = endDayIndex(b, planSlotsPerDay) - viewStartOffsetDays;
+    for (const entry of blocksForEod) {
+      const d = endDayIndex({ start: entry.start, len: entry.len }, planSlotsPerDay) - viewStartOffsetDays;
       if (d < 0 || d >= 7) continue;
       if (!itemsByDay[d]) itemsByDay[d] = new Set();
-      itemsByDay[d].add(b.itemId);
+      itemsByDay[d].add(entry.block.itemId);
     }
 
     return weekDates.map((_, dayIdx) => {
@@ -2513,7 +2569,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         };
       });
     });
-  }, [blocks, eodStockByItem, isPlanWeekView, itemMap, planSlotsPerDay, viewStartOffsetDays, weekDates]);
+  }, [derivedBlocks, eodStockByItem, isPlanWeekView, itemMap, planSlotsPerDay, viewStartOffsetDays, weekDates]);
 
   // JSONエクスポート
   const exportPlanAsJson = () => {
@@ -2740,17 +2796,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             {weekDates.map((date, dayIdx) => {
               const calendarDay = viewCalendarDays[dayIdx];
               const eodList = eodSummaryByDay[dayIdx] ?? [];
-              const laneBlocks = (isPlanWeekView ? blocks : [])
-                .map((b) => {
-                  const rawViewStart = convertSlotIndex(b.start, planDensity, viewDensity, "floor");
+              const laneBlocks = (isPlanWeekView ? derivedBlocks : [])
+                .map(({ block, start, len }) => {
+                  const rawViewStart = convertSlotIndex(start, planDensity, viewDensity, "floor");
                   const viewStart = rawViewStart - viewOffsetSlots;
-                  const viewLen = convertSlotLength(b.len, planDensity, viewDensity, "ceil");
+                  const viewLen = convertSlotLength(len, planDensity, viewDensity, "ceil");
                   const viewDayIdx = Math.floor(viewStart / slotsPerDay);
                   if (viewDayIdx < 0 || viewDayIdx >= DAYS_IN_WEEK) return null;
                   const viewStartInDay = viewStart - viewDayIdx * slotsPerDay;
                   const maxLen = Math.max(1, slotsPerDay - viewStartInDay);
                   return {
-                    block: b,
+                    block,
                     viewDayIdx,
                     viewStartInDay,
                     viewLen: clamp(viewLen, 1, maxLen),
@@ -2890,7 +2946,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                             <div className="flex h-full flex-col justify-between">
                               <div className="flex items-center justify-between text-[11px] text-slate-700">
                                 <span>{item?.name ?? "未設定"}</span>
-                                <span>{durationLabel(block.len, planDensity)}</span>
+                                <span>{durationLabel(derivedBlockMap.get(block.id)?.len ?? 1, planDensity)}</span>
                               </div>
                               <div className="text-sm font-semibold">
                                 +{block.amount}

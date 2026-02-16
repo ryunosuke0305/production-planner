@@ -28,6 +28,54 @@ function normalizeDensity(value) {
   return "hour";
 }
 
+
+function addDaysISO(baseISO, days) {
+  const base = new Date(`${baseISO}T00:00:00`);
+  if (Number.isNaN(base.getTime())) return null;
+  const d = new Date(base);
+  d.setDate(base.getDate() + days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function legacySlotToISODateTime(weekStartISO, density, slotIndex, asBoundary = false) {
+  const perDay = slotsPerDay(density);
+  const safeSlot = Math.max(0, Math.trunc(slotIndex));
+  const dayIndex = Math.floor(safeSlot / perDay);
+  const slotInDay = safeSlot % perDay;
+  const dateISO = addDaysISO(weekStartISO, dayIndex);
+  if (!dateISO) return null;
+  const dayHours = SLOT_HOURS[density] ?? SLOT_HOURS.hour;
+  const fallbackEndHour = 18;
+  const hour = asBoundary
+    ? slotInDay >= dayHours.length
+      ? fallbackEndHour
+      : dayHours[slotInDay]
+    : dayHours[slotInDay];
+  if (!Number.isFinite(hour)) return null;
+  return new Date(`${dateISO}T${String(hour).padStart(2, "0")}:00:00.000Z`).toISOString();
+}
+
+function dateTimeToLegacySlot(weekStartISO, density, value, asBoundary = false) {
+  if (typeof value !== "string" || !value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const y = parsed.getUTCFullYear();
+  const m = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(parsed.getUTCDate()).padStart(2, "0");
+  const dateISO = `${y}-${m}-${d}`;
+  const dayDiff = diffDays(weekStartISO, dateISO);
+  if (dayDiff === null) return null;
+  const hour = parsed.getUTCHours();
+  const dayHours = SLOT_HOURS[density] ?? SLOT_HOURS.hour;
+  const slotIndex = dayHours.findIndex((h) => h === hour);
+  if (slotIndex >= 0) return dayDiff * slotsPerDay(density) + slotIndex;
+  if (asBoundary && hour === 18) return (dayDiff + 1) * slotsPerDay(density);
+  return null;
+}
+
 function ensureSchema(db) {
   db.exec(`
     DROP TABLE IF EXISTS orders;
@@ -363,20 +411,32 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     conditions.length ? ` WHERE ${conditions.join(" AND ")}` : ""
   } ORDER BY start, id`;
 
-  const blocks = db.prepare(sql).all(...params).map((row) => ({
-    id: row.id,
-    itemId: row.item_id,
-    start: row.start,
-    len: row.len,
-    laneRow: Number.isFinite(row.lane_row) ? row.lane_row : undefined,
-    startAt: row.start_at ?? undefined,
-    endAt: row.end_at ?? undefined,
-    amount: row.amount,
-    memo: row.memo,
-    approved: Boolean(row.approved),
-    createdBy: row.created_by ?? undefined,
-    updatedBy: row.updated_by ?? undefined,
-  }));
+  const blocks = db.prepare(sql).all(...params).map((row) => {
+    const legacyStart = Number.isFinite(row.start) ? row.start : 0;
+    const legacyLen = Number.isFinite(row.len) ? Math.max(1, row.len) : 1;
+    const startAt =
+      row.start_at ??
+      legacySlotToISODateTime(weekStartISO, density, legacyStart, false) ??
+      undefined;
+    const endAt =
+      row.end_at ??
+      legacySlotToISODateTime(weekStartISO, density, legacyStart + legacyLen, true) ??
+      undefined;
+    return {
+      id: row.id,
+      itemId: row.item_id,
+      start: legacyStart,
+      len: legacyLen,
+      laneRow: Number.isFinite(row.lane_row) ? row.lane_row : undefined,
+      startAt,
+      endAt,
+      amount: row.amount,
+      memo: row.memo,
+      approved: Boolean(row.approved),
+      createdBy: row.created_by ?? undefined,
+      updatedBy: row.updated_by ?? undefined,
+    };
+  });
 
   return {
     version: Number.isFinite(version) ? version : 1,
@@ -494,14 +554,32 @@ export function savePlanPayload(db, payload) {
     });
 
     payload.blocks?.forEach((block) => {
+      const startAt =
+        block.startAt ??
+        legacySlotToISODateTime(payload.weekStartISO, normalizeDensity(payload.density), Math.trunc(block.start ?? 0), false);
+      const endAt =
+        block.endAt ??
+        legacySlotToISODateTime(
+          payload.weekStartISO,
+          normalizeDensity(payload.density),
+          Math.trunc((block.start ?? 0) + Math.max(1, Math.trunc(block.len ?? 1))),
+          true
+        );
+      const start =
+        dateTimeToLegacySlot(payload.weekStartISO, normalizeDensity(payload.density), startAt, false) ??
+        Math.trunc(block.start ?? 0);
+      const endBoundary =
+        dateTimeToLegacySlot(payload.weekStartISO, normalizeDensity(payload.density), endAt, true) ??
+        start + Math.max(1, Math.trunc(block.len ?? 1));
+      const len = Math.max(1, endBoundary - start);
       insertBlock.run(
         block.id,
         block.itemId,
-        Math.trunc(block.start ?? 0),
-        Math.max(1, Math.trunc(block.len ?? 1)),
+        start,
+        len,
         Number.isFinite(block.laneRow) ? Math.max(0, Math.trunc(block.laneRow)) : null,
-        block.startAt ?? null,
-        block.endAt ?? null,
+        startAt ?? null,
+        endAt ?? null,
         block.amount ?? 0,
         block.memo ?? "",
         block.approved ? 1 : 0,

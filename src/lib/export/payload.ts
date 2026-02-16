@@ -8,6 +8,7 @@ import type {
   Material,
 } from "@/types/planning";
 import { toISODate } from "@/lib/datetime";
+import { slotIndexFromDateTime } from "@/lib/slots";
 import { slotLabelFromCalendar } from "@/lib/slots";
 
 export function buildExportPayload(p: {
@@ -71,28 +72,42 @@ export function buildExportPayload(p: {
       })),
     })),
     materials: p.materials.map((m) => ({ ...m })),
-    blocks: p.blocks.map((b) => ({
-      id: b.id,
-      itemId: b.itemId,
-      start: b.start,
-      len: b.len,
-      laneRow: b.laneRow,
-      startLabel: slotLabelFromCalendar({
-        density: p.density,
-        calendarDays: p.calendarDays,
-        hoursByDay: p.hoursByDay,
-        slotIndex: b.start,
-      }),
-      endLabel: slotLabelFromCalendar({
-        density: p.density,
-        calendarDays: p.calendarDays,
-        hoursByDay: p.hoursByDay,
-        slotIndex: Math.min(p.slotCount - 1, b.start + b.len - 1),
-      }),
-      amount: b.amount,
-      memo: b.memo,
-      approved: b.approved,
-    })),
+    blocks: p.blocks.map((b) => {
+      const startIndex =
+        slotIndexFromDateTime(b.startAt, p.calendarDays, p.hoursByDay.map((day) => day.filter((h): h is number => h !== null)), p.slotsPerDay) ??
+        Math.max(0, Math.trunc(b.start ?? 0));
+      const endBoundaryIndex =
+        slotIndexFromDateTime(
+          b.endAt,
+          p.calendarDays,
+          p.hoursByDay.map((day) => day.filter((h): h is number => h !== null)),
+          p.slotsPerDay,
+          true
+        ) ?? startIndex + Math.max(1, Math.trunc(b.len ?? 1));
+      const blockLen = Math.max(1, endBoundaryIndex - startIndex);
+      return {
+        id: b.id,
+        itemId: b.itemId,
+        start: startIndex,
+        len: blockLen,
+        laneRow: b.laneRow,
+        startLabel: slotLabelFromCalendar({
+          density: p.density,
+          calendarDays: p.calendarDays,
+          hoursByDay: p.hoursByDay,
+          slotIndex: startIndex,
+        }),
+        endLabel: slotLabelFromCalendar({
+          density: p.density,
+          calendarDays: p.calendarDays,
+          hoursByDay: p.hoursByDay,
+          slotIndex: Math.min(p.slotCount - 1, startIndex + blockLen - 1),
+        }),
+        amount: b.amount,
+        memo: b.memo,
+        approved: b.approved,
+      };
+    }),
     dailyStocks: p.dailyStocks.map((entry) => ({
       date: entry.date,
       itemCode: entry.itemCode,

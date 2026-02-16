@@ -40,8 +40,10 @@ export function PlanListView({ blocks, items, slotIndexToLabel, canEdit, onEdit 
     return blocks
       .map((block) => {
         const item = itemMap.get(block.itemId);
-        const startLabel = slotIndexToLabel[block.start] ?? `slot:${block.start}`;
-        const endSlot = Math.max(block.start + Math.max(block.len, 1) - 1, block.start);
+        const startSlot = Math.max(0, Math.trunc(block.start ?? 0));
+        const blockLen = Math.max(1, Math.trunc(block.len ?? 1));
+        const startLabel = slotIndexToLabel[startSlot] ?? `slot:${startSlot}`;
+        const endSlot = Math.max(startSlot + blockLen - 1, startSlot);
         const endLabel = slotIndexToLabel[endSlot] ?? `slot:${endSlot}`;
         return {
           block,
@@ -52,7 +54,7 @@ export function PlanListView({ blocks, items, slotIndexToLabel, canEdit, onEdit 
           endLabel,
         };
       })
-      .sort((a, b) => a.block.start - b.block.start);
+      .sort((a, b) => (a.block.start ?? 0) - (b.block.start ?? 0));
   }, [blocks, itemMap, slotIndexToLabel]);
 
   const filteredRows = useMemo(() => {
@@ -200,7 +202,7 @@ export function PlanListView({ blocks, items, slotIndexToLabel, canEdit, onEdit 
                       <td className="border-b px-3 py-2">{row.block.approved ? "承認済み" : "未承認"}</td>
                       <td className="border-b px-3 py-2 whitespace-nowrap">{row.startLabel}</td>
                       <td className="border-b px-3 py-2 whitespace-nowrap">{row.endLabel}</td>
-                      <td className="border-b px-3 py-2">{row.block.len} slot</td>
+                      <td className="border-b px-3 py-2">{Math.max(1, row.block.len ?? 1)} slot</td>
                       <td className="border-b px-3 py-2">{row.block.memo || "-"}</td>
                     </tr>
                   ))
