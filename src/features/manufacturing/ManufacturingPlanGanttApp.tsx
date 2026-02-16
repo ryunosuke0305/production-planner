@@ -18,6 +18,7 @@ import { InventoryView } from "@/features/manufacturing/views/InventoryView";
 import { LoginView } from "@/features/manufacturing/views/LoginView";
 import { ManualView } from "@/features/manufacturing/views/ManualView";
 import { MasterView } from "@/features/manufacturing/views/MasterView";
+import { PlanListView } from "@/features/manufacturing/views/PlanListView";
 import { ScheduleView } from "@/features/manufacturing/views/ScheduleView";
 import {
   DAILY_STOCK_EXPORT_HEADERS,
@@ -121,7 +122,7 @@ import type {
 
 export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [navOpen, setNavOpen] = useState(false);
-  const [activeView, setActiveView] = useState<"schedule" | "inventory" | "master" | "import" | "manual">(
+  const [activeView, setActiveView] = useState<"schedule" | "inventory" | "plan-list" | "master" | "import" | "manual">(
     "schedule"
   );
   const [masterSection, setMasterSection] = useState<"home" | "items" | "materials" | "users">("home");
@@ -2892,9 +2893,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     });
   };
 
-  const viewLabelMap: Record<"schedule" | "inventory" | "master" | "import" | "manual", string> = {
+  const viewLabelMap: Record<"schedule" | "inventory" | "plan-list" | "master" | "import" | "manual", string> = {
     schedule: "スケジュール",
     inventory: "在庫データ",
+    "plan-list": "計画一覧",
     master: "マスタ管理",
     import: "Excel取り込み",
     manual: "マニュアル",
@@ -2979,7 +2981,17 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                 dailyStockEntryMap={dailyStockEntryMap}
               />
             )
-          : activeView === "master"
+          : activeView === "plan-list"
+            ? (
+                <PlanListView
+                  blocks={blocks}
+                  items={items}
+                  slotIndexToLabel={planSlotIndexToLabel}
+                  canEdit={canEditBlocks}
+                  onEdit={(block) => openPlanEdit(block)}
+                />
+              )
+            : activeView === "master"
             ? (
                 <MasterView
                   masterSection={masterSection}

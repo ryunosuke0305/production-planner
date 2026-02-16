@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { AuthUser } from "@/types/planning";
 
-type ViewKey = "schedule" | "inventory" | "master" | "import" | "manual";
+type ViewKey = "schedule" | "inventory" | "plan-list" | "master" | "import" | "manual";
 
 type ManufacturingPlanLayoutProps = {
   navOpen: boolean;
@@ -84,6 +84,15 @@ export function ManufacturingPlanLayout({
               onClick={() => handleSelectView("inventory")}
             >
               在庫データ
+            </button>
+            <button
+              type="button"
+              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
+                activeView === "plan-list" ? "bg-muted font-semibold" : "hover:bg-muted/50"
+              }`}
+              onClick={() => handleSelectView("plan-list")}
+            >
+              計画一覧
             </button>
             <button
               type="button"
