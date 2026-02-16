@@ -47,6 +47,7 @@ export type Block = {
   itemId: string;
   start: number;
   len: number;
+  laneRow?: number;
   amount: number;
   memo: string;
   approved: boolean;
@@ -97,6 +98,7 @@ export type ExportPayloadV1 = {
     itemId: string;
     start: number;
     len: number;
+    laneRow?: number;
     startLabel: string;
     endLabel: string;
     amount: number;

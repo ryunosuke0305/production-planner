@@ -72,6 +72,7 @@ function ensureSchema(db) {
       item_id TEXT NOT NULL,
       start INTEGER NOT NULL,
       len INTEGER NOT NULL,
+      lane_row INTEGER,
       start_at TEXT,
       end_at TEXT,
       amount REAL NOT NULL,
@@ -132,6 +133,14 @@ function ensureBlocksOperatorColumns(db) {
   }
   if (!hasUpdatedBy) {
     db.exec("ALTER TABLE blocks ADD COLUMN updated_by TEXT");
+  }
+}
+
+function ensureBlocksLaneRowColumn(db) {
+  const columns = db.prepare("PRAGMA table_info(blocks)").all();
+  const hasLaneRow = columns.some((column) => column.name === "lane_row");
+  if (!hasLaneRow) {
+    db.exec("ALTER TABLE blocks ADD COLUMN lane_row INTEGER");
   }
 }
 
@@ -204,6 +213,7 @@ export async function openPlanDatabase() {
   ensureBlocksApprovedColumn(db);
   ensureBlocksDateColumns(db);
   ensureBlocksOperatorColumns(db);
+  ensureBlocksLaneRowColumn(db);
   ensureItemsPlanningColumns(db);
   ensureDailyStocksShippedColumn(db);
   return db;
@@ -349,7 +359,7 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     }
   }
 
-  const sql = `SELECT id, item_id, start, len, start_at, end_at, amount, memo, approved, created_by, updated_by FROM blocks${
+  const sql = `SELECT id, item_id, start, len, lane_row, start_at, end_at, amount, memo, approved, created_by, updated_by FROM blocks${
     conditions.length ? ` WHERE ${conditions.join(" AND ")}` : ""
   } ORDER BY start, id`;
 
@@ -358,6 +368,7 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     itemId: row.item_id,
     start: row.start,
     len: row.len,
+    laneRow: Number.isFinite(row.lane_row) ? row.lane_row : undefined,
     startAt: row.start_at ?? undefined,
     endAt: row.end_at ?? undefined,
     amount: row.amount,
@@ -430,7 +441,7 @@ export function savePlanPayload(db, payload) {
     "INSERT INTO calendar_days (date, is_holiday, work_start, work_end) VALUES (?, ?, ?, ?)"
   );
   const insertBlock = db.prepare(
-    "INSERT INTO blocks (id, item_id, start, len, start_at, end_at, amount, memo, approved, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO blocks (id, item_id, start, len, lane_row, start_at, end_at, amount, memo, approved, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   const transaction = db.transaction(() => {
@@ -488,6 +499,7 @@ export function savePlanPayload(db, payload) {
         block.itemId,
         Math.trunc(block.start ?? 0),
         Math.max(1, Math.trunc(block.len ?? 1)),
+        Number.isFinite(block.laneRow) ? Math.max(0, Math.trunc(block.laneRow)) : null,
         block.startAt ?? null,
         block.endAt ?? null,
         block.amount ?? 0,

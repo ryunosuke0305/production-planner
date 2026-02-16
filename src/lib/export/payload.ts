@@ -76,6 +76,7 @@ export function buildExportPayload(p: {
       itemId: b.itemId,
       start: b.start,
       len: b.len,
+      laneRow: b.laneRow,
       startLabel: slotLabelFromCalendar({
         density: p.density,
         calendarDays: p.calendarDays,

@@ -330,6 +330,10 @@ export function sanitizeBlocks(raw: unknown): Block[] {
         itemId,
         start: asNumber(record.start),
         len: Math.max(1, asNumber(record.len, 1)),
+        laneRow: (() => {
+          const row = asNumber(record.laneRow ?? record.stackRow ?? record.lane_row ?? record.stack_row, -1);
+          return Number.isFinite(row) && row >= 0 ? Math.trunc(row) : undefined;
+        })(),
         amount: asNumber(record.amount),
         memo: asString(record.memo),
         approved: asBoolean(record.approved, false),
