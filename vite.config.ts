@@ -20,6 +20,9 @@ type MiddlewareRequest = {
   method?: string;
   url?: string;
   headers?: Record<string, string | string[] | undefined>;
+  socket?: {
+    remoteAddress?: string;
+  };
   on: (event: string, handler: (chunk: any) => void) => void;
 };
 
@@ -61,9 +64,22 @@ type AuthJwtPayload = {
   exp: number;
 };
 
+type AuditLogRecord = {
+  timestamp: string;
+  userId: string;
+  role: AuthRole | "guest";
+  ip: string;
+  endpoint: string;
+  method: string;
+  result: string;
+  targetId: string;
+  requestId: string;
+};
+
 const CONSTRAINTS_PATH = fileURLToPath(new URL("./data/gemini-constraints.json", import.meta.url));
 const CHAT_HISTORY_PATH = fileURLToPath(new URL("./data/gemini-chat.json", import.meta.url));
 const AUTH_USERS_PATH = fileURLToPath(new URL("./data/auth-users.json", import.meta.url));
+const AUDIT_LOG_PATH = fileURLToPath(new URL("./data/audit.log", import.meta.url));
 const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 12;
 
 const scryptAsync = promisify(crypto.scrypt);
@@ -152,6 +168,78 @@ const getRequestCookie = (req: MiddlewareRequest, name: string) => {
     return parseCookies(cookieHeader.join("; "))[name];
   }
   return parseCookies(cookieHeader)[name];
+};
+
+
+const getHeaderValue = (req: MiddlewareRequest, name: string) => {
+  const value = req.headers?.[name.toLowerCase()];
+  if (Array.isArray(value)) {
+    return value[0] ?? "";
+  }
+  return value ?? "";
+};
+
+const getRequestPath = (req: MiddlewareRequest) => {
+  try {
+    return new URL(req.url ?? "", "http://localhost").pathname;
+  } catch {
+    return req.url ?? "";
+  }
+};
+
+const resolveRequestId = (req: MiddlewareRequest) => {
+  const headerValue = getHeaderValue(req, "x-request-id").trim();
+  return headerValue || crypto.randomUUID();
+};
+
+const resolveRequestIp = (req: MiddlewareRequest) => {
+  const forwardedFor = getHeaderValue(req, "x-forwarded-for")
+    .split(",")
+    .map((part) => part.trim())
+    .find(Boolean);
+  return forwardedFor || req.socket?.remoteAddress || "unknown";
+};
+
+const appendAuditLog = async (record: AuditLogRecord) => {
+  await fs.mkdir(path.dirname(AUDIT_LOG_PATH), { recursive: true });
+  await fs.appendFile(AUDIT_LOG_PATH, `${JSON.stringify(record)}\n`, "utf-8");
+};
+
+const writeAuditLog = async (
+  req: MiddlewareRequest,
+  payload: {
+    userId?: string;
+    role?: AuthRole | "guest";
+    result: string;
+    targetId?: string;
+    requestId?: string;
+  }
+) => {
+  try {
+    await appendAuditLog({
+      timestamp: new Date().toISOString(),
+      userId: payload.userId ?? "anonymous",
+      role: payload.role ?? "guest",
+      ip: resolveRequestIp(req),
+      endpoint: getRequestPath(req),
+      method: (req.method ?? "").toUpperCase(),
+      result: payload.result,
+      targetId: payload.targetId ?? "-",
+      requestId: payload.requestId ?? resolveRequestId(req),
+    });
+  } catch (error) {
+    console.error("Failed to write audit log:", error);
+  }
+};
+
+const buildCsrfToken = (sessionToken: string, jwtSecret: string) =>
+  crypto.createHmac("sha256", `${jwtSecret}:csrf`).update(sessionToken).digest("base64url");
+
+const verifyCsrfToken = (sessionToken: string, csrfToken: string, jwtSecret: string) => {
+  const expected = Buffer.from(buildCsrfToken(sessionToken, jwtSecret));
+  const actual = Buffer.from(csrfToken);
+  if (expected.length !== actual.length) return false;
+  return crypto.timingSafeEqual(expected, actual);
 };
 
 const verifyPassword = async (password: string, hash: string) => {
@@ -283,7 +371,7 @@ const createConstraintsApiMiddleware = () => {
     }
 
     if (req.method === "POST") {
-      let body = "";
+            let body = "";
       req.on("data", (chunk: any) => {
         body += chunk.toString("utf-8");
       });
@@ -391,7 +479,34 @@ const createChatHistoryApiMiddleware = () => {
 
 const createAuthApiMiddleware = (jwtSecret: string) => {
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    const requestId = resolveRequestId(req);
+
     if (req.method === "GET") {
+      if ((req.url ?? "").endsWith("/csrf")) {
+        const session = await ensureAuthSession(req, res, jwtSecret);
+        if (!session) {
+          await writeAuditLog(req, { result: "auth.csrf.failed.401", requestId });
+          return;
+        }
+        const sessionToken = getRequestCookie(req, "auth_session") ?? "";
+        if (!sessionToken) {
+          res.statusCode = 401;
+          res.end();
+          await writeAuditLog(req, {
+            userId: session.userId,
+            role: session.role,
+            result: "auth.csrf.failed.401",
+            requestId,
+          });
+          return;
+        }
+        const csrfToken = buildCsrfToken(sessionToken, jwtSecret);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ csrfToken }));
+        return;
+      }
+
       const session = await getAuthSession(req, jwtSecret);
       if (!session) {
         res.statusCode = 401;
@@ -414,9 +529,16 @@ const createAuthApiMiddleware = (jwtSecret: string) => {
 
     if (req.method === "POST") {
       if ((req.url ?? "").endsWith("/logout")) {
+        const session = await getAuthSession(req, jwtSecret);
         res.statusCode = 204;
         res.setHeader("Set-Cookie", serializeCookie("auth_session", "", { maxAge: 0, secure: isProductionCookie() }));
         res.end();
+        await writeAuditLog(req, {
+          userId: session?.userId,
+          role: session?.role,
+          result: "auth.logout.success",
+          requestId,
+        });
         return;
       }
 
@@ -431,6 +553,7 @@ const createAuthApiMiddleware = (jwtSecret: string) => {
         } catch {
           res.statusCode = 400;
           res.end("Invalid JSON payload.");
+          await writeAuditLog(req, { result: "auth.login.failed.400", requestId });
           return;
         }
         const username = typeof parsed.username === "string" ? parsed.username.trim() : "";
@@ -438,18 +561,21 @@ const createAuthApiMiddleware = (jwtSecret: string) => {
         if (!username || !password) {
           res.statusCode = 400;
           res.end("Invalid login payload.");
+          await writeAuditLog(req, { result: "auth.login.failed.400", requestId, targetId: username || "-" });
           return;
         }
         const users = await readAuthUsers();
         if (!users.length) {
           res.statusCode = 500;
           res.end("No auth users configured.");
+          await writeAuditLog(req, { result: "auth.login.failed.500", requestId, targetId: username });
           return;
         }
         const user = users.find((entry) => entry.id === username);
         if (!user || !(await verifyPassword(password, user.passwordHash))) {
           res.statusCode = 401;
           res.end("Invalid credentials.");
+          await writeAuditLog(req, { result: "auth.login.failed.401", requestId, targetId: username });
           return;
         }
         const now = Math.floor(Date.now() / 1000);
@@ -481,6 +607,13 @@ const createAuthApiMiddleware = (jwtSecret: string) => {
             },
           })
         );
+        await writeAuditLog(req, {
+          userId: user.id,
+          role: user.role,
+          result: "auth.login.success",
+          targetId: user.id,
+          requestId,
+        });
       });
       return;
     }
@@ -492,12 +625,19 @@ const createAuthApiMiddleware = (jwtSecret: string) => {
 
 const createAdminUsersApiMiddleware = (jwtSecret: string) => {
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
+    const requestId = resolveRequestId(req);
     const session = await ensureAuthSession(req, res, jwtSecret);
     if (!session) return;
     if (session.role !== "admin") {
       res.statusCode = 403;
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ error: "Forbidden" }));
+      await writeAuditLog(req, {
+        userId: session.userId,
+        role: session.role,
+        result: "admin.users.failed.403",
+        requestId,
+      });
       return;
     }
 
@@ -526,6 +666,12 @@ const createAdminUsersApiMiddleware = (jwtSecret: string) => {
         if (!id || !name || !role || !password || !isAuthRole(role)) {
           res.statusCode = 400;
           res.end("Invalid user payload.");
+          await writeAuditLog(req, {
+            userId: session.userId,
+            role: session.role,
+            result: "admin.users.create.failed.400",
+            requestId,
+          });
           return;
         }
         const users = await readAuthUsers();
@@ -540,6 +686,13 @@ const createAdminUsersApiMiddleware = (jwtSecret: string) => {
         res.statusCode = 201;
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify({ user: { id, name, role } }));
+        await writeAuditLog(req, {
+          userId: session.userId,
+          role: session.role,
+          result: "admin.users.create.success",
+          targetId: id,
+          requestId,
+        });
       } catch (error) {
         console.error("Failed to create auth user:", error);
         res.statusCode = 400;
@@ -564,6 +717,12 @@ const createAdminUsersApiMiddleware = (jwtSecret: string) => {
         if (!id || !name || !role || !isAuthRole(role)) {
           res.statusCode = 400;
           res.end("Invalid user payload.");
+          await writeAuditLog(req, {
+            userId: session.userId,
+            role: session.role,
+            result: "admin.users.update.failed.400",
+            requestId,
+          });
           return;
         }
         const users = await readAuthUsers();
@@ -582,6 +741,13 @@ const createAdminUsersApiMiddleware = (jwtSecret: string) => {
         res.statusCode = 200;
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify({ user: { id, name, role } }));
+        await writeAuditLog(req, {
+          userId: session.userId,
+          role: session.role,
+          result: "admin.users.update.success",
+          targetId: id,
+          requestId,
+        });
       } catch (error) {
         console.error("Failed to update auth user:", error);
         res.statusCode = 400;
@@ -598,6 +764,12 @@ const createAdminUsersApiMiddleware = (jwtSecret: string) => {
         if (!id) {
           res.statusCode = 400;
           res.end("Invalid user payload.");
+          await writeAuditLog(req, {
+            userId: session.userId,
+            role: session.role,
+            result: "admin.users.delete.failed.400",
+            requestId,
+          });
           return;
         }
         const users = await readAuthUsers();
@@ -619,6 +791,13 @@ const createAdminUsersApiMiddleware = (jwtSecret: string) => {
         await writeAuthUsers(updatedUsers);
         res.statusCode = 204;
         res.end();
+        await writeAuditLog(req, {
+          userId: session.userId,
+          role: session.role,
+          result: "admin.users.delete.success",
+          targetId: id,
+          requestId,
+        });
       } catch (error) {
         console.error("Failed to delete auth user:", error);
         res.statusCode = 400;
@@ -642,8 +821,12 @@ const createAuthGuardMiddleware = (jwtSecret: string) => {
       next();
       return;
     }
+    const requestId = resolveRequestId(req);
     const session = await ensureAuthSession(req, res, jwtSecret);
-    if (!session) return;
+    if (!session) {
+      await writeAuditLog(req, { result: "auth.guard.failed.401", requestId });
+      return;
+    }
     if (isWriteMethod(req.method) && session.role !== "admin") {
       const canRequesterWrite =
         session.role === "requester" &&
@@ -654,6 +837,12 @@ const createAuthGuardMiddleware = (jwtSecret: string) => {
         res.statusCode = 403;
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify({ error: "Forbidden" }));
+        await writeAuditLog(req, {
+          userId: session.userId,
+          role: session.role,
+          result: "auth.guard.failed.403",
+          requestId,
+        });
         return;
       }
     }
@@ -661,7 +850,47 @@ const createAuthGuardMiddleware = (jwtSecret: string) => {
   };
 };
 
-const createPlanApiMiddleware = () => {
+const createCsrfGuardMiddleware = (jwtSecret: string) => {
+  return async (req: MiddlewareRequest, res: MiddlewareResponse, next: MiddlewareNext) => {
+    if (!req.url?.startsWith("/api/")) {
+      next();
+      return;
+    }
+    if (!isWriteMethod(req.method)) {
+      next();
+      return;
+    }
+    if (req.url.startsWith("/api/gemini")) {
+      next();
+      return;
+    }
+    if (req.url.startsWith("/api/auth/login")) {
+      next();
+      return;
+    }
+
+    const requestId = resolveRequestId(req);
+    const session = await getAuthSession(req, jwtSecret);
+    const csrfToken = getHeaderValue(req, "x-csrf-token").trim();
+    const sessionToken = getRequestCookie(req, "auth_session") ?? "";
+
+    if (!session || !sessionToken || !csrfToken || !verifyCsrfToken(sessionToken, csrfToken, jwtSecret)) {
+      res.statusCode = 403;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: "CSRF token is invalid." }));
+      await writeAuditLog(req, {
+        userId: session?.userId,
+        role: session?.role,
+        result: "csrf.failed.403",
+        requestId,
+      });
+      return;
+    }
+    next();
+  };
+};
+
+const createPlanApiMiddleware = (jwtSecret: string) => {
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
     if (req.method === "GET") {
       const url = new URL(req.url ?? "", "http://localhost");
@@ -692,6 +921,8 @@ const createPlanApiMiddleware = () => {
     }
 
     if (req.method === "POST") {
+      const requestId = resolveRequestId(req);
+      const session = await getAuthSession(req, jwtSecret);
       let body = "";
       req.on("data", (chunk: any) => {
         body += chunk.toString("utf-8");
@@ -704,9 +935,21 @@ const createPlanApiMiddleware = () => {
           savePlanPayload(db, parsed);
           res.statusCode = 204;
           res.end();
+          await writeAuditLog(req, {
+            userId: session?.userId,
+            role: session?.role,
+            result: "plan.save.success",
+            requestId,
+          });
         } catch {
           res.statusCode = 400;
           res.end("Invalid JSON payload.");
+          await writeAuditLog(req, {
+            userId: session?.userId,
+            role: session?.role,
+            result: "plan.save.failed.400",
+            requestId,
+          });
         } finally {
           db?.close();
         }
@@ -719,7 +962,7 @@ const createPlanApiMiddleware = () => {
   };
 };
 
-const createDailyStocksApiMiddleware = () => {
+const createDailyStocksApiMiddleware = (jwtSecret: string) => {
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
     if (req.method === "GET") {
       let db;
@@ -740,6 +983,8 @@ const createDailyStocksApiMiddleware = () => {
     }
 
     if (req.method === "POST") {
+      const requestId = resolveRequestId(req);
+      const session = await getAuthSession(req, jwtSecret);
       let body = "";
       req.on("data", (chunk: any) => {
         body += chunk.toString("utf-8");
@@ -757,6 +1002,12 @@ const createDailyStocksApiMiddleware = () => {
         if (!entries) {
           res.statusCode = 400;
           res.end("Invalid daily stocks payload.");
+          await writeAuditLog(req, {
+            userId: session?.userId,
+            role: session?.role,
+            result: "dailyStocks.save.failed.400",
+            requestId,
+          });
           return;
         }
         let db;
@@ -766,6 +1017,12 @@ const createDailyStocksApiMiddleware = () => {
           res.statusCode = 200;
           res.setHeader("Content-Type", "application/json");
           res.end(JSON.stringify({ updatedAtISO }));
+          await writeAuditLog(req, {
+            userId: session?.userId,
+            role: session?.role,
+            result: "dailyStocks.save.success",
+            requestId,
+          });
         } catch (error) {
           console.error("Failed to save daily stocks:", error);
           res.statusCode = 500;
@@ -931,10 +1188,11 @@ export default defineConfig(({ mode }) => {
         name: "plan-and-gemini-api",
         configureServer(server) {
           server.middlewares.use(createAuthGuardMiddleware(authJwtSecret));
+          server.middlewares.use(createCsrfGuardMiddleware(authJwtSecret));
           server.middlewares.use("/api/auth", createAuthApiMiddleware(authJwtSecret));
           server.middlewares.use("/api/admin/users", createAdminUsersApiMiddleware(authJwtSecret));
-          server.middlewares.use("/api/plan", createPlanApiMiddleware());
-          server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
+          server.middlewares.use("/api/plan", createPlanApiMiddleware(authJwtSecret));
+          server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware(authJwtSecret));
           server.middlewares.use("/api/import-headers", createImportHeadersApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());
@@ -942,10 +1200,11 @@ export default defineConfig(({ mode }) => {
         },
         configurePreviewServer(server) {
           server.middlewares.use(createAuthGuardMiddleware(authJwtSecret));
+          server.middlewares.use(createCsrfGuardMiddleware(authJwtSecret));
           server.middlewares.use("/api/auth", createAuthApiMiddleware(authJwtSecret));
           server.middlewares.use("/api/admin/users", createAdminUsersApiMiddleware(authJwtSecret));
-          server.middlewares.use("/api/plan", createPlanApiMiddleware());
-          server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware());
+          server.middlewares.use("/api/plan", createPlanApiMiddleware(authJwtSecret));
+          server.middlewares.use("/api/daily-stocks", createDailyStocksApiMiddleware(authJwtSecret));
           server.middlewares.use("/api/import-headers", createImportHeadersApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());

@@ -26,7 +26,8 @@
 - マスタ管理の「ユーザー管理」からユーザーID・表示名・権限・パスワードを追加/更新/削除できます。
 - 画面から入力したパスワードはサーバー側で scrypt 形式のハッシュに変換して保存されます。
 - `passwordHash` を直接編集する場合は scrypt 形式で保存します。更新時は必ず新しいハッシュを生成してください。
-- ログイン後のセッション情報は `auth_session` Cookie に署名付きJWTとして保存されます（期限付き）。
+- ログイン後のセッション情報は `auth_session` Cookie に署名付きJWTとして保存されます（期限付き、`HttpOnly` + `SameSite=Lax`）。
+- 変更系 API（計画保存、日別在庫更新、ユーザー管理、制約保存、チャット履歴保存）は CSRF トークン必須です。`GET /api/auth/csrf` で取得したトークンを `X-CSRF-Token` で送信し、未設定・不正時は `403` になります。
 - JWT の署名鍵は `AUTH_JWT_SECRET`（例: `data/.env`）で設定してください。
 
 ### 権限・アクセスの運用
@@ -75,3 +76,23 @@
 ### チャット機能が動作しない場合
 - `data/.env` に `GEMINI_API_KEY` が設定されているか確認します。
 - ネットワーク設定やAPI利用制限も合わせて確認してください。
+
+
+### 監査ログの確認手順
+- 監査ログは `data/audit.log`（JSON Lines）に保存されます。
+- 1行が1イベントで、`timestamp, userId, role, ip, endpoint, method, result, targetId, requestId` を記録します。
+- 確認例:
+  - `tail -n 100 data/audit.log`
+  - `jq -r '.timestamp + " " + .result + " " + .userId + " " + .endpoint' data/audit.log | tail -n 50`
+- 失敗イベント（`401/403/400`）も記録されるため、権限エラー・CSRFエラー・入力不正の切り分けに利用できます。
+- パスワード本文やJWT本文は記録対象外です。
+
+### 監査ログの保管期間
+- 最低でも90日以上の保存を推奨します（社内規程がある場合は規程を優先）。
+- `data/` の定期バックアップ対象に `audit.log` を必ず含めてください。
+- ログローテーションを行う場合は、月次単位で退避し、復旧時に時系列で追跡できる命名（例: `audit-YYYY-MM.log`）を採用してください。
+
+### 障害復旧時の見方
+- まず障害発生時刻の前後で `requestId` を軸に追跡し、`result` の失敗→成功の流れを確認します。
+- 変更系の事故調査では、`plan.save.*` / `dailyStocks.save.*` / `admin.users.*` を優先して確認します。
+- 不正アクセス疑いでは、`auth.login.failed.401` と `csrf.failed.403` の増加有無を確認してください。

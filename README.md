@@ -64,6 +64,8 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 - Excel取り込み画面のヘッダー指定（任意）も SQLite に保存され、再読み込みしても保持されます。
 - 既存の `data/plan.json` を SQLite に移行する場合は `npm run migrate:plan` を実行してください（再実行しても最新の内容で上書きされます）。
 - `.env` は `data/` ディレクトリにまとめて配置してください（例: `data/.env`）。
+- 監査ログは `data/audit.log`（JSON Lines）に保存されます。ログイン成功/失敗、ログアウト、計画保存、日別在庫更新、ユーザー作成/更新/削除、403/401/400 の失敗イベントを記録します。
+- 監査ログには `timestamp, userId, role, ip, endpoint, method, result, targetId, requestId` を保存し、パスワード本文やJWT本文などの機密情報は記録しません。
 - `GEMINI_API_KEY` を設定するとチャット機能が利用できます。モデルを変えたい場合は `GEMINI_MODEL` または `VITE_GEMINI_MODEL` を設定してください。
 
 ## 認証設定（ID/パスワード）
@@ -92,7 +94,8 @@ cp data/auth-users.example.json data/auth-users.json
 - `role` は `admin`（全機能）, `requester`（未承認ブロックの作成/編集/削除 + 日別在庫の取り込み）, `viewer`（閲覧専用）の3種類です。
 - `requester` は承認済みブロックの編集/削除やマスタ管理はできません。
 - `viewer` はブロックの追加/移動/リサイズ、承認、保存/削除、JSONエクスポート、日別在庫の取り込みなどの操作が無効化されます。
-- ログイン後のセッションは `auth_session` Cookie に署名付きJWTとして保存されます（期限付き）。
+- ログイン後のセッションは `auth_session` Cookie に署名付きJWTとして保存されます（期限付き、`HttpOnly` + `SameSite=Lax`）。
+- CSRF対策として `GET /api/auth/csrf` でトークンを取得し、変更系 API 呼び出し時に `X-CSRF-Token` ヘッダーを送信します。トークン未設定・不正時は `403` を返します。
 - JWT の署名鍵は `AUTH_JWT_SECRET`（例: `data/.env`）で設定してください。
 - 管理者は「マスタ管理 → ユーザー管理」からユーザーの追加・更新・削除が行えます（変更内容は `data/auth-users.json` に保存されます）。
 - ユーザー管理画面から追加・更新するパスワードはサーバー側で scrypt ハッシュ化されます。
