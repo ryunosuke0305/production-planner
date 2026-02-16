@@ -816,6 +816,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     });
   };
 
+  const jumpToCurrentWeek = () => {
+    setViewWeekStart(getDefaultWeekStart());
+  };
+
   const readFirstSheetRows = async (file: File): Promise<unknown[][]> => {
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: "array" });
@@ -2565,6 +2569,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         </Button>
         <Button variant="outline" onClick={() => shiftWeek(-7)}>
           前の週
+        </Button>
+        <Button variant="outline" onClick={jumpToCurrentWeek}>
+          今週
         </Button>
         <Button variant="outline" onClick={() => shiftWeek(7)}>
           次の週

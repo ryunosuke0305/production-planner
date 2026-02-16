@@ -122,8 +122,8 @@ export function BlockDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
+      <DialogContent className="flex max-w-xl max-h-[90vh] flex-col overflow-hidden p-0">
+        <DialogHeader className="shrink-0">
           <DialogTitle>
             {activeItem ? activeItem.name : ""}
             {activeBlock ? (
@@ -140,7 +140,7 @@ export function BlockDetailDialog({
           </DialogTitle>
         </DialogHeader>
 
-        <div className={modalBodyClassName}>
+        <div className={`flex-1 overflow-y-auto ${modalBodyClassName}`}>
           <div className="space-y-5">
             <div className="grid grid-cols-12 items-center gap-2 rounded-lg bg-slate-50 p-3">
               <div className="col-span-4 text-sm text-muted-foreground">品目</div>
@@ -268,7 +268,7 @@ export function BlockDetailDialog({
           </div>
         </div>
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="sticky bottom-0 z-10 shrink-0 gap-2 bg-white">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             キャンセル
           </Button>
