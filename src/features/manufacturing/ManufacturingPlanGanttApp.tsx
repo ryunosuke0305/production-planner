@@ -145,6 +145,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [csrfToken, setCsrfToken] = useState("");
   const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
   const [managedUsersLoading, setManagedUsersLoading] = useState(false);
   const [managedUsersError, setManagedUsersError] = useState<string | null>(null);
@@ -302,6 +303,24 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     return fallbackId || "未設定";
   };
 
+
+  const withCsrfHeader = (headers: Record<string, string> = {}) => {
+    if (!csrfToken) return headers;
+    return {
+      ...headers,
+      "X-CSRF-Token": csrfToken,
+    };
+  };
+
+  const fetchCsrfToken = async () => {
+    const response = await fetch("/api/auth/csrf");
+    if (!response.ok) {
+      throw new Error("CSRFトークンの取得に失敗しました。");
+    }
+    const payload = (await response.json()) as { csrfToken?: string };
+    setCsrfToken(typeof payload.csrfToken === "string" ? payload.csrfToken : "");
+  };
+
   useEffect(() => {
     let cancelled = false;
     const loadAuthUser = async () => {
@@ -316,6 +335,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         const payload = (await response.json()) as { user?: AuthUser };
         if (!cancelled) {
           setAuthUser(payload.user ?? null);
+          try {
+            await fetchCsrfToken();
+          } catch {
+            setCsrfToken("");
+          }
         }
       } catch {
         if (!cancelled) {
@@ -351,6 +375,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       }
       const payload = (await response.json()) as { user?: AuthUser };
       setAuthUser(payload.user ?? null);
+      await fetchCsrfToken();
       setLoginId("");
       setLoginPassword("");
     } catch {
@@ -426,7 +451,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       const trimmedName = payload.name.trim();
       const response = await fetch("/api/admin/users", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           id: trimmedId,
           name: trimmedName,
@@ -470,7 +495,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       const trimmedName = payload.name.trim();
       const response = await fetch("/api/admin/users", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: withCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           id: payload.id,
           name: trimmedName,
@@ -499,7 +524,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     try {
       const response = await fetch("/api/admin/users", {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
+        headers: withCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({ id: user.id }),
       });
       if (!response.ok) {
@@ -517,9 +542,10 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const handleLogout = async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await fetch("/api/auth/logout", { method: "POST", headers: withCsrfHeader() });
     } finally {
       setAuthUser(null);
+      setCsrfToken("");
       setActiveView("schedule");
     }
   };
@@ -961,7 +987,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const saveDailyStocksToServer = async (entries: DailyStockEntry[]) => {
     const response = await fetch("/api/daily-stocks", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: withCsrfHeader({ "Content-Type": "application/json" }),
       body: JSON.stringify({ entries }),
     });
     if (!response.ok) {
@@ -983,7 +1009,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     try {
       const response = await fetch("/api/import-headers", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           dailyStock: dailyStockHeaderOverrides,
         } satisfies ImportHeaderOverrides),
@@ -1382,7 +1408,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         });
         await fetch("/api/plan", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: withCsrfHeader({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             version: 1,
             weekStartISO: planCalendarDays[0]?.date ?? toISODate(planWeekStart),
@@ -1467,7 +1493,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     try {
       await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({ messages }),
       });
     } catch {
@@ -1747,7 +1773,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     try {
       const response = await fetch("/api/gemini", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           model: geminiModel,
           systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
@@ -1867,7 +1893,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       const nextHorizonDays = Math.max(1, Math.floor(safeNumber(geminiHorizonDaysDraft) || 30));
       const response = await fetch("/api/constraints", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withCsrfHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({ text: constraintsDraft }),
       });
       if (!response.ok) {
