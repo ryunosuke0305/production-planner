@@ -18,7 +18,7 @@ type PlanListViewProps = {
   onEdit: (block: Block) => void;
 };
 
-type WidthState = Partial<Record<ColumnKey, number>>;
+type WidthState = Record<ColumnKey, number>;
 type ColumnKey = "action" | "item" | "amount" | "approved" | "start" | "end" | "duration" | "memo";
 
 type PlanRow = {
@@ -56,7 +56,7 @@ export function PlanListView({
   const [approvalFilter, setApprovalFilter] = useState<"all" | "approved" | "unapproved">("all");
   const [startDateTimeFilter, setStartDateTimeFilter] = useState(defaultStartDateTime);
   const [endDateTimeFilter, setEndDateTimeFilter] = useState("");
-  const [columnWidths, setColumnWidths] = useState<WidthState>({ action: 96 });
+  const [columnWidths, setColumnWidths] = useState<WidthState>(defaultColumnWidths);
   const resizingRef = useRef<{ key: ColumnKey; startX: number; startWidth: number } | null>(null);
 
   const itemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
@@ -113,7 +113,7 @@ export function PlanListView({
 
   const startResize = (event: React.MouseEvent<HTMLSpanElement>, key: ColumnKey) => {
     event.preventDefault();
-    const currentWidth = columnWidths[key] ?? (event.currentTarget.parentElement?.getBoundingClientRect().width ?? 120);
+    const currentWidth = columnWidths[key];
     resizingRef.current = {
       key,
       startX: event.clientX,
@@ -138,11 +138,10 @@ export function PlanListView({
   };
 
   const resetColumnWidth = (key: ColumnKey) => {
-    setColumnWidths((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
+    setColumnWidths((prev) => ({
+      ...prev,
+      [key]: defaultColumnWidths[key],
+    }));
   };
 
   return (
@@ -194,10 +193,10 @@ export function PlanListView({
         </CardHeader>
         <CardContent>
           <div className="max-h-[68vh] overflow-auto rounded-xl border border-slate-200 bg-white">
-            <table className="min-w-[1100px] w-max border-separate border-spacing-0 text-sm">
+            <table className="min-w-[1100px] w-max border-separate border-spacing-0 text-sm" style={{ tableLayout: "fixed" }}>
               <colgroup>
                 {columnOrder.map((key) => (
-                  <col key={key} style={columnWidths[key] ? { width: `${columnWidths[key]}px` } : undefined} />
+                  <col key={key} style={{ width: `${columnWidths[key]}px` }} />
                 ))}
               </colgroup>
               <thead className="sticky top-0 z-30 bg-white">
