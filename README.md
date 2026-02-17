@@ -76,7 +76,7 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 
 Cloud Run など社外アクセスが必要な運用を想定し、ID/パスワードによる基本認証とロール管理を追加しています。
 
-- 認証ユーザーは `data/auth-users.json` に定義します。
+- 認証ユーザーは計画データ（`data/plan.sqlite`）とは分離し、専用ファイル `data/auth-users.json` で管理します。
 - ひな形は `data/auth-users.example.json` にあります。コピーして編集してください。
 
 ```bash
@@ -88,9 +88,9 @@ cp data/auth-users.example.json data/auth-users.json
 ```json
 {
   "users": [
-    { "id": "admin", "name": "管理者", "role": "admin", "passwordHash": "scrypt$..." },
-    { "id": "requester", "name": "依頼者", "role": "requester", "passwordHash": "scrypt$..." },
-    { "id": "viewer", "name": "閲覧者", "role": "viewer", "passwordHash": "scrypt$..." }
+    { "id": "admin", "name": "管理者", "role": "admin", "password": "admin1234" },
+    { "id": "requester", "name": "依頼者", "role": "requester", "password": "requester1234" },
+    { "id": "viewer", "name": "閲覧者", "role": "viewer", "password": "viewer1234" }
   ]
 }
 ```
@@ -102,15 +102,7 @@ cp data/auth-users.example.json data/auth-users.json
 - CSRF対策として `GET /api/auth/csrf` でトークンを取得し、変更系 API 呼び出し時に `X-CSRF-Token` ヘッダーを送信します。トークン未設定・不正時は `403` を返します。
 - JWT の署名鍵は `AUTH_JWT_SECRET`（例: `data/.env`）で設定してください。
 - 管理者は「マスタ管理 → ユーザー管理」からユーザーの追加・更新・削除が行えます（変更内容は `data/auth-users.json` に保存されます）。
-- ユーザー管理画面から追加・更新するパスワードはサーバー側で scrypt ハッシュ化されます。
-
-### パスワードハッシュの作成
-
-`passwordHash` は scrypt で作成します。ユーザー管理画面を使わずに直接編集する場合は、以下のコマンドで生成できます。
-
-```bash
-node -e "const crypto=require('crypto');const hash=(pw)=>{const salt=crypto.randomBytes(16);const key=crypto.scryptSync(pw,salt,64);return ['scrypt',salt.toString('base64'),key.toString('base64')].join('$');};console.log(hash('your_password'));"
-```
+- 開発段階では `password` に平文を保存し、そのまま照合します。
 
 ## 長期運用（10年）に向けた設計方針
 

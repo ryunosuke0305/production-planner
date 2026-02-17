@@ -22,11 +22,10 @@
 - ブロックの作成・移動時は、割り当て理由がメモに残るように指示します。
 
 ### 認証ユーザーの管理
-- 認証ユーザーは `data/auth-users.json` で管理します（ひな形は `data/auth-users.example.json`）。
+- 認証ユーザーは計画DB（`data/plan.sqlite`）とは分離し、専用ファイル `data/auth-users.json` で管理します（ひな形は `data/auth-users.example.json`）。
 - `role` は `admin`（全機能）, `requester`（未承認ブロックの作成/編集/削除 + 日別在庫の取り込み）, `viewer`（閲覧専用）を設定します。
 - マスタ管理の「ユーザー管理」からユーザーID・表示名・権限・パスワードを追加/更新/削除できます。
-- 画面から入力したパスワードはサーバー側で scrypt 形式のハッシュに変換して保存されます。
-- `passwordHash` を直接編集する場合は scrypt 形式で保存します。更新時は必ず新しいハッシュを生成してください。
+- 開発段階では、画面から入力したパスワードを `password` に平文保存します。
 - ログイン後のセッション情報は `auth_session` Cookie に署名付きJWTとして保存されます（期限付き、`HttpOnly` + `SameSite=Lax`）。
 - 変更系 API（計画保存、日別在庫更新、ユーザー管理、制約保存、チャット履歴保存）は CSRF トークン必須です。`GET /api/auth/csrf` で取得したトークンを `X-CSRF-Token` で送信し、未設定・不正時は `403` になります。
 - JWT の署名鍵は `AUTH_JWT_SECRET`（例: `data/.env`）で設定してください。
