@@ -171,7 +171,7 @@ export function MasterView({
                         <td className="px-3 py-2">
                           <div className="font-medium">{item.name}</div>
                         </td>
-                        <td className="px-3 py-2 text-muted-foreground">{item.publicId || "未設定"}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{item.publicId}</td>
                         <td className="px-3 py-2 text-center text-muted-foreground">{item.unit}</td>
                         <td className="px-3 py-2 text-muted-foreground">
                           {PLANNING_POLICY_LABELS[item.planningPolicy] ?? item.planningPolicy}

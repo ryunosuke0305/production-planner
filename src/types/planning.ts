@@ -20,7 +20,7 @@ export type RecipeLine = {
 
 export type Item = {
   id: string;
-  publicId?: string;
+  publicId: string;
   name: string;
   unit: ItemUnit;
   planningPolicy: PlanningPolicy;
@@ -45,14 +45,8 @@ export type CalendarDay = {
 export type Block = {
   id: string;
   itemId: string;
-  /**
-   * @deprecated 旧フォーマット互換（読込専用）。新規保存では startAt/endAt を使用すること。
-   */
-  start?: number;
-  /**
-   * @deprecated 旧フォーマット互換（読込専用）。新規保存では startAt/endAt を使用すること。
-   */
-  len?: number;
+  start: number;
+  len: number;
   laneRow?: number;
   amount: number;
   memo: string;
@@ -79,7 +73,7 @@ export type ExportPayloadV1 = {
   };
   items: Array<{
     id: string;
-    publicId?: string;
+    publicId: string;
     name: string;
     unit: ItemUnit;
     planningPolicy: PlanningPolicy;

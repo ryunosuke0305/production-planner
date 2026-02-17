@@ -158,6 +158,10 @@ export function ItemDialog({ dialogModel, onOpenChange, onSave }: ItemDialogProp
       setItemFormError("品目名を入力してください。");
       return;
     }
+    if (!nextPublicId) {
+      setItemFormError("品目コード（品目ID）を入力してください。");
+      return;
+    }
     if (
       dialogModel.items.some(
         (item) => item.name === nextName && (!isEditMode || item.id !== dialogModel.editingItemId)
@@ -226,7 +230,7 @@ export function ItemDialog({ dialogModel, onOpenChange, onSave }: ItemDialogProp
                 }}
                 placeholder="品目名"
               />
-              <div className="text-sm font-medium text-muted-foreground">品目コード</div>
+              <div className="text-sm font-medium text-muted-foreground">品目コード（必須）</div>
               <Input
                 value={formValues.publicId}
                 onChange={(e) => {

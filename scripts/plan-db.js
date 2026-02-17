@@ -28,36 +28,6 @@ function normalizeDensity(value) {
   return "hour";
 }
 
-
-function addDaysISO(baseISO, days) {
-  const base = new Date(`${baseISO}T00:00:00`);
-  if (Number.isNaN(base.getTime())) return null;
-  const d = new Date(base);
-  d.setDate(base.getDate() + days);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function legacySlotToISODateTime(weekStartISO, density, slotIndex, asBoundary = false) {
-  const perDay = slotsPerDay(density);
-  const safeSlot = Math.max(0, Math.trunc(slotIndex));
-  const dayIndex = Math.floor(safeSlot / perDay);
-  const slotInDay = safeSlot % perDay;
-  const dateISO = addDaysISO(weekStartISO, dayIndex);
-  if (!dateISO) return null;
-  const dayHours = SLOT_HOURS[density] ?? SLOT_HOURS.hour;
-  const fallbackEndHour = 18;
-  const hour = asBoundary
-    ? slotInDay >= dayHours.length
-      ? fallbackEndHour
-      : dayHours[slotInDay]
-    : dayHours[slotInDay];
-  if (!Number.isFinite(hour)) return null;
-  return new Date(`${dateISO}T${String(hour).padStart(2, "0")}:00:00.000Z`).toISOString();
-}
-
 function dateTimeToLegacySlot(weekStartISO, density, value, asBoundary = false) {
   if (typeof value !== "string" || !value) return null;
   const parsed = new Date(value);
@@ -78,7 +48,6 @@ function dateTimeToLegacySlot(weekStartISO, density, value, asBoundary = false) 
 
 function ensureSchema(db) {
   db.exec(`
-    DROP TABLE IF EXISTS orders;
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -90,7 +59,7 @@ function ensureSchema(db) {
     );
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
-      public_id TEXT,
+      public_id TEXT NOT NULL,
       name TEXT NOT NULL,
       unit TEXT NOT NULL,
       stock REAL NOT NULL,
@@ -118,11 +87,9 @@ function ensureSchema(db) {
     CREATE TABLE IF NOT EXISTS blocks (
       id TEXT PRIMARY KEY,
       item_id TEXT NOT NULL,
-      start INTEGER NOT NULL,
-      len INTEGER NOT NULL,
       lane_row INTEGER,
-      start_at TEXT,
-      end_at TEXT,
+      start_at TEXT NOT NULL,
+      end_at TEXT NOT NULL,
       amount REAL NOT NULL,
       memo TEXT NOT NULL,
       approved INTEGER NOT NULL DEFAULT 0,
@@ -146,110 +113,9 @@ function ensureSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_daily_stocks_date ON daily_stocks(date);
     CREATE INDEX IF NOT EXISTS idx_daily_stocks_item ON daily_stocks(item_id);
-    CREATE INDEX IF NOT EXISTS idx_blocks_start ON blocks(start);
     CREATE INDEX IF NOT EXISTS idx_blocks_item ON blocks(item_id);
-    CREATE INDEX IF NOT EXISTS idx_blocks_item_start ON blocks(item_id, start);
+    CREATE INDEX IF NOT EXISTS idx_blocks_item_start_at ON blocks(item_id, start_at);
   `);
-}
-
-function ensureBlocksApprovedColumn(db) {
-  const columns = db.prepare("PRAGMA table_info(blocks)").all();
-  const hasApproved = columns.some((column) => column.name === "approved");
-  if (!hasApproved) {
-    db.exec("ALTER TABLE blocks ADD COLUMN approved INTEGER NOT NULL DEFAULT 0");
-  }
-}
-
-function ensureBlocksDateColumns(db) {
-  const columns = db.prepare("PRAGMA table_info(blocks)").all();
-  const hasStartAt = columns.some((column) => column.name === "start_at");
-  const hasEndAt = columns.some((column) => column.name === "end_at");
-  if (!hasStartAt) {
-    db.exec("ALTER TABLE blocks ADD COLUMN start_at TEXT");
-  }
-  if (!hasEndAt) {
-    db.exec("ALTER TABLE blocks ADD COLUMN end_at TEXT");
-  }
-}
-
-function ensureBlocksOperatorColumns(db) {
-  const columns = db.prepare("PRAGMA table_info(blocks)").all();
-  const hasCreatedBy = columns.some((column) => column.name === "created_by");
-  const hasUpdatedBy = columns.some((column) => column.name === "updated_by");
-  if (!hasCreatedBy) {
-    db.exec("ALTER TABLE blocks ADD COLUMN created_by TEXT");
-  }
-  if (!hasUpdatedBy) {
-    db.exec("ALTER TABLE blocks ADD COLUMN updated_by TEXT");
-  }
-}
-
-function ensureBlocksLaneRowColumn(db) {
-  const columns = db.prepare("PRAGMA table_info(blocks)").all();
-  const hasLaneRow = columns.some((column) => column.name === "lane_row");
-  if (!hasLaneRow) {
-    db.exec("ALTER TABLE blocks ADD COLUMN lane_row INTEGER");
-  }
-}
-
-function ensureItemsPlanningColumns(db) {
-  const columns = db.prepare("PRAGMA table_info(items)").all();
-  const hasPublicId = columns.some((column) => column.name === "public_id");
-  const hasPlanningPolicy = columns.some((column) => column.name === "planning_policy");
-  const hasSafetyStock = columns.some((column) => column.name === "safety_stock");
-  const hasSafetyStockAutoEnabled = columns.some((column) => column.name === "safety_stock_auto_enabled");
-  const hasSafetyStockLookbackDays = columns.some((column) => column.name === "safety_stock_lookback_days");
-  const hasSafetyStockCoefficient = columns.some((column) => column.name === "safety_stock_coefficient");
-  const hasShelfLifeDays = columns.some((column) => column.name === "shelf_life_days");
-  const hasProductionEfficiency = columns.some((column) => column.name === "production_efficiency");
-  const hasPackagingEfficiency = columns.some((column) => column.name === "packaging_efficiency");
-  const hasNotes = columns.some((column) => column.name === "notes");
-  const hasReorderPoint = columns.some((column) => column.name === "reorder_point");
-  const hasLotSize = columns.some((column) => column.name === "lot_size");
-  if (!hasPublicId) {
-    db.exec("ALTER TABLE items ADD COLUMN public_id TEXT");
-  }
-  if (!hasPlanningPolicy) {
-    db.exec("ALTER TABLE items ADD COLUMN planning_policy TEXT NOT NULL DEFAULT 'make_to_stock'");
-  }
-  if (!hasSafetyStock) {
-    db.exec("ALTER TABLE items ADD COLUMN safety_stock REAL NOT NULL DEFAULT 0");
-  }
-  if (!hasSafetyStockAutoEnabled) {
-    db.exec("ALTER TABLE items ADD COLUMN safety_stock_auto_enabled INTEGER NOT NULL DEFAULT 0");
-  }
-  if (!hasSafetyStockLookbackDays) {
-    db.exec("ALTER TABLE items ADD COLUMN safety_stock_lookback_days INTEGER NOT NULL DEFAULT 7");
-  }
-  if (!hasSafetyStockCoefficient) {
-    db.exec("ALTER TABLE items ADD COLUMN safety_stock_coefficient REAL NOT NULL DEFAULT 1");
-  }
-  if (!hasShelfLifeDays) {
-    db.exec("ALTER TABLE items ADD COLUMN shelf_life_days INTEGER NOT NULL DEFAULT 0");
-  }
-  if (!hasProductionEfficiency) {
-    db.exec("ALTER TABLE items ADD COLUMN production_efficiency REAL NOT NULL DEFAULT 0");
-  }
-  if (!hasPackagingEfficiency) {
-    db.exec("ALTER TABLE items ADD COLUMN packaging_efficiency REAL NOT NULL DEFAULT 1");
-  }
-  if (!hasNotes) {
-    db.exec("ALTER TABLE items ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
-  }
-  if (!hasReorderPoint) {
-    db.exec("ALTER TABLE items ADD COLUMN reorder_point REAL NOT NULL DEFAULT 0");
-  }
-  if (!hasLotSize) {
-    db.exec("ALTER TABLE items ADD COLUMN lot_size REAL NOT NULL DEFAULT 0");
-  }
-}
-
-function ensureDailyStocksShippedColumn(db) {
-  const columns = db.prepare("PRAGMA table_info(daily_stocks)").all();
-  const hasShipped = columns.some((column) => column.name === "shipped");
-  if (!hasShipped) {
-    db.exec("ALTER TABLE daily_stocks ADD COLUMN shipped REAL NOT NULL DEFAULT 0");
-  }
 }
 
 export async function openPlanDatabase() {
@@ -258,12 +124,6 @@ export async function openPlanDatabase() {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   ensureSchema(db);
-  ensureBlocksApprovedColumn(db);
-  ensureBlocksDateColumns(db);
-  ensureBlocksOperatorColumns(db);
-  ensureBlocksLaneRowColumn(db);
-  ensureItemsPlanningColumns(db);
-  ensureDailyStocksShippedColumn(db);
   return db;
 }
 
@@ -325,7 +185,7 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     .all()
     .map((row) => ({
       id: row.id,
-      publicId: row.public_id ?? undefined,
+      publicId: row.public_id,
       name: row.name,
       unit: row.unit,
       stock: row.stock,
@@ -370,22 +230,6 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     matched.forEach((id) => filterItemIds.add(id));
   }
 
-  let startSlot = null;
-  let endSlot = null;
-  let fromBoundary = null;
-  let toBoundary = null;
-  if (from && to) {
-    const fromDiff = diffDays(weekStartISO, from);
-    const toDiff = diffDays(weekStartISO, to);
-    if (fromDiff !== null && toDiff !== null) {
-      const perDay = slotsPerDay(density);
-      startSlot = fromDiff * perDay;
-      endSlot = (toDiff + 1) * perDay - 1;
-    }
-    fromBoundary = `${from}T00:00:00`;
-    toBoundary = `${to}T23:59:59`;
-  }
-
   const conditions = [];
   const params = [];
   if (itemFilterActive && filterItemIds.size === 0) {
@@ -395,41 +239,27 @@ export function loadPlanPayload(db, { from, to, itemId, itemName } = {}) {
     conditions.push(`item_id IN (${placeholders})`);
     params.push(...filterItemIds);
   }
-  if (fromBoundary && toBoundary) {
-    if (startSlot !== null && endSlot !== null) {
-      conditions.push(
-        "((start_at IS NOT NULL AND end_at IS NOT NULL AND start_at <= ? AND end_at >= ?) OR (start_at IS NULL AND end_at IS NULL AND start <= ? AND (start + len - 1) >= ?))"
-      );
-      params.push(toBoundary, fromBoundary, endSlot, startSlot);
-    } else {
-      conditions.push("start_at <= ? AND end_at >= ?");
-      params.push(toBoundary, fromBoundary);
-    }
+
+  if (from && to) {
+    conditions.push("start_at <= ? AND end_at >= ?");
+    params.push(`${to}T23:59:59`, `${from}T00:00:00`);
   }
 
-  const sql = `SELECT id, item_id, start, len, lane_row, start_at, end_at, amount, memo, approved, created_by, updated_by FROM blocks${
+  const sql = `SELECT id, item_id, lane_row, start_at, end_at, amount, memo, approved, created_by, updated_by FROM blocks${
     conditions.length ? ` WHERE ${conditions.join(" AND ")}` : ""
-  } ORDER BY start, id`;
+  } ORDER BY start_at, id`;
 
   const blocks = db.prepare(sql).all(...params).map((row) => {
-    const legacyStart = Number.isFinite(row.start) ? row.start : 0;
-    const legacyLen = Number.isFinite(row.len) ? Math.max(1, row.len) : 1;
-    const startAt =
-      row.start_at ??
-      legacySlotToISODateTime(weekStartISO, density, legacyStart, false) ??
-      undefined;
-    const endAt =
-      row.end_at ??
-      legacySlotToISODateTime(weekStartISO, density, legacyStart + legacyLen, true) ??
-      undefined;
+    const start = dateTimeToLegacySlot(weekStartISO, density, row.start_at, false) ?? 0;
+    const endBoundary = dateTimeToLegacySlot(weekStartISO, density, row.end_at, true) ?? start + 1;
     return {
       id: row.id,
       itemId: row.item_id,
-      start: legacyStart,
-      len: legacyLen,
+      start,
+      len: Math.max(1, endBoundary - start),
       laneRow: Number.isFinite(row.lane_row) ? row.lane_row : undefined,
-      startAt,
-      endAt,
+      startAt: row.start_at,
+      endAt: row.end_at,
       amount: row.amount,
       memo: row.memo,
       approved: Boolean(row.approved),
@@ -501,7 +331,7 @@ export function savePlanPayload(db, payload) {
     "INSERT INTO calendar_days (date, is_holiday, work_start, work_end) VALUES (?, ?, ?, ?)"
   );
   const insertBlock = db.prepare(
-    "INSERT INTO blocks (id, item_id, start, len, lane_row, start_at, end_at, amount, memo, approved, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO blocks (id, item_id, lane_row, start_at, end_at, amount, memo, approved, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   const transaction = db.transaction(() => {
@@ -532,7 +362,7 @@ export function savePlanPayload(db, payload) {
     payload.items?.forEach((item) => {
       insertItem.run(
         item.id,
-        item.publicId ?? null,
+        item.publicId,
         item.name,
         item.unit,
         item.stock ?? 0,
@@ -554,32 +384,13 @@ export function savePlanPayload(db, payload) {
     });
 
     payload.blocks?.forEach((block) => {
-      const startAt =
-        block.startAt ??
-        legacySlotToISODateTime(payload.weekStartISO, normalizeDensity(payload.density), Math.trunc(block.start ?? 0), false);
-      const endAt =
-        block.endAt ??
-        legacySlotToISODateTime(
-          payload.weekStartISO,
-          normalizeDensity(payload.density),
-          Math.trunc((block.start ?? 0) + Math.max(1, Math.trunc(block.len ?? 1))),
-          true
-        );
-      const start =
-        dateTimeToLegacySlot(payload.weekStartISO, normalizeDensity(payload.density), startAt, false) ??
-        Math.trunc(block.start ?? 0);
-      const endBoundary =
-        dateTimeToLegacySlot(payload.weekStartISO, normalizeDensity(payload.density), endAt, true) ??
-        start + Math.max(1, Math.trunc(block.len ?? 1));
-      const len = Math.max(1, endBoundary - start);
+      if (!block.startAt || !block.endAt) return;
       insertBlock.run(
         block.id,
         block.itemId,
-        start,
-        len,
         Number.isFinite(block.laneRow) ? Math.max(0, Math.trunc(block.laneRow)) : null,
-        startAt ?? null,
-        endAt ?? null,
+        block.startAt,
+        block.endAt,
         block.amount ?? 0,
         block.memo ?? "",
         block.approved ? 1 : 0,
