@@ -33,6 +33,16 @@ type PlanRow = {
 };
 
 const columnOrder: ColumnKey[] = ["action", "item", "amount", "approved", "start", "end", "duration", "memo"];
+const defaultColumnWidths: WidthState = {
+  action: 88,
+  item: 280,
+  amount: 120,
+  approved: 110,
+  start: 180,
+  end: 180,
+  duration: 100,
+  memo: 320,
+};
 
 export function PlanListView({
   blocks,
