@@ -2775,27 +2775,27 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const scheduleCard = (
     <Card className="rounded-2xl shadow-sm">
-      <CardHeader className="flex min-h-[56px] items-center pb-2">
+      <CardHeader className="relative z-20 flex min-h-[56px] items-center pb-2">
         <CardTitle className="text-base font-medium">
           週表示：{weekDates[0] ? toMD(weekDates[0]) : ""} 〜{" "}
           {weekDates.length ? toMD(weekDates[weekDates.length - 1]) : ""}
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="overflow-auto rounded-xl border border-slate-200 bg-white">
+        <div className="relative overflow-auto rounded-xl border border-slate-200 bg-white">
           <div
-            className="min-w-[1100px] text-slate-900"
+            className="relative isolate min-w-[1100px] text-slate-900"
             style={{
               display: "grid",
               gridTemplateColumns: `max-content repeat(${slotsPerDay}, ${colW}px) 220px`,
             }}
           >
             {/* ヘッダ（時間） */}
-            <div className="sticky left-0 top-0 z-50 w-fit min-w-[96px] bg-white border-b border-r p-3 font-medium">日付</div>
+            <div className="sticky left-0 top-0 z-40 w-fit min-w-[96px] bg-white border-b border-r p-3 font-medium">日付</div>
             {slotHeaderLabels.map((label, idx) => (
               <div
                 key={`hour-${label || "blank"}-${idx}`}
-                className="sticky top-0 z-20 bg-white border-b border-r p-2 text-center text-xs text-muted-foreground"
+                className="sticky top-0 z-30 bg-white border-b border-r p-2 text-center text-xs text-muted-foreground"
               >
                 {label || (viewDensity === "day" ? "日" : "")}
               </div>
@@ -2859,7 +2859,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
               return (
                 <React.Fragment key={date}>
-                  <div className="sticky left-0 z-10 w-fit min-w-[96px] bg-white border-b border-r p-3">
+                  <div className="sticky left-0 z-30 w-fit min-w-[96px] bg-white border-b border-r p-3">
                     <div className="text-sm font-semibold">{toMD(date)}</div>
                     <div className="text-xs text-muted-foreground">({toWeekday(date)})</div>
                     {calendarDay?.isHoliday ? (
@@ -2903,7 +2903,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                       return (
                         <motion.div
                           key={block.id}
-                          className={"absolute h-[52px] rounded-xl border shadow-sm touch-none" + toneClass}
+                          className={"absolute z-10 h-[52px] rounded-xl border shadow-sm touch-none" + toneClass}
                           style={{ left, width, top }}
                           whileTap={{ scale: 0.99 }}
                           onClick={(ev) => {
