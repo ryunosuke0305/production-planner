@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import react from "@vitejs/plugin-react";
 import { GoogleGenAI } from "@google/genai";
 import {
+  ensurePlanDatabaseSeeded,
   loadDailyStocks,
   loadImportHeaderOverrides,
   loadPlanPayload,
@@ -1186,7 +1187,8 @@ export default defineConfig(({ mode }) => {
       react(),
       {
         name: "plan-and-gemini-api",
-        configureServer(server) {
+        async configureServer(server) {
+          await ensurePlanDatabaseSeeded();
           server.middlewares.use(createAuthGuardMiddleware(authJwtSecret));
           server.middlewares.use(createCsrfGuardMiddleware(authJwtSecret));
           server.middlewares.use("/api/auth", createAuthApiMiddleware(authJwtSecret));
@@ -1198,7 +1200,8 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());
           server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
         },
-        configurePreviewServer(server) {
+        async configurePreviewServer(server) {
+          await ensurePlanDatabaseSeeded();
           server.middlewares.use(createAuthGuardMiddleware(authJwtSecret));
           server.middlewares.use(createCsrfGuardMiddleware(authJwtSecret));
           server.middlewares.use("/api/auth", createAuthApiMiddleware(authJwtSecret));

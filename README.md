@@ -184,6 +184,7 @@ GEMINI_API_KEY=your_api_key_here
 ### `/api/plan`（Vite ミドルウェア）
 
 開発サーバー/プレビューサーバーに組み込まれた簡易 API です。`data/plan.sqlite` を読み書きします。
+`data/plan.sqlite` が未作成の場合は、サーバー起動時にデフォルトの計画データセットを自動投入します。
 
 | メソッド | 説明 | 入出力 |
 | --- | --- | --- |
