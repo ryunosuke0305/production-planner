@@ -2787,11 +2787,11 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
             className="min-w-[1100px] text-slate-900"
             style={{
               display: "grid",
-              gridTemplateColumns: `220px repeat(${slotsPerDay}, ${colW}px) 220px`,
+              gridTemplateColumns: `max-content repeat(${slotsPerDay}, ${colW}px) 220px`,
             }}
           >
             {/* ヘッダ（時間） */}
-            <div className="sticky left-0 top-0 z-50 bg-white border-b border-r p-3 font-medium">日付</div>
+            <div className="sticky left-0 top-0 z-50 w-fit min-w-[96px] bg-white border-b border-r p-3 font-medium">日付</div>
             {slotHeaderLabels.map((label, idx) => (
               <div
                 key={`hour-${label || "blank"}-${idx}`}
@@ -2859,7 +2859,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
               return (
                 <React.Fragment key={date}>
-                  <div className="sticky left-0 z-40 bg-white border-b border-r p-3">
+                  <div className="sticky left-0 z-10 w-fit min-w-[96px] bg-white border-b border-r p-3">
                     <div className="text-sm font-semibold">{toMD(date)}</div>
                     <div className="text-xs text-muted-foreground">({toWeekday(date)})</div>
                     {calendarDay?.isHoliday ? (
@@ -3111,6 +3111,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   blocks={derivedBlocks.map((entry) => ({ ...entry.block, start: entry.start, len: entry.len }))}
                   items={items}
                   slotIndexToLabel={planSlotIndexToLabel}
+                  calendarDays={planCalendarDays}
+                  rawHoursByDay={planCalendar.rawHoursByDay}
+                  slotsPerDay={planSlotsPerDay}
                   canEdit={canEditBlocks}
                   onEdit={(block) => openPlanEdit(block)}
                 />
