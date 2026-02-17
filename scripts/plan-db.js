@@ -5,6 +5,75 @@ import Database from "better-sqlite3";
 const dataDir = path.resolve(process.cwd(), "data");
 export const PLAN_DB_PATH = path.join(dataDir, "plan.sqlite");
 
+const DEFAULT_WORK_START_HOUR = 8;
+const DEFAULT_WORK_END_HOUR = 18;
+const DEFAULT_PLAN_MATERIALS = [
+  { id: "MAT-A", name: "原料A", unit: "kg" },
+  { id: "MAT-B", name: "原料B", unit: "kg" },
+  { id: "MAT-C", name: "原料C", unit: "kg" },
+  { id: "MAT-D", name: "原料D", unit: "kg" },
+  { id: "MAT-E", name: "原料E", unit: "kg" },
+];
+const DEFAULT_PLAN_ITEMS = [
+  {
+    id: "A",
+    publicId: "ITEM-A",
+    name: "Item A",
+    unit: "ケース",
+    planningPolicy: "make_to_stock",
+    safetyStock: 20,
+    safetyStockAutoEnabled: true,
+    safetyStockLookbackDays: 14,
+    safetyStockCoefficient: 1.1,
+    shelfLifeDays: 30,
+    productionEfficiency: 40,
+    packagingEfficiency: 0.95,
+    notes: "定番商品のため平準化。",
+    recipe: [
+      { materialId: "MAT-A", perUnit: 0.25, unit: "kg" },
+      { materialId: "MAT-B", perUnit: 0.5, unit: "kg" },
+    ],
+  },
+  {
+    id: "B",
+    publicId: "ITEM-B",
+    name: "Item B",
+    unit: "ケース",
+    planningPolicy: "make_to_order",
+    safetyStock: 10,
+    safetyStockAutoEnabled: false,
+    safetyStockLookbackDays: 7,
+    safetyStockCoefficient: 1,
+    shelfLifeDays: 7,
+    productionEfficiency: 20,
+    packagingEfficiency: 0.9,
+    notes: "受注対応中心。",
+    recipe: [
+      { materialId: "MAT-A", perUnit: 0.1, unit: "kg" },
+      { materialId: "MAT-C", perUnit: 0.2, unit: "kg" },
+    ],
+  },
+  {
+    id: "C",
+    publicId: "ITEM-C",
+    name: "Item C",
+    unit: "kg",
+    planningPolicy: "make_to_stock",
+    safetyStock: 50,
+    safetyStockAutoEnabled: true,
+    safetyStockLookbackDays: 30,
+    safetyStockCoefficient: 1.2,
+    shelfLifeDays: 14,
+    productionEfficiency: 60,
+    packagingEfficiency: 0.88,
+    notes: "週末の追加生産あり。",
+    recipe: [
+      { materialId: "MAT-D", perUnit: 0.35, unit: "kg" },
+      { materialId: "MAT-E", perUnit: 0.05, unit: "kg" },
+    ],
+  },
+];
+
 const SLOT_HOURS = {
   hour: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
   "2hour": [8, 10, 12, 14, 16],
@@ -26,6 +95,47 @@ function diffDays(from, to) {
 function normalizeDensity(value) {
   if (value === "day" || value === "2hour" || value === "hour") return value;
   return "hour";
+}
+
+function toISODate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getDefaultWeekStartISO() {
+  const today = new Date();
+  const midnightUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const day = midnightUtc.getUTCDay();
+  const diffToMonday = (day + 6) % 7;
+  midnightUtc.setUTCDate(midnightUtc.getUTCDate() - diffToMonday);
+  return toISODate(midnightUtc);
+}
+
+function buildDefaultCalendarDays(weekStartISO) {
+  const base = new Date(`${weekStartISO}T00:00:00Z`);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(base);
+    date.setUTCDate(base.getUTCDate() + index);
+    const weekday = date.getUTCDay();
+    return {
+      date: toISODate(date),
+      isHoliday: weekday === 0 || weekday === 6,
+      workStartHour: DEFAULT_WORK_START_HOUR,
+      workEndHour: DEFAULT_WORK_END_HOUR,
+    };
+  });
+}
+
+function buildDefaultPlanPayload() {
+  const weekStartISO = getDefaultWeekStartISO();
+  return {
+    version: 1,
+    weekStartISO,
+    density: "hour",
+    calendarDays: buildDefaultCalendarDays(weekStartISO),
+    materials: DEFAULT_PLAN_MATERIALS,
+    items: DEFAULT_PLAN_ITEMS,
+    blocks: [],
+  };
 }
 
 function dateTimeToLegacySlot(weekStartISO, density, value, asBoundary = false) {
@@ -125,6 +235,29 @@ export async function openPlanDatabase() {
   db.pragma("foreign_keys = ON");
   ensureSchema(db);
   return db;
+}
+
+export async function ensurePlanDatabaseSeeded() {
+  await fs.mkdir(dataDir, { recursive: true });
+  let hasExistingDb = true;
+  try {
+    await fs.access(PLAN_DB_PATH);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      hasExistingDb = false;
+    } else {
+      throw error;
+    }
+  }
+  if (hasExistingDb) return false;
+
+  const db = await openPlanDatabase();
+  try {
+    savePlanPayload(db, buildDefaultPlanPayload());
+  } finally {
+    db.close();
+  }
+  return true;
 }
 
 function loadMetaValue(db, key) {
