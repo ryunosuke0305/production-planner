@@ -1709,7 +1709,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const isDateInRange = (date: string) => date >= rangeStartISO && date <= rangeEndISO;
     const filteredDailyStocks = dailyStocks.filter((entry) => isDateInRange(entry.date));
     const eodStocks = items.map((item) => ({
-      itemId: (item.publicId ?? "").trim() || item.id,
+      itemId: item.publicId,
       dates: horizonWeekDates,
       stocks: horizonWeekDates.map((_, idx) => eodStockByItem[item.id]?.[idx] ?? 0),
     }));
@@ -1727,7 +1727,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         calendarDays: horizonCalendarDays,
         materials: materialsMaster,
         items: items.map((item) => ({
-          itemId: (item.publicId ?? "").trim() || item.id,
+          itemId: item.publicId,
           unit: item.unit,
           planningPolicy: item.planningPolicy,
           safetyStock: item.safetyStock,
@@ -2596,7 +2596,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       dailyStocks,
       eodStocks: items.map((item) => ({
         itemId: item.id,
-        itemCode: (item.publicId ?? "").trim() || item.id,
+        itemCode: item.publicId,
         dates: planWeekDates,
         stocks: eodStockByItem[item.id] ?? [],
       })),
@@ -2647,7 +2647,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (payload.action === "create") {
       const newItem: Item = {
         id: uid("item"),
-        publicId: values.publicId || undefined,
+        publicId: values.publicId,
         name: values.name,
         unit: values.unit,
         planningPolicy: values.planningPolicy,
@@ -2670,7 +2670,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         it.id === payload.itemId
           ? {
               ...it,
-              publicId: values.publicId || undefined,
+              publicId: values.publicId,
               name: values.name,
               unit: values.unit,
               planningPolicy: values.planningPolicy,

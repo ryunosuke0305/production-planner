@@ -48,7 +48,7 @@ export function PlanListView({ blocks, items, slotIndexToLabel, canEdit, onEdit 
         return {
           block,
           itemName: item?.name ?? "未登録品目",
-          itemCode: item?.publicId ?? block.itemId,
+          itemCode: item?.publicId ?? "未登録品目",
           itemUnit: item?.unit ?? "",
           startLabel,
           endLabel,

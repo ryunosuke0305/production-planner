@@ -36,6 +36,7 @@ export const SAMPLE_MATERIALS: Material[] = [
 export const SAMPLE_ITEMS: Item[] = [
   {
     id: "A",
+    publicId: "ITEM-A",
     name: "Item A",
     unit: "ケース",
     planningPolicy: "make_to_stock",
@@ -54,6 +55,7 @@ export const SAMPLE_ITEMS: Item[] = [
   },
   {
     id: "B",
+    publicId: "ITEM-B",
     name: "Item B",
     unit: "ケース",
     planningPolicy: "make_to_order",
@@ -72,6 +74,7 @@ export const SAMPLE_ITEMS: Item[] = [
   },
   {
     id: "C",
+    publicId: "ITEM-C",
     name: "Item C",
     unit: "kg",
     planningPolicy: "make_to_stock",

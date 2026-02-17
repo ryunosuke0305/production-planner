@@ -9,8 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
-    "preview": "vite preview",
-    "migrate:plan": "node scripts/migrate-plan.js"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@google/genai": "^1.36.0",

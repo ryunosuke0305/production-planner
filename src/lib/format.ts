@@ -22,7 +22,7 @@ export function formatUpdatedAt(value: string | null): string {
 }
 
 export function itemCodeKey(item: Item): string {
-  return (item.publicId ?? "").trim() || item.id;
+  return item.publicId;
 }
 
 export function calcMaterials(

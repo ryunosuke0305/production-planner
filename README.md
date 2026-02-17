@@ -67,7 +67,6 @@ docker run --rm -p 4173:4173 -v "$(pwd)/data:/app/data" production-planner
 - 画面上の計画データは開発サーバー経由で `data/plan.sqlite` に保存され、再読み込みしても保持されます。
 - 品目マスタで入力した品目コード（品目ID）に加え、計画方針/安全在庫/自動計算設定/賞味期限/製造・包装効率/備考などの設定も SQLite に保存されます。
 - Excel取り込み画面のヘッダー指定（任意）も SQLite に保存され、再読み込みしても保持されます。
-- 既存の `data/plan.json` を SQLite に移行する場合は `npm run migrate:plan` を実行してください（再実行しても最新の内容で上書きされます）。
 - `.env` は `data/` ディレクトリにまとめて配置してください（例: `data/.env`）。
 - 監査ログは `data/audit.log`（JSON Lines）に保存されます。ログイン成功/失敗、ログアウト、計画保存、日別在庫更新、ユーザー作成/更新/削除、403/401/400 の失敗イベントを記録します。
 - 監査ログには `timestamp, userId, role, ip, endpoint, method, result, targetId, requestId` を保存し、パスワード本文やJWT本文などの機密情報は記録しません。
@@ -228,7 +227,7 @@ Gemini API との通信をサーバー側で中継し、クライアントに AP
 ```
 .
 ├─ data/                 # 永続データ置き場（.env / plan.sqlite もここに配置）
-├─ scripts/              # SQLite 移行スクリプトなど
+├─ scripts/              # DBユーティリティ
 ├─ src/
 │  ├─ App.tsx             # 製造計画ガントチャートの本体
 │  ├─ main.tsx            # エントリポイント
@@ -288,26 +287,26 @@ API でやり取りする JSON は `startAt` / `endAt` を正とする日時基�
 ```
 
 - `density`: `"hour" | "2hour" | "day"`
+- `publicId`（品目コード / 品目ID）は必須です。
 - `startAt` / `endAt`: ISO-8601 形式の開始・終了日時（永続データの必須項目）
 - `createdBy` / `updatedBy`: ブロックの登録者 / 更新者（任意）
-- 互換ポリシー: 旧 `start` / `len` は移行期間の読込互換として受理しますが、保存時は `startAt` / `endAt` を正とします。
 
 ### SQLite スキーマ（`data/plan.sqlite`）
 
 ```
 meta(key TEXT PRIMARY KEY, value TEXT)
 materials(id TEXT PRIMARY KEY, name TEXT, unit TEXT)
-items(id TEXT PRIMARY KEY, public_id TEXT, name TEXT, unit TEXT, planning_policy TEXT, safety_stock REAL, shelf_life_days REAL, production_efficiency REAL, notes TEXT)
+items(id TEXT PRIMARY KEY, public_id TEXT NOT NULL, name TEXT, unit TEXT, planning_policy TEXT, safety_stock REAL, shelf_life_days REAL, production_efficiency REAL, notes TEXT)
 item_recipes(item_id TEXT, material_id TEXT, per_unit REAL, unit TEXT, PRIMARY KEY(item_id, material_id))
-blocks(id TEXT PRIMARY KEY, item_id TEXT, start INTEGER, len INTEGER, start_at TEXT, end_at TEXT, amount REAL, memo TEXT, approved INTEGER, created_by TEXT, updated_by TEXT)
+blocks(id TEXT PRIMARY KEY, item_id TEXT, lane_row INTEGER, start_at TEXT, end_at TEXT, amount REAL, memo TEXT, approved INTEGER, created_by TEXT, updated_by TEXT)
 daily_stocks(date TEXT, item_id TEXT, item_code TEXT, stock REAL, shipped REAL, PRIMARY KEY(date, item_id))
 ```
 
 #### インデックス方針
 
-- 期間検索: `blocks(start)`（スロット範囲の検索に使用）
+- 期間検索: `blocks(start_at)`
 - 品目検索: `blocks(item_id)`
-- 期間 + 品目の複合検索: `blocks(item_id, start)`
+- 期間 + 品目の複合検索: `blocks(item_id, start_at)`
 - 日別在庫の期間検索: `daily_stocks(date)`
 - 日別在庫の品目検索: `daily_stocks(item_id)`
 

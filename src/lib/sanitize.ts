@@ -204,7 +204,7 @@ export function sanitizeItems(raw: unknown): Item[] {
       const id = asString(record.id).trim();
       const publicId = asString(record.publicId ?? record.public_id ?? record.itemKey ?? record.item_key).trim();
       const name = asString(record.name).trim();
-      if (!id || !name) return null;
+      if (!id || !name || !publicId) return null;
       const unit = asItemUnit(record.unit);
       const planningPolicy = asPlanningPolicy(record.planningPolicy ?? record.planning_policy);
       const safetyStock = Math.max(0, asNumber(record.safetyStock ?? record.safety_stock));
@@ -281,7 +281,7 @@ export function sanitizeItems(raw: unknown): Item[] {
         : [];
       const item: Item = {
         id,
-        publicId: publicId || undefined,
+        publicId,
         name,
         unit,
         planningPolicy,
@@ -352,8 +352,8 @@ export function sanitizeBlocks(
         onError?.("ブロックの id または itemId が不足しています。", { index });
         return null;
       }
-      const startAt = asString(record.startAt || record.start_at).trim();
-      const endAt = asString(record.endAt || record.end_at).trim();
+      const startAt = asString(record.startAt).trim();
+      const endAt = asString(record.endAt).trim();
       if (!startAt || !endAt) {
         onError?.("ブロックの startAt/endAt が不足しているためスキップしました。", {
           id,
@@ -369,14 +369,14 @@ export function sanitizeBlocks(
         start: asNumber(record.start),
         len: Math.max(1, asNumber(record.len, 1)),
         laneRow: (() => {
-          const row = asNumber(record.laneRow ?? record.stackRow ?? record.lane_row ?? record.stack_row, -1);
+          const row = asNumber(record.laneRow ?? record.stackRow, -1);
           return Number.isFinite(row) && row >= 0 ? Math.trunc(row) : undefined;
         })(),
         amount: asNumber(record.amount),
         memo: asString(record.memo),
         approved: asBoolean(record.approved, false),
-        createdBy: asString(record.createdBy || record.created_by),
-        updatedBy: asString(record.updatedBy || record.updated_by),
+        createdBy: asString(record.createdBy),
+        updatedBy: asString(record.updatedBy),
         startAt,
         endAt,
       };

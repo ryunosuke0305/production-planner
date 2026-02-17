@@ -65,7 +65,7 @@ export function InventoryView({
                             {item.name}
                             <span className="ml-1 text-xs font-normal text-muted-foreground">({item.unit})</span>
                           </div>
-                          <div className="text-xs text-muted-foreground">{item.publicId ?? item.id}</div>
+                          <div className="text-xs text-muted-foreground">{item.publicId}</div>
                         </td>
                         {inventoryDates.map((date) => {
                           const entry = entryMap?.get(date);
