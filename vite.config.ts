@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import react from "@vitejs/plugin-react";
 import { GoogleGenAI } from "@google/genai";
 import {
@@ -16,6 +15,7 @@ import {
   saveImportHeaderOverrides,
   savePlanPayload,
 } from "./scripts/plan-db.js";
+import { readAuthUsers, writeAuthUsers } from "./scripts/auth-user-db.js";
 
 type MiddlewareRequest = {
   method?: string;
@@ -50,12 +50,6 @@ type ChatHistoryMessage = {
 
 type AuthRole = "admin" | "requester" | "viewer";
 
-type AuthUser = {
-  id: string;
-  name: string;
-  role: AuthRole;
-  passwordHash: string;
-};
 
 type AuthJwtPayload = {
   sub: string;
@@ -79,11 +73,8 @@ type AuditLogRecord = {
 
 const CONSTRAINTS_PATH = fileURLToPath(new URL("./data/gemini-constraints.json", import.meta.url));
 const CHAT_HISTORY_PATH = fileURLToPath(new URL("./data/gemini-chat.json", import.meta.url));
-const AUTH_USERS_PATH = fileURLToPath(new URL("./data/auth-users.json", import.meta.url));
 const AUDIT_LOG_PATH = fileURLToPath(new URL("./data/audit.log", import.meta.url));
 const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 12;
-
-const scryptAsync = promisify(crypto.scrypt);
 
 const readConstraintsText = async () => {
   try {
@@ -121,25 +112,6 @@ const writeChatHistory = async (messages: ChatHistoryMessage[]) => {
   await fs.mkdir(path.dirname(CHAT_HISTORY_PATH), { recursive: true });
   const payload = JSON.stringify({ messages }, null, 2);
   await fs.writeFile(CHAT_HISTORY_PATH, payload, "utf-8");
-};
-
-const readAuthUsers = async (): Promise<AuthUser[]> => {
-  try {
-    const raw = await fs.readFile(AUTH_USERS_PATH, "utf-8");
-    const parsed = JSON.parse(raw) as { users?: AuthUser[] };
-    return Array.isArray(parsed.users) ? parsed.users : [];
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-};
-
-const writeAuthUsers = async (users: AuthUser[]) => {
-  await fs.mkdir(path.dirname(AUTH_USERS_PATH), { recursive: true });
-  const payload = JSON.stringify({ users }, null, 2);
-  await fs.writeFile(AUTH_USERS_PATH, payload, "utf-8");
 };
 
 const parseCookies = (cookieHeader?: string) => {
@@ -241,21 +213,6 @@ const verifyCsrfToken = (sessionToken: string, csrfToken: string, jwtSecret: str
   const actual = Buffer.from(csrfToken);
   if (expected.length !== actual.length) return false;
   return crypto.timingSafeEqual(expected, actual);
-};
-
-const verifyPassword = async (password: string, hash: string) => {
-  const [scheme, saltB64, digestB64] = hash.split("$");
-  if (scheme !== "scrypt" || !saltB64 || !digestB64) return false;
-  const salt = Buffer.from(saltB64, "base64");
-  const digest = Buffer.from(digestB64, "base64");
-  const derived = (await scryptAsync(password, salt, digest.length)) as Buffer;
-  return crypto.timingSafeEqual(digest, derived);
-};
-
-const hashPassword = async (password: string) => {
-  const salt = crypto.randomBytes(16);
-  const digest = (await scryptAsync(password, salt, 64)) as Buffer;
-  return `scrypt$${salt.toString("base64")}$${digest.toString("base64")}`;
 };
 
 const isAuthRole = (value: string): value is AuthRole =>
@@ -573,7 +530,7 @@ const createAuthApiMiddleware = (jwtSecret: string) => {
           return;
         }
         const user = users.find((entry) => entry.id === username);
-        if (!user || !(await verifyPassword(password, user.passwordHash))) {
+        if (!user || password !== user.password) {
           res.statusCode = 401;
           res.end("Invalid credentials.");
           await writeAuditLog(req, { result: "auth.login.failed.401", requestId, targetId: username });
@@ -681,8 +638,7 @@ const createAdminUsersApiMiddleware = (jwtSecret: string) => {
           res.end("User ID already exists.");
           return;
         }
-        const passwordHash = await hashPassword(password);
-        users.push({ id, name, role, passwordHash });
+                users.push({ id, name, role, password });
         await writeAuthUsers(users);
         res.statusCode = 201;
         res.setHeader("Content-Type", "application/json");
@@ -736,7 +692,7 @@ const createAdminUsersApiMiddleware = (jwtSecret: string) => {
         target.name = name;
         target.role = role;
         if (password) {
-          target.passwordHash = await hashPassword(password);
+          target.password = password;
         }
         await writeAuthUsers(users);
         res.statusCode = 200;
