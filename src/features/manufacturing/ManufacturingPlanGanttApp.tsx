@@ -1408,7 +1408,9 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       try {
         const response = await fetch("/api/plan");
         if (response.status === 204) {
-          setPlanLoadError("保存済み計画が未作成のため、自動保存は無効です。明示的に操作してから保存してください。");
+          setHasHydratedPlan(true);
+          setPlanLoadError(null);
+          console.info("[plan:load] 保存済み計画が未作成のため、初期状態で自動保存を有効化します。");
           return;
         }
         if (!response.ok) {
