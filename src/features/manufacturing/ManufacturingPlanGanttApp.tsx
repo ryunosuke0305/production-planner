@@ -807,8 +807,16 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const activeBlock = useMemo(() => {
     if (!activeBlockId) return null;
-    return blocks.find((b) => b.id === activeBlockId) ?? null;
-  }, [activeBlockId, blocks]);
+    const block = blocks.find((b) => b.id === activeBlockId);
+    if (!block) return null;
+    const range = derivedBlockMap.get(block.id);
+    if (!range) return block;
+    return {
+      ...block,
+      start: range.start,
+      len: range.len,
+    };
+  }, [activeBlockId, blocks, derivedBlockMap]);
 
   const canEditActiveBlock = isAdmin || (isRequester && !activeBlock?.approved);
 
@@ -2311,14 +2319,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           const maxStart = Math.max(dayStart, dayEnd - s.originLen);
           const start = clamp(planSlot - s.pointerOffset, dayStart, maxStart);
           const len = clamp(s.originLen, 1, planSlotCount - start);
-          return placeBlockInLane({ ...b, start, len });
+          return placeBlockInLane(applyRangeToBlock(b, start, len));
         }
 
         if (s.kind === "resizeL") {
           const end = s.originStart + s.originLen;
           const newStart = clamp(planSlot, dayStart, end - 1);
           const newLen = clamp(end - newStart, 1, planSlotCount - newStart);
-          return placeBlockInLane({ ...b, start: newStart, len: newLen });
+          return placeBlockInLane(applyRangeToBlock(b, newStart, newLen));
         }
 
         const currentRange = resolveBlockRange(
@@ -2330,7 +2338,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         );
         const newEnd = clamp(planSlotEnd, currentRange.start + 1, dayEnd);
         const newLen = clamp(newEnd - currentRange.start, 1, planSlotCount - currentRange.start);
-        return placeBlockInLane({ ...b, start: currentRange.start, len: newLen });
+        return placeBlockInLane(applyRangeToBlock(b, currentRange.start, newLen));
       });
       return assignLaneRowsByDay(next);
     });
@@ -3098,7 +3106,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           : activeView === "plan-list"
             ? (
                 <PlanListView
-                  blocks={blocks}
+                  blocks={derivedBlocks.map((entry) => ({ ...entry.block, start: entry.start, len: entry.len }))}
                   items={items}
                   slotIndexToLabel={planSlotIndexToLabel}
                   canEdit={canEditBlocks}
