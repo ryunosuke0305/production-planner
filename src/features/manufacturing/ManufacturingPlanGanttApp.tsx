@@ -65,6 +65,7 @@ import {
   slotLabelFromCalendar,
   slotToDateTime,
   xToSlot,
+  xToSlotWithStep,
 } from "@/lib/slots";
 import {
   asItemUnit,
@@ -310,19 +311,19 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const endBoundaryFromDate = block.endAt
       ? slotIndexFromDateTime(block.endAt, calendarDays, rawHoursByDay, slotsPerDayValue, true)
       : null;
-    const fallbackStart = Math.max(0, Math.trunc(block.start ?? 0));
-    const fallbackLen = Math.max(1, Math.trunc(block.len ?? 1));
-    const start = clamp(startFromDate ?? fallbackStart, 0, Math.max(0, slotCountValue - 1));
+    const fallbackStart = Math.max(0, block.start ?? 0);
+    const fallbackLen = Math.max(0.5, block.len ?? 1);
+    const start = clamp(startFromDate ?? fallbackStart, 0, Math.max(0, slotCountValue - 0.5));
     const len =
       startFromDate !== null && endBoundaryFromDate !== null
-        ? Math.max(1, endBoundaryFromDate - startFromDate)
-        : Math.max(1, Math.min(fallbackLen, slotCountValue - start));
+        ? Math.max(0.5, endBoundaryFromDate - startFromDate)
+        : Math.max(0.5, Math.min(fallbackLen, slotCountValue - start));
     return { start, len, end: start + len };
   };
 
   const applyRangeToBlock = (block: Block, start: number, len: number): Block => {
-    const normalizedStart = clamp(start, 0, Math.max(0, planSlotCount - 1));
-    const normalizedLen = clamp(len, 1, Math.max(1, planSlotCount - normalizedStart));
+    const normalizedStart = clamp(start, 0, Math.max(0, planSlotCount - 0.5));
+    const normalizedLen = clamp(len, 0.5, Math.max(0.5, planSlotCount - normalizedStart));
     const startAt = slotToDateTime(
       normalizedStart,
       planCalendarDays,
@@ -2221,7 +2222,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const workingSlot = clampToWorkingSlot(dayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
     const absoluteSlot = (viewStartOffsetDays + dayIndex) * slotsPerDay + workingSlot;
-    const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
+    const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 0.5);
     const fallbackItemId = items[0]?.id ?? "";
     const operatorName = resolveOperatorName();
     const b: Block = {
@@ -2251,12 +2252,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const derivedBlock = derivedBlockMap.get(p.blockId);
     const block = derivedBlock?.block;
     if (!derivedBlock || !block || block.approved) return;
-    const slot = xToSlot(p.clientX, { left: rect.left, width: rect.width }, slotsPerDay);
+    const slot = xToSlotWithStep(p.clientX, { left: rect.left, width: rect.width }, slotsPerDay, 0.5);
     const workingSlot = clampToWorkingSlot(p.dayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
     const absoluteSlot = (viewStartOffsetDays + p.dayIndex) * slotsPerDay + workingSlot;
-    const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
-    const pointerOffset = clamp(planSlot - derivedBlock.start, 0, Math.max(0, derivedBlock.len - 1));
+    const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 0.5);
+    const pointerOffset = clamp(planSlot - derivedBlock.start, 0, Math.max(0, derivedBlock.len - 0.5));
 
     suppressClickRef.current = true;
 
@@ -2300,12 +2301,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
       }
     }
 
-    const slot = xToSlot(e.clientX, laneRect, slotsPerDay);
+    const slot = xToSlotWithStep(e.clientX, laneRect, slotsPerDay, 0.5);
     const workingSlot = clampToWorkingSlot(activeDayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
     const absoluteSlot = (viewStartOffsetDays + activeDayIndex) * slotsPerDay + workingSlot;
-    const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 1);
-    const planSlotEnd = clamp(convertSlotIndex(absoluteSlot + 1, viewDensity, planDensity, "ceil"), 1, planSlotCount);
+    const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 0.5);
+    const planSlotEnd = clamp(convertSlotIndex(absoluteSlot + 1, viewDensity, planDensity, "ceil"), 0.5, planSlotCount);
     const planDayIndex = viewStartOffsetDays + activeDayIndex;
     const daySlots = planCalendar.rawHoursByDay[planDayIndex]?.length ?? 0;
     if (!daySlots) return;
@@ -2320,14 +2321,14 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
         if (s.kind === "move") {
           const maxStart = Math.max(dayStart, dayEnd - s.originLen);
           const start = clamp(planSlot - s.pointerOffset, dayStart, maxStart);
-          const len = clamp(s.originLen, 1, planSlotCount - start);
+          const len = clamp(s.originLen, 0.5, planSlotCount - start);
           return placeBlockInLane(applyRangeToBlock(b, start, len));
         }
 
         if (s.kind === "resizeL") {
           const end = s.originStart + s.originLen;
-          const newStart = clamp(planSlot, dayStart, end - 1);
-          const newLen = clamp(end - newStart, 1, planSlotCount - newStart);
+          const newStart = clamp(planSlot, dayStart, end - 0.5);
+          const newLen = clamp(end - newStart, 0.5, planSlotCount - newStart);
           return placeBlockInLane(applyRangeToBlock(b, newStart, newLen));
         }
 
@@ -2338,8 +2339,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
           planCalendar.slotsPerDay,
           planSlotCount
         );
-        const newEnd = clamp(planSlotEnd, currentRange.start + 1, dayEnd);
-        const newLen = clamp(newEnd - currentRange.start, 1, planSlotCount - currentRange.start);
+        const newEnd = clamp(planSlotEnd, currentRange.start + 0.5, dayEnd);
+        const newLen = clamp(newEnd - currentRange.start, 0.5, planSlotCount - currentRange.start);
         return placeBlockInLane(applyRangeToBlock(b, currentRange.start, newLen));
       });
       return assignLaneRowsByDay(next);

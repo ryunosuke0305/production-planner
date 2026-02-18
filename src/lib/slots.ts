@@ -95,11 +95,16 @@ export function slotToDateTime(
   slotsPerDay: number
 ): Date | null {
   const dayIdx = Math.floor(slotIndex / slotsPerDay);
-  const slotIdx = slotIndex % slotsPerDay;
+  const slotIdx = slotIndex - dayIdx * slotsPerDay;
   const day = calendarDays[dayIdx];
-  const hour = rawHoursByDay[dayIdx]?.[slotIdx];
-  if (!day || hour === undefined) return null;
-  const date = parseISODateTimeJST(day.date, hour);
+  const dayHours = rawHoursByDay[dayIdx] ?? [];
+  if (!day || !dayHours.length) return null;
+  const baseSlot = Math.floor(slotIdx);
+  const fraction = slotIdx - baseSlot;
+  const hour = dayHours[baseSlot];
+  if (hour === undefined) return null;
+  const slotDurationHours = (day.workEndHour - day.workStartHour) / dayHours.length;
+  const date = parseISODateTimeJST(day.date, hour + slotDurationHours * fraction);
   return date ?? null;
 }
 
@@ -110,13 +115,21 @@ export function slotBoundaryToDateTime(
   slotsPerDay: number
 ): Date | null {
   const dayIdx = Math.floor(boundaryIndex / slotsPerDay);
-  const slotIdx = boundaryIndex % slotsPerDay;
+  const slotIdx = boundaryIndex - dayIdx * slotsPerDay;
   const day = calendarDays[dayIdx];
   if (!day) return null;
   const dayHours = rawHoursByDay[dayIdx] ?? [];
-  if (slotIdx > dayHours.length) return null;
-  const hour = slotIdx === dayHours.length ? day.workEndHour : dayHours[slotIdx];
-  if (hour === undefined) return null;
+  if (!dayHours.length || slotIdx > dayHours.length) return null;
+  const baseSlot = Math.floor(slotIdx);
+  const fraction = slotIdx - baseSlot;
+  const slotDurationHours = (day.workEndHour - day.workStartHour) / dayHours.length;
+  const hour =
+    slotIdx === dayHours.length
+      ? day.workEndHour
+      : dayHours[baseSlot] === undefined
+        ? undefined
+        : dayHours[baseSlot] + slotDurationHours * fraction;
+  if (hour === undefined || hour > day.workEndHour) return null;
   const date = parseISODateTimeJST(day.date, hour);
   return date ?? null;
 }
@@ -149,18 +162,30 @@ export function clamp(n: number, min: number, max: number): number {
 }
 
 export function xToSlot(clientX: number, rect: { left: number; width: number }, slotCount: number): number {
+  return xToSlotWithStep(clientX, rect, slotCount, 1);
+}
+
+export function xToSlotWithStep(
+  clientX: number,
+  rect: { left: number; width: number },
+  slotCount: number,
+  step: number
+): number {
   const x = clientX - rect.left;
   const w = rect.width;
   if (w <= 0) return 0;
   const ratio = x / w;
-  const raw = Math.floor(ratio * slotCount);
-  return clamp(raw, 0, slotCount - 1);
+  const effectiveStep = step > 0 ? step : 1;
+  const scaledSlotCount = slotCount / effectiveStep;
+  const raw = Math.floor(ratio * scaledSlotCount);
+  const snapped = raw * effectiveStep;
+  return clamp(snapped, 0, slotCount - effectiveStep);
 }
 
 export function clampToWorkingSlot(dayIndex: number, slot: number, rawHoursByDay: Array<number[]>): number | null {
   const dayHours = rawHoursByDay[dayIndex] ?? [];
   if (!dayHours.length) return null;
-  return clamp(slot, 0, dayHours.length - 1);
+  return clamp(slot, 0, Math.max(0, dayHours.length - 0.5));
 }
 
 export function endDayIndex(b: { start: number; len: number }, slotsPerDay: number): number {

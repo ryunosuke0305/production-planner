@@ -30,6 +30,7 @@ type PlanRow = {
   endLabel: string;
   startDateTime: Date | null;
   endDateTime: Date | null;
+  durationHours: number | null;
 };
 
 const columnOrder: ColumnKey[] = ["action", "item", "amount", "approved", "start", "end", "duration", "memo"];
@@ -75,13 +76,15 @@ export function PlanListView({
     return blocks
       .map((block) => {
         const item = itemMap.get(block.itemId);
-        const startSlot = Math.max(0, Math.trunc(block.start ?? 0));
-        const blockLen = Math.max(1, Math.trunc(block.len ?? 1));
-        const startLabel = slotIndexToLabel[startSlot] ?? `slot:${startSlot}`;
-        const endSlot = Math.max(startSlot + blockLen - 1, startSlot);
-        const endLabel = slotIndexToLabel[endSlot] ?? `slot:${endSlot}`;
+        const startSlot = Math.max(0, block.start ?? 0);
+        const blockLen = Math.max(0.5, block.len ?? 1);
+        const startLabel = slotIndexToLabel[Math.floor(startSlot)] ?? `slot:${startSlot}`;
+        const endSlot = Math.max(startSlot + blockLen - 0.5, startSlot);
+        const endLabel = slotIndexToLabel[Math.floor(endSlot)] ?? `slot:${endSlot}`;
         const startDateTime = slotToDateTime(startSlot, calendarDays, rawHoursByDay, slotsPerDay);
         const endDateTime = slotBoundaryToDateTime(startSlot + blockLen, calendarDays, rawHoursByDay, slotsPerDay);
+        const durationHours =
+          startDateTime && endDateTime ? Math.max(0, (endDateTime.getTime() - startDateTime.getTime()) / (1000 * 60 * 60)) : null;
         return {
           block,
           itemName: item?.name ?? "未登録品目",
@@ -91,6 +94,7 @@ export function PlanListView({
           endLabel,
           startDateTime,
           endDateTime,
+          durationHours,
         };
       })
       .sort((a, b) => (a.block.start ?? 0) - (b.block.start ?? 0));
@@ -120,6 +124,12 @@ export function PlanListView({
       return haystack.includes(normalizedKeyword);
     });
   }, [approvalFilter, endDateTimeFilter, keyword, rows, startDateTimeFilter]);
+
+  const formatDuration = (hours: number | null) => {
+    if (hours === null || !Number.isFinite(hours)) return "-";
+    const rounded = Math.round(hours * 10) / 10;
+    return Number.isInteger(rounded) ? `${rounded}時間` : `${rounded.toFixed(1)}時間`;
+  };
 
   const startResize = (event: React.MouseEvent<HTMLSpanElement>, key: ColumnKey) => {
     event.preventDefault();
@@ -263,7 +273,7 @@ export function PlanListView({
                       <td className="border-b border-r px-3 py-2">{row.block.approved ? "承認済み" : "未承認"}</td>
                       <td className="border-b border-r px-3 py-2 whitespace-nowrap">{row.startLabel}</td>
                       <td className="border-b border-r px-3 py-2 whitespace-nowrap">{row.endLabel}</td>
-                      <td className="border-b border-r px-3 py-2">{Math.max(1, row.block.len ?? 1)} slot</td>
+                      <td className="border-b border-r px-3 py-2">{formatDuration(row.durationHours)}</td>
                       <td className="border-b border-r px-3 py-2">{row.block.memo || "-"}</td>
                     </tr>
                   ))

@@ -1053,6 +1053,12 @@ const createImportHeadersApiMiddleware = () => {
   };
 };
 
+
+const isTruthyEnv = (value: string | undefined) => {
+  const normalized = (value ?? "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+};
+
 const createGeminiProxyMiddleware = (env: { GEMINI_API_KEY?: string; GEMINI_MODEL?: string }) => {
   let isBusy = false;
   return async (req: MiddlewareRequest, res: MiddlewareResponse) => {
@@ -1137,6 +1143,7 @@ export default defineConfig(({ mode }) => {
   const envDir = "data";
   const env = loadEnv(mode, envDir, "");
   const authJwtSecret = resolveAuthJwtSecret(env);
+  const exposeToLocalNetwork = isTruthyEnv(env.VITE_EXPOSE_LOCAL_NETWORK);
   return {
     envDir,
     plugins: [
@@ -1171,6 +1178,12 @@ export default defineConfig(({ mode }) => {
         },
       },
     ],
+    server: {
+      host: exposeToLocalNetwork ? "0.0.0.0" : "127.0.0.1",
+    },
+    preview: {
+      host: exposeToLocalNetwork ? "0.0.0.0" : "127.0.0.1",
+    },
     resolve: {
       alias: {
         "@": fileURLToPath(new URL("./src", import.meta.url)),
