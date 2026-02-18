@@ -31,9 +31,9 @@ export function slotUnitsPerSlot(density: Density): number {
 
 export function fromAbsoluteSlots(abs: number, density: Density, mode: "floor" | "ceil" | "round"): number {
   const raw = abs / slotUnitsPerSlot(density);
-  if (mode === "floor") return Math.floor(raw);
-  if (mode === "ceil") return Math.ceil(raw);
-  return Math.round(raw);
+  if (mode === "floor") return Math.floor(raw * 2) / 2;
+  if (mode === "ceil") return Math.ceil(raw * 2) / 2;
+  return Math.round(raw * 2) / 2;
 }
 
 export function convertSlotIndex(value: number, from: Density, to: Density, mode: "floor" | "ceil" | "round"): number {
@@ -42,7 +42,7 @@ export function convertSlotIndex(value: number, from: Density, to: Density, mode
 
 export function convertSlotLength(value: number, from: Density, to: Density, mode: "ceil" | "round"): number {
   const abs = value * slotUnitsPerSlot(from);
-  return Math.max(1, fromAbsoluteSlots(abs, to, mode));
+  return Math.max(0.5, fromAbsoluteSlots(abs, to, mode));
 }
 
 export function slotLabelFromCalendar(p: {
@@ -145,13 +145,25 @@ export function slotIndexFromDateTime(
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return null;
   const date = toISODate(parsed);
-  const hour = parsed.getHours();
+  const hour = parsed.getHours() + parsed.getMinutes() / 60;
   const dayIdx = calendarDays.findIndex((day) => day.date === date);
   if (dayIdx < 0) return null;
+  const day = calendarDays[dayIdx];
+  if (!day) return null;
   const dayHours = rawHoursByDay[dayIdx] ?? [];
-  const slotIdx = dayHours.findIndex((h) => h === hour);
-  if (slotIdx >= 0) return dayIdx * slotsPerDay + slotIdx;
-  if (allowEndBoundary && hour === calendarDays[dayIdx].workEndHour) {
+  const slotDuration = dayHours.length > 0 ? (day.workEndHour - day.workStartHour) / dayHours.length : 0;
+  if (slotDuration > 0) {
+    for (let i = 0; i < dayHours.length; i++) {
+      const slotStart = dayHours[i];
+      const slotEnd = slotStart + slotDuration;
+      if (hour >= slotStart && hour < slotEnd) {
+        const fraction = (hour - slotStart) / slotDuration;
+        const snapped = Math.round(fraction * 2) / 2;
+        return dayIdx * slotsPerDay + i + snapped;
+      }
+    }
+  }
+  if (allowEndBoundary && Math.abs(hour - day.workEndHour) < 1e-9) {
     return dayIdx * slotsPerDay + dayHours.length;
   }
   return null;

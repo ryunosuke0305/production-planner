@@ -2822,12 +2822,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
                   const viewDayIdx = Math.floor(viewStart / slotsPerDay);
                   if (viewDayIdx < 0 || viewDayIdx >= DAYS_IN_WEEK) return null;
                   const viewStartInDay = viewStart - viewDayIdx * slotsPerDay;
-                  const maxLen = Math.max(1, slotsPerDay - viewStartInDay);
+                  const maxLen = Math.max(0.5, slotsPerDay - viewStartInDay);
                   return {
                     block,
                     viewDayIdx,
                     viewStartInDay,
-                    viewLen: clamp(viewLen, 1, maxLen),
+                    viewLen: clamp(viewLen, 0.5, maxLen),
                   };
                 })
                 .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))

@@ -49,7 +49,9 @@ export function parseISODateTimeJST(isoDate: string, hour: number): Date | null 
   const day = Number(match[3]);
   if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
   if (!Number.isFinite(hour)) return null;
-  const utcMs = Date.UTC(year, month - 1, day, hour, 0, 0) - JST_OFFSET_MINUTES * MS_PER_MINUTE;
+  const wholeHour = Math.floor(hour);
+  const minutes = Math.round((hour - wholeHour) * 60);
+  const utcMs = Date.UTC(year, month - 1, day, wholeHour, minutes, 0) - JST_OFFSET_MINUTES * MS_PER_MINUTE;
   return new Date(utcMs);
 }
 
