@@ -2313,7 +2313,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     if (workingSlot === null) return;
     const absoluteSlot = (viewStartOffsetDays + activeDayIndex) * slotsPerDay + workingSlot;
     const planSlot = toPlanSlot(absoluteSlot, "floor");
-    const planSlotEnd = toPlanSlot(absoluteSlot + 1, "ceil");
+    const planSlotEnd = toPlanSlot(absoluteSlot + 0.5, "ceil");
     const planDayIndex = viewStartOffsetDays + activeDayIndex;
     const daySlots = planCalendar.rawHoursByDay[planDayIndex]?.length ?? 0;
     if (!daySlots) return;
