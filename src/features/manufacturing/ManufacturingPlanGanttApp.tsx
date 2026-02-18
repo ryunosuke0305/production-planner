@@ -60,6 +60,7 @@ import {
   convertSlotIndex,
   convertSlotLength,
   endDayIndex,
+  slotUnitsPerSlot,
   slotBoundaryToDateTime,
   slotIndexFromDateTime,
   slotLabelFromCalendar,
@@ -2243,6 +2244,12 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     openPlanEdit(placedBlock, { isNew: true });
   };
 
+  const toPlanSlot = (value: number, mode: "floor" | "ceil") => {
+    const scaled = (value * slotUnitsPerSlot(viewDensity)) / slotUnitsPerSlot(planDensity);
+    const snapped = mode === "ceil" ? Math.ceil(scaled * 2) / 2 : Math.floor(scaled * 2) / 2;
+    return clamp(snapped, mode === "ceil" ? 0.5 : 0, mode === "ceil" ? planSlotCount : planSlotCount - 0.5);
+  };
+
   const beginPointer = (p: { kind: DragKind; blockId: string; dayIndex: number; clientX: number }) => {
     if (!canEditBlocks) return;
     if (!isPlanWeekView) return;
@@ -2256,7 +2263,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const workingSlot = clampToWorkingSlot(p.dayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
     const absoluteSlot = (viewStartOffsetDays + p.dayIndex) * slotsPerDay + workingSlot;
-    const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 0.5);
+    const planSlot = toPlanSlot(absoluteSlot, "floor");
     const pointerOffset = clamp(planSlot - derivedBlock.start, 0, Math.max(0, derivedBlock.len - 0.5));
 
     suppressClickRef.current = true;
@@ -2305,8 +2312,8 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     const workingSlot = clampToWorkingSlot(activeDayIndex, slot, viewCalendar.rawHoursByDay);
     if (workingSlot === null) return;
     const absoluteSlot = (viewStartOffsetDays + activeDayIndex) * slotsPerDay + workingSlot;
-    const planSlot = clamp(convertSlotIndex(absoluteSlot, viewDensity, planDensity, "floor"), 0, planSlotCount - 0.5);
-    const planSlotEnd = clamp(convertSlotIndex(absoluteSlot + 1, viewDensity, planDensity, "ceil"), 0.5, planSlotCount);
+    const planSlot = toPlanSlot(absoluteSlot, "floor");
+    const planSlotEnd = toPlanSlot(absoluteSlot + 1, "ceil");
     const planDayIndex = viewStartOffsetDays + activeDayIndex;
     const daySlots = planCalendar.rawHoursByDay[planDayIndex]?.length ?? 0;
     if (!daySlots) return;
