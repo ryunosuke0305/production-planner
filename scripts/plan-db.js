@@ -449,7 +449,24 @@ export function saveImportHeaderOverrides(db, payload) {
   return normalized;
 }
 
+/**
+ * ペイロードが最低限の構造を持つか確認する。
+ * 破壊的な DELETE の前に呼ばれ、明らかに不正なデータによる全データ消失を防ぐ。
+ */
+function validatePlanPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("savePlanPayload: payload はオブジェクトでなければなりません。");
+  }
+  for (const key of ["blocks", "items", "materials", "calendarDays"]) {
+    if (key in payload && !Array.isArray(payload[key])) {
+      throw new Error(`savePlanPayload: payload.${key} は配列でなければなりません。`);
+    }
+  }
+}
+
 export function savePlanPayload(db, payload) {
+  validatePlanPayload(payload);
+
   const insertMeta = db.prepare(
     "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
   );

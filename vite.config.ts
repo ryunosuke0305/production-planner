@@ -24,7 +24,7 @@ type MiddlewareRequest = {
   socket?: {
     remoteAddress?: string;
   };
-  on: (event: string, handler: (chunk: any) => void) => void;
+  on: (event: string, handler: (chunk: Buffer | string) => void) => void;
 };
 
 type MiddlewareResponse = {
@@ -266,8 +266,8 @@ const verifyJwt = (token: string, secret: string): AuthJwtPayload | null => {
 const readRequestBody = (req: MiddlewareRequest) =>
   new Promise<string>((resolve, reject) => {
     let body = "";
-    req.on("data", (chunk: any) => {
-      body += chunk.toString("utf-8");
+    req.on("data", (chunk: Buffer | string) => {
+      body += typeof chunk === "string" ? chunk : chunk.toString("utf-8");
     });
     req.on("end", () => resolve(body));
     req.on("error", reject);
@@ -366,12 +366,13 @@ const createConstraintsApiMiddleware = () => {
 };
 
 const createChatHistoryApiMiddleware = () => {
-  const isChatMessage = (value: any): value is ChatHistoryMessage => {
+  const isChatMessage = (value: unknown): value is ChatHistoryMessage => {
     if (!value || typeof value !== "object") return false;
-    if (typeof value.id !== "string") return false;
-    if (value.role !== "user" && value.role !== "assistant") return false;
-    if (typeof value.content !== "string") return false;
-    if (typeof value.createdAt !== "undefined" && typeof value.createdAt !== "string") return false;
+    const record = value as Record<string, unknown>;
+    if (typeof record.id !== "string") return false;
+    if (record.role !== "user" && record.role !== "assistant") return false;
+    if (typeof record.content !== "string") return false;
+    if (typeof record.createdAt !== "undefined" && typeof record.createdAt !== "string") return false;
     return true;
   };
 
@@ -1088,12 +1089,20 @@ const createGeminiProxyMiddleware = (env: { GEMINI_API_KEY?: string; GEMINI_MODE
 
     const ai = new GoogleGenAI({ apiKey });
     isBusy = true;
+    // isBusy が永久にセットされたままになる（"end"/"error" が発火しない）ケースに備えたフォールバック
+    const busyTimeoutId = setTimeout(() => {
+      if (isBusy) {
+        console.warn("[Gemini] isBusy タイムアウト（90秒）: フラグを強制リセットしました。");
+        isBusy = false;
+      }
+    }, 90_000);
 
     let body = "";
-    req.on("data", (chunk: any) => {
-      body += chunk.toString("utf-8");
+    req.on("data", (chunk: Buffer | string) => {
+      body += typeof chunk === "string" ? chunk : chunk.toString("utf-8");
     });
     req.on("end", async () => {
+      clearTimeout(busyTimeoutId);
       try {
         let parsed: GeminiRequestPayload;
         try {
@@ -1132,6 +1141,7 @@ const createGeminiProxyMiddleware = (env: { GEMINI_API_KEY?: string; GEMINI_MODE
       }
     });
     req.on("error", () => {
+      clearTimeout(busyTimeoutId);
       isBusy = false;
       res.statusCode = 400;
       res.end("Invalid JSON payload.");
