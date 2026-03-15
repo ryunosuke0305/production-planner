@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@/features/manufacturing/hooks/useAuth";
+import { usePlanPersistence } from "@/features/manufacturing/hooks/usePlanPersistence";
 import * as XLSX from "xlsx";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -87,8 +89,6 @@ import {
   uid,
 } from "@/lib/sanitize";
 import type {
-  AuthRole,
-  AuthUser,
   Block,
   CalendarDay,
   ChatAction,
@@ -102,7 +102,6 @@ import type {
   ImportHeaderOverrides,
   Item,
   ItemImportRow,
-  ManagedUser,
   Material,
   MaterialImportRow,
   PlanPayload,
@@ -148,21 +147,20 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   // 実運用ではユーザー設定から取得する想定
   const timezone = DEFAULT_TIMEZONE;
 
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [loginId, setLoginId] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [loginBusy, setLoginBusy] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [csrfToken, setCsrfToken] = useState("");
-  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
-  const [managedUsersLoading, setManagedUsersLoading] = useState(false);
-  const [managedUsersError, setManagedUsersError] = useState<string | null>(null);
-  const [managedUsersNote, setManagedUsersNote] = useState<string | null>(null);
-  const [userModalMode, setUserModalMode] = useState<"create" | "edit">("create");
-  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
+  const {
+    authUser, authLoading, authError,
+    loginId, setLoginId, loginPassword, setLoginPassword, loginBusy, loginError,
+    withCsrfHeader,
+    managedUsers, managedUsersLoading, managedUsersError,
+    managedUsersNote,
+    userModalMode, isUserModalOpen, setIsUserModalOpen,
+    editingUser, setEditingUser,
+    isAdmin, isRequester, isViewer, canEditBlocks, canImportDailyStock,
+    canManageMaster, canUseChat, canExportJson, authRoleLabel,
+    handleLogin, handleLogout,
+    handleCreateManagedUser, handleUpdateManagedUser, handleDeleteManagedUser,
+    openCreateManagedUserModal, openEditManagedUserModal, resolveOperatorName,
+  } = useAuth({ masterSection, onAfterLogout: () => setActiveView("schedule") });
 
   const [materialsMaster, setMaterialsMaster] = useState<Material[]>(SAMPLE_MATERIALS);
   const [items, setItems] = useState<Item[]>(SAMPLE_ITEMS);
@@ -292,18 +290,13 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
 
   const [blocks, setBlocks] = useState<Block[]>(() => DEFAULT_BLOCKS());
 
-  const [isPlanLoaded, setIsPlanLoaded] = useState(false);
-  const [hasHydratedPlan, setHasHydratedPlan] = useState(false);
-  const [planLoadError, setPlanLoadError] = useState<string | null>(null);
-  const [planSaveStatus, setPlanSaveStatus] = useState<"idle" | "saving" | "success" | "error">("idle");
-  const [planSaveError, setPlanSaveError] = useState<string | null>(null);
-
-  const planSaveDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const planSaveAbortControllerRef = useRef<AbortController | null>(null);
-  const planSaveInFlightRef = useRef(false);
-  const queuedPlanPayloadRef = useRef<PlanPayload | null>(null);
-  const hasQueuedPlanPayloadRef = useRef(false);
-  const lastAutoSaveSkipReasonRef = useRef<string | null>(null);
+  const {
+    isPlanLoaded, setIsPlanLoaded, hasHydratedPlan, setHasHydratedPlan,
+    planLoadError, setPlanLoadError, planSaveStatus,
+    planSaveError,
+    planSaveDebounceTimerRef, queuedPlanPayloadRef, hasQueuedPlanPayloadRef,
+    lastAutoSaveSkipReasonRef, postPlanPayload,
+  } = usePlanPersistence({ withCsrfHeader });
 
   const resolveBlockRange = (block: Block, calendarDays: CalendarDay[], rawHoursByDay: Array<number[]>, slotsPerDayValue: number, slotCountValue: number) => {
     const startFromDate = block.startAt
@@ -366,319 +359,7 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
   const [activeRecipeItemId, setActiveRecipeItemId] = useState<string | null>(null);
   const [recipeDraft, setRecipeDraft] = useState<RecipeLine[]>([]);
 
-  const isAdmin = authUser?.role === "admin";
-  const isRequester = authUser?.role === "requester";
-  const isViewer = authUser?.role === "viewer";
-  const canEditBlocks = isAdmin || isRequester;
-  const canImportDailyStock = isAdmin || isRequester;
-  const canManageMaster = isAdmin;
-  const canUseChat = isAdmin;
-  const canExportJson = isAdmin;
-  const authRoleLabelMap: Record<NonNullable<AuthUser>["role"], string> = {
-    admin: "管理者",
-    requester: "依頼者",
-    viewer: "閲覧者",
-  };
-  const authRoleLabel = authUser ? authRoleLabelMap[authUser.role] : "";
   const readOnlyMessage = "権限がないため操作できません。";
-  const resolveOperatorName = () => {
-    const displayName = authUser?.name?.trim() ?? "";
-    if (displayName) return displayName;
-    const fallbackId = authUser?.id?.trim() ?? "";
-    return fallbackId || "未設定";
-  };
-
-
-  const withCsrfHeader = (headers: Record<string, string> = {}) => {
-    if (!csrfToken) return headers;
-    return {
-      ...headers,
-      "X-CSRF-Token": csrfToken,
-    };
-  };
-
-  const postPlanPayload = async (payload: PlanPayload) => {
-    if (planSaveInFlightRef.current) {
-      queuedPlanPayloadRef.current = payload;
-      hasQueuedPlanPayloadRef.current = true;
-      return;
-    }
-
-    planSaveInFlightRef.current = true;
-    setPlanSaveStatus("saving");
-    setPlanSaveError(null);
-    const controller = new AbortController();
-    planSaveAbortControllerRef.current = controller;
-
-    try {
-      const response = await fetch("/api/plan", {
-        method: "POST",
-        headers: withCsrfHeader({ "Content-Type": "application/json" }),
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`保存に失敗しました。（HTTP ${response.status}）`);
-      }
-      setPlanSaveStatus("success");
-      setPlanSaveError(null);
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      const message = error instanceof Error ? error.message : "保存に失敗しました。";
-      setPlanSaveStatus("error");
-      setPlanSaveError(message);
-    } finally {
-      if (planSaveAbortControllerRef.current === controller) {
-        planSaveAbortControllerRef.current = null;
-      }
-      planSaveInFlightRef.current = false;
-
-      if (hasQueuedPlanPayloadRef.current && queuedPlanPayloadRef.current) {
-        const latestPayload = queuedPlanPayloadRef.current;
-        hasQueuedPlanPayloadRef.current = false;
-        queuedPlanPayloadRef.current = null;
-        void postPlanPayload(latestPayload);
-      }
-    }
-  };
-
-  const fetchCsrfToken = async () => {
-    const response = await fetch("/api/auth/csrf");
-    if (!response.ok) {
-      throw new Error("CSRFトークンの取得に失敗しました。");
-    }
-    const payload = (await response.json()) as { csrfToken?: string };
-    setCsrfToken(typeof payload.csrfToken === "string" ? payload.csrfToken : "");
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadAuthUser = async () => {
-      try {
-        const response = await fetch("/api/auth/me");
-        if (!response.ok) {
-          if (!cancelled) {
-            setAuthUser(null);
-          }
-          return;
-        }
-        const payload = (await response.json()) as { user?: AuthUser };
-        if (!cancelled) {
-          setAuthUser(payload.user ?? null);
-          try {
-            await fetchCsrfToken();
-          } catch {
-            setCsrfToken("");
-          }
-        }
-      } catch {
-        if (!cancelled) {
-          setAuthError("認証情報の取得に失敗しました。");
-          setAuthUser(null);
-        }
-      } finally {
-        if (!cancelled) {
-          setAuthLoading(false);
-        }
-      }
-    };
-    void loadAuthUser();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const handleLogin = async () => {
-    setLoginBusy(true);
-    setLoginError(null);
-    setAuthError(null);
-    try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: loginId, password: loginPassword }),
-      });
-      if (!response.ok) {
-        const message = await response.text();
-        setLoginError(message || "ログインに失敗しました。");
-        return;
-      }
-      const payload = (await response.json()) as { user?: AuthUser };
-      setAuthUser(payload.user ?? null);
-      await fetchCsrfToken();
-      setLoginId("");
-      setLoginPassword("");
-    } catch {
-      setLoginError("ログインに失敗しました。");
-    } finally {
-      setLoginBusy(false);
-    }
-  };
-
-  const fetchManagedUsers = async () => {
-    if (!canManageMaster) return;
-    setManagedUsersLoading(true);
-    setManagedUsersError(null);
-    try {
-      const response = await fetch("/api/admin/users");
-      if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || "ユーザー一覧の取得に失敗しました。");
-      }
-      const payload = (await response.json()) as { users?: ManagedUser[] };
-      setManagedUsers(payload.users ?? []);
-    } catch (error) {
-      console.error(error);
-      setManagedUsersError("ユーザー一覧の取得に失敗しました。");
-    } finally {
-      setManagedUsersLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!authUser || !canManageMaster || masterSection !== "users") return;
-    let cancelled = false;
-    const load = async () => {
-      setManagedUsersLoading(true);
-      setManagedUsersError(null);
-      try {
-        const response = await fetch("/api/admin/users");
-        if (!response.ok) {
-          const message = await response.text();
-          throw new Error(message || "ユーザー一覧の取得に失敗しました。");
-        }
-        const payload = (await response.json()) as { users?: ManagedUser[] };
-        if (!cancelled) {
-          setManagedUsers(payload.users ?? []);
-        }
-      } catch (error) {
-        console.error(error);
-        if (!cancelled) {
-          setManagedUsersError("ユーザー一覧の取得に失敗しました。");
-        }
-      } finally {
-        if (!cancelled) {
-          setManagedUsersLoading(false);
-        }
-      }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [authUser, canManageMaster, masterSection]);
-
-  const handleCreateManagedUser = async (payload: {
-    id: string;
-    name: string;
-    role: AuthRole;
-    password: string;
-  }): Promise<{ error?: string } | undefined> => {
-    if (!canManageMaster) return { error: "ユーザーの追加に失敗しました。" };
-    setManagedUsersNote(null);
-    try {
-      const trimmedId = payload.id.trim();
-      const trimmedName = payload.name.trim();
-      const response = await fetch("/api/admin/users", {
-        method: "POST",
-        headers: withCsrfHeader({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          id: trimmedId,
-          name: trimmedName,
-          role: payload.role,
-          password: payload.password,
-        }),
-      });
-      if (!response.ok) {
-        const message = await response.text();
-        return { error: message || "ユーザーの追加に失敗しました。" };
-      }
-      setManagedUsersNote("ユーザーを追加しました。");
-      await fetchManagedUsers();
-    } catch (error) {
-      console.error(error);
-      return { error: "ユーザーの追加に失敗しました。" };
-    }
-  };
-
-  const openCreateManagedUserModal = () => {
-    setUserModalMode("create");
-    setEditingUser(null);
-    setIsUserModalOpen(true);
-  };
-
-  const openEditManagedUserModal = (user: ManagedUser) => {
-    setUserModalMode("edit");
-    setEditingUser(user);
-    setIsUserModalOpen(true);
-  };
-
-  const handleUpdateManagedUser = async (payload: {
-    id: string;
-    name: string;
-    role: AuthRole;
-    password?: string;
-  }): Promise<{ error?: string } | undefined> => {
-    if (!canManageMaster) return { error: "ユーザーの更新に失敗しました。" };
-    setManagedUsersNote(null);
-    try {
-      const trimmedName = payload.name.trim();
-      const response = await fetch("/api/admin/users", {
-        method: "PUT",
-        headers: withCsrfHeader({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          id: payload.id,
-          name: trimmedName,
-          role: payload.role,
-          password: payload.password || undefined,
-        }),
-      });
-      if (!response.ok) {
-        const message = await response.text();
-        return { error: message || "ユーザーの更新に失敗しました。" };
-      }
-      setIsUserModalOpen(false);
-      setEditingUser(null);
-      setManagedUsersNote("ユーザー情報を更新しました。");
-      await fetchManagedUsers();
-    } catch (error) {
-      console.error(error);
-      return { error: "ユーザーの更新に失敗しました。" };
-    }
-  };
-
-  const handleDeleteManagedUser = async (user: ManagedUser) => {
-    if (!canManageMaster) return;
-    setManagedUsersNote(null);
-    if (!window.confirm(`ユーザー「${user.name}」を削除しますか？`)) return;
-    try {
-      const response = await fetch("/api/admin/users", {
-        method: "DELETE",
-        headers: withCsrfHeader({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ id: user.id }),
-      });
-      if (!response.ok) {
-        const message = await response.text();
-        setManagedUsersError(message || "ユーザーの削除に失敗しました。");
-        return;
-      }
-      setManagedUsersNote("ユーザーを削除しました。");
-      await fetchManagedUsers();
-    } catch (error) {
-      console.error(error);
-      setManagedUsersError("ユーザーの削除に失敗しました。");
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await fetch("/api/auth/logout", { method: "POST", headers: withCsrfHeader() });
-    } finally {
-      setAuthUser(null);
-      setCsrfToken("");
-      setActiveView("schedule");
-    }
-  };
   const [materialDialogState, setMaterialDialogState] = useState<{
     open: boolean;
     editingMaterialId: string | null;
@@ -1599,20 +1280,6 @@ export default function ManufacturingPlanGanttApp(): JSX.Element {
     planDensity,
     planWeekStart,
   ]);
-
-  useEffect(
-    () => () => {
-      if (planSaveDebounceTimerRef.current) {
-        clearTimeout(planSaveDebounceTimerRef.current);
-        planSaveDebounceTimerRef.current = null;
-      }
-      if (planSaveAbortControllerRef.current) {
-        planSaveAbortControllerRef.current.abort();
-        planSaveAbortControllerRef.current = null;
-      }
-    },
-    []
-  );
 
   useEffect(() => {
     if (!chatScrollRef.current) return;

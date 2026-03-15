@@ -1,6 +1,7 @@
 import React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { AuthUser } from "@/types/planning";
 
 type ViewKey = "schedule" | "inventory" | "plan-list" | "master" | "import" | "manual";
@@ -151,7 +152,9 @@ export function ManufacturingPlanLayout({
           </div>
         </header>
 
-        <main className="p-4">{children}</main>
+        <main className="p-4">
+          <ErrorBoundary key={activeView}>{children}</ErrorBoundary>
+        </main>
       </div>
     </div>
   );
