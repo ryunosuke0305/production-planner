@@ -1200,6 +1200,7 @@ export default defineConfig(({ mode }) => {
     },
     preview: {
       host: exposeToLocalNetwork ? "0.0.0.0" : "127.0.0.1",
+      allowedHosts: exposeToLocalNetwork ? true : undefined,
     },
     resolve: {
       alias: {
