@@ -3,3 +3,8 @@ dist
 .git
 *.log
 data/plan.json
+data/.env
+data/*.sqlite
+data/audit.log
+data/auth-users.json
+data/gemini-*.json

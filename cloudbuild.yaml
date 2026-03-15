@@ -1,0 +1,55 @@
+steps:
+  # Docker イメージをビルド
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - build
+      - -t
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
+      - .
+
+  # Artifact Registry にプッシュ
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - push
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
+
+  # Cloud Run にデプロイ
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - "${_SERVICE}"
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8080
+      - --max-instances=1
+      - --service-account=${_SERVICE_ACCOUNT}
+      - --add-volume=name=data-vol,type=cloud-storage,bucket=${_DATA_BUCKET}
+      - --add-volume-mount=volume=data-vol,mount-path=/app/data
+      - --set-env-vars=AUTH_JWT_SECRET=${_AUTH_JWT_SECRET},GEMINI_API_KEY=${_GEMINI_API_KEY},VITE_EXPOSE_LOCAL_NETWORK=true
+
+substitutions:
+  # デプロイ先リージョン（例: asia-northeast1）
+  _REGION: asia-northeast1
+  # Artifact Registry リポジトリ名（setup-gcp.sh で作成）
+  _REPO: production-planner
+  # Cloud Run サービス名
+  _SERVICE: production-planner
+  # Cloud Run サービスアカウント（setup-gcp.sh で作成）
+  # 例: production-planner@YOUR_PROJECT.iam.gserviceaccount.com
+  _SERVICE_ACCOUNT: production-planner@instant-river-361000.iam.gserviceaccount.com
+  # データ永続化用 GCS バケット名（setup-gcp.sh で作成）
+  # 例: YOUR_PROJECT-production-planner-data
+  _DATA_BUCKET: instant-river-361000-production-planner-data
+  # JWT 署名用シークレット（50文字以上のランダム値を推奨）
+  # Cloud Build トリガーの substitution variables で設定すること
+  _AUTH_JWT_SECRET: ""
+  # Google Gemini API キー
+  # Cloud Build トリガーの substitution variables で設定すること
+  _GEMINI_API_KEY: ""
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"

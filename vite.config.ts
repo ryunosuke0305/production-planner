@@ -1153,7 +1153,14 @@ export default defineConfig(({ mode }) => {
   const envDir = "data";
   const env = loadEnv(mode, envDir, "");
   const authJwtSecret = resolveAuthJwtSecret(env);
-  const exposeToLocalNetwork = isTruthyEnv(env.VITE_EXPOSE_LOCAL_NETWORK);
+  // Cloud Run 対応: data/.env が存在しない場合 process.env にフォールバック
+  const exposeToLocalNetwork =
+    isTruthyEnv(env.VITE_EXPOSE_LOCAL_NETWORK) ||
+    isTruthyEnv(process.env.VITE_EXPOSE_LOCAL_NETWORK);
+  const geminiEnv = {
+    GEMINI_API_KEY: env.GEMINI_API_KEY ?? process.env.GEMINI_API_KEY,
+    GEMINI_MODEL: env.GEMINI_MODEL ?? process.env.GEMINI_MODEL,
+  };
   return {
     envDir,
     plugins: [
@@ -1171,7 +1178,7 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use("/api/import-headers", createImportHeadersApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());
-          server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
+          server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(geminiEnv));
         },
         async configurePreviewServer(server) {
           await ensurePlanDatabaseSeeded();
@@ -1184,7 +1191,7 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use("/api/import-headers", createImportHeadersApiMiddleware());
           server.middlewares.use("/api/constraints", createConstraintsApiMiddleware());
           server.middlewares.use("/api/chat", createChatHistoryApiMiddleware());
-          server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(env));
+          server.middlewares.use("/api/gemini", createGeminiProxyMiddleware(geminiEnv));
         },
       },
     ],
