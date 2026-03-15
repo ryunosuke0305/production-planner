@@ -51,5 +51,8 @@ substitutions:
   # Cloud Build トリガーの substitution variables で設定すること
   _GEMINI_API_KEY: ""
 
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 images:
   - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
