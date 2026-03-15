@@ -9,8 +9,7 @@ COPY . .
 RUN npm run build
 
 RUN mkdir -p /app/data
-VOLUME ["/app/data"]
 
-EXPOSE 4173
+EXPOSE 8080
 
-CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "4173"]
+CMD ["sh", "-c", "npm run preview -- --host 0.0.0.0 --port ${PORT:-8080}"]
